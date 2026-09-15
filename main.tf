@@ -1,0 +1,183 @@
+provider "aws" {
+  region = "ap-south-1"
+}
+
+variable "db_password" {
+  description = "Master password for the test RDS instance (set via TF_VAR_db_password)"
+  type        = string
+  sensitive   = true
+}
+
+# 1. Create a basic VPC
+resource "aws_vpc" "main" {
+  cidr_block           = "10.0.0.0/16"
+  enable_dns_hostnames = true
+  tags = {
+    Name = "migration-test-vpc"
+  }
+}
+
+# 2. Create an Internet Gateway
+resource "aws_internet_gateway" "gw" {
+  vpc_id = aws_vpc.main.id
+
+  tags = {
+    Name = "migration-test-igw"
+  }
+}
+
+# 3. Create a Route Table pointing traffic to the Internet Gateway
+resource "aws_route_table" "public" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = aws_internet_gateway.gw.id
+  }
+
+  tags = {
+    Name = "migration-test-rt"
+  }
+}
+
+# 4. Create two public subnets in different Availability Zones
+resource "aws_subnet" "public_1" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.1.0/24"
+  availability_zone       = "ap-south-1a"
+  map_public_ip_on_launch = true
+  tags = {
+    Name = "migration-test-subnet-1"
+  }
+}
+
+resource "aws_subnet" "public_2" {
+  vpc_id                  = aws_vpc.main.id
+  cidr_block              = "10.0.2.0/24"
+  availability_zone       = "ap-south-1b"
+  map_public_ip_on_launch = true
+  tags = {
+    Name = "migration-test-subnet-2"
+  }
+}
+
+# 5. Link both subnets to the public Route Table
+resource "aws_route_table_association" "sub1" {
+  subnet_id      = aws_subnet.public_1.id
+  route_table_id = aws_route_table.public.id
+}
+
+resource "aws_route_table_association" "sub2" {
+  subnet_id      = aws_subnet.public_2.id
+  route_table_id = aws_route_table.public.id
+}
+
+# 6. Create a DB subnet group spanning both AZs
+resource "aws_db_subnet_group" "default" {
+  name       = "migration-db-subnet-group"
+  subnet_ids = [aws_subnet.public_1.id, aws_subnet.public_2.id]
+
+  tags = {
+    Name = "migration-db-subnet-group"
+  }
+}
+
+# 7. Create a small RDS PostgreSQL instance (using major version 15 to avoid mismatch)
+resource "aws_db_instance" "postgres" {
+  identifier           = "test-postgres-db"
+  engine               = "postgres"
+  engine_version       = "15"
+  instance_class       = "db.t3.micro"
+  allocated_storage    = 20
+  db_name              = "testdb"
+  username             = "dbadmin"
+  password             = var.db_password
+  skip_final_snapshot  = true
+  publicly_accessible  = true
+  db_subnet_group_name = aws_db_subnet_group.default.name
+}
+
+# 8. IAM Role for EKS Cluster
+resource "aws_iam_role" "eks_cluster" {
+  name = "migration-test-eks-cluster-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "eks.amazonaws.com"
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "eks_cluster_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSClusterPolicy"
+  role       = aws_iam_role.eks_cluster.name
+}
+
+# 9. EKS Cluster
+resource "aws_eks_cluster" "main" {
+  name     = "test-eks-cluster"
+  role_arn = aws_iam_role.eks_cluster.arn
+
+  vpc_config {
+    subnet_ids = [aws_subnet.public_1.id, aws_subnet.public_2.id]
+  }
+
+  depends_on = [aws_iam_role_policy_attachment.eks_cluster_policy]
+}
+
+# 10. IAM Role for EKS Worker Nodes
+resource "aws_iam_role" "eks_nodes" {
+  name = "migration-test-eks-node-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action = "sts:AssumeRole"
+      Effect = "Allow"
+      Principal = {
+        Service = "ec2.amazonaws.com"
+      }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "node_amazon_eks_worker_node_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"
+  role       = aws_iam_role.eks_nodes.name
+}
+
+resource "aws_iam_role_policy_attachment" "node_amazon_eks_cni_policy" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"
+  role       = aws_iam_role.eks_nodes.name
+}
+
+resource "aws_iam_role_policy_attachment" "node_amazon_ec2_container_registry_read_only" {
+  policy_arn = "arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"
+  role       = aws_iam_role.eks_nodes.name
+}
+
+# 11. EKS Node Group (1 micro node for testing)
+resource "aws_eks_node_group" "nodes" {
+  cluster_name    = aws_eks_cluster.main.name
+  node_group_name = "test-node-group"
+  node_role_arn   = aws_iam_role.eks_nodes.arn
+  subnet_ids      = [aws_subnet.public_1.id, aws_subnet.public_2.id]
+  instance_types  = ["t3.micro"]
+
+  scaling_config {
+    desired_size = 1
+    max_size     = 2
+    min_size     = 1
+  }
+
+  depends_on = [
+    aws_iam_role_policy_attachment.node_amazon_eks_worker_node_policy,
+    aws_iam_role_policy_attachment.node_amazon_eks_cni_policy,
+    aws_iam_role_policy_attachment.node_amazon_ec2_container_registry_read_only,
+  ]
+}

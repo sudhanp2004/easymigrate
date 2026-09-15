@@ -1,0 +1,34 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+crash.log
+tfplan
+*.tfplan
+
+# Scan / pipeline outputs (contain account IDs, ARNs, endpoints)
+aws_state.json
+migration_ir.json
+gcp_output/
+.easymigrate/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Secrets & env
+.env
+.env.*
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
