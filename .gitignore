@@ -32,3 +32,6 @@ build/
 .vscode/
 .idea/
 .DS_Store
+
+# Agent workflow scratch
+.superpowers/
