@@ -144,7 +144,10 @@ class Project:
         return json.loads(path.read_text(encoding="utf-8"))
 
     def write_ir(self, path: Path, doc: IRDocument) -> None:
-        self.write_json(path, doc)
+        """Re-validate before writing, so a document mutated after construction (e.g. with
+        `model_copy(update=...)`) can't be saved with dangling references."""
+        validated = IRDocument.model_validate_json(doc.model_dump_json())
+        self.write_json(path, validated)
 
     def read_ir(self, path: Path, *, produced_by: str) -> IRDocument:
         if not path.exists():

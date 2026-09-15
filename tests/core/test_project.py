@@ -2,6 +2,7 @@ import json
 import stat
 
 import pytest
+from pydantic import ValidationError
 
 from easymigrate import __version__
 from easymigrate.core.project import (
@@ -13,7 +14,7 @@ from easymigrate.core.project import (
     TargetConfig,
 )
 from easymigrate.ir import IRDocument, SourceRef
-from easymigrate.ir.network import Network
+from easymigrate.ir.network import Network, Subnet
 
 
 def make_ir() -> IRDocument:
@@ -79,6 +80,36 @@ def test_ir_round_trip(tmp_path):
     p.write_ir(p.ir_path, make_ir())
 
     assert p.read_ir(p.ir_path, produced_by="analyze").model_dump() == make_ir().model_dump()
+
+
+def test_write_ir_revalidates_before_writing(tmp_path):
+    p = Project(tmp_path)
+    p.init()
+    doc = make_ir()
+    broken = doc.model_copy(
+        update={
+            "objects": [
+                *doc.objects,
+                Subnet(
+                    id="subnet:orphan",
+                    name="orphan",
+                    source=SourceRef(
+                        cloud="aws", type="subnet", id="subnet-1", region="ap-south-1"
+                    ),
+                    network="network:missing",
+                    cidr="10.0.1.0/24",
+                    zone="ap-south-1a",
+                    internet="public",
+                    map_public_ip=True,
+                ),
+            ]
+        }
+    )
+
+    with pytest.raises(ValidationError):
+        p.write_ir(p.ir_path, broken)
+
+    assert not p.ir_path.exists()
 
 
 def test_read_missing_artifact_names_the_command(tmp_path):
