@@ -90,7 +90,26 @@ class SelfPeer(StrictModel):
     type: Literal["self"] = "self"
 
 
-Peer = Annotated[CidrPeer | PolicyPeer | ExternalPolicyPeer | SelfPeer, Field(discriminator="type")]
+class PrefixListPeer(StrictModel):
+    """An AWS managed prefix list reference."""
+
+    type: Literal["prefix_list"] = "prefix_list"
+    prefix_list_id: str
+
+
+Peer = Annotated[
+    CidrPeer | PolicyPeer | ExternalPolicyPeer | SelfPeer | PrefixListPeer,
+    Field(discriminator="type"),
+]
+
+
+def _check_icmp(protocol: str, icmp_type: int | None, icmp_code: int | None) -> None:
+    if icmp_type is None and icmp_code is None:
+        return
+    if protocol not in ("icmp", "icmpv6"):
+        raise ValueError("icmp_type/icmp_code are only allowed for icmp/icmpv6")
+    if icmp_code is not None and icmp_type is None:
+        raise ValueError("icmp_code requires icmp_type")
 
 
 class FirewallRule(StrictModel):
@@ -99,10 +118,13 @@ class FirewallRule(StrictModel):
     ports: list[str] = Field(default_factory=list)
     peer: Peer
     description: str | None = None
+    icmp_type: int | None = Field(default=None, ge=0, le=255)
+    icmp_code: int | None = Field(default=None, ge=0, le=255)
 
     @model_validator(mode="after")
     def _valid_protocol_and_ports(self) -> FirewallRule:
         _check_protocol_and_ports(self.protocol, self.ports)
+        _check_icmp(self.protocol, self.icmp_type, self.icmp_code)
         return self
 
 
@@ -113,10 +135,13 @@ class AclRule(StrictModel):
     ports: list[str] = Field(default_factory=list)
     cidr: Cidr
     action: Literal["allow", "deny"]
+    icmp_type: int | None = Field(default=None, ge=0, le=255)
+    icmp_code: int | None = Field(default=None, ge=0, le=255)
 
     @model_validator(mode="after")
     def _valid_protocol_and_ports(self) -> AclRule:
         _check_protocol_and_ports(self.protocol, self.ports)
+        _check_icmp(self.protocol, self.icmp_type, self.icmp_code)
         return self
 
 

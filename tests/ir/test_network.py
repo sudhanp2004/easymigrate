@@ -13,6 +13,7 @@ from easymigrate.ir.network import (
     Network,
     NetworkAcl,
     PolicyPeer,
+    PrefixListPeer,
     SelfPeer,
     Subnet,
 )
@@ -86,6 +87,13 @@ def test_full_networking_document_round_trips():
                 ports=["22"],
                 peer=ExternalPolicyPeer(group_id="sg-999", owner_id="210987654321"),
             ),
+            FirewallRule(
+                direction="ingress",
+                protocol="icmp",
+                peer=PrefixListPeer(prefix_list_id="pl-12345"),
+                icmp_type=8,
+                icmp_code=0,
+            ),
         ],
     )
     db = policy("db", [])
@@ -136,6 +144,7 @@ def test_full_networking_document_round_trips():
     assert restored.model_dump() == original.model_dump()
     assert isinstance(restored.get("firewall_policy:web").rules[2].peer, PolicyPeer)
     assert isinstance(restored.get("firewall_policy:web").rules[3].peer, ExternalPolicyPeer)
+    assert isinstance(restored.get("firewall_policy:web").rules[4].peer, PrefixListPeer)
 
 
 def test_subnet_must_point_at_existing_network():
@@ -206,3 +215,57 @@ def test_invalid_protocols_and_ports(protocol, ports, message):
 def test_acl_rule_number_range():
     with pytest.raises(ValidationError):
         AclRule(number=32767, direction="ingress", protocol="all", cidr="0.0.0.0/0", action="deny")
+
+
+def test_firewall_rule_accepts_icmp_echo_request():
+    rule = FirewallRule(
+        direction="ingress", protocol="icmp", peer=SelfPeer(), icmp_type=8, icmp_code=0
+    )
+
+    assert rule.icmp_type == 8
+    assert rule.icmp_code == 0
+
+
+def test_firewall_rule_accepts_icmpv6_with_only_a_type():
+    rule = FirewallRule(direction="ingress", protocol="icmpv6", peer=SelfPeer(), icmp_type=128)
+
+    assert rule.icmp_type == 128
+    assert rule.icmp_code is None
+
+
+def test_firewall_rule_rejects_icmp_type_for_non_icmp_protocol():
+    with pytest.raises(
+        ValidationError, match="icmp_type/icmp_code are only allowed for icmp/icmpv6"
+    ):
+        FirewallRule(direction="ingress", protocol="tcp", peer=SelfPeer(), icmp_type=8)
+
+
+def test_firewall_rule_rejects_icmp_code_without_icmp_type():
+    with pytest.raises(ValidationError, match="icmp_code requires icmp_type"):
+        FirewallRule(direction="ingress", protocol="icmp", peer=SelfPeer(), icmp_code=0)
+
+
+def test_firewall_rule_rejects_out_of_range_icmp_type():
+    with pytest.raises(ValidationError):
+        FirewallRule(direction="ingress", protocol="icmp", peer=SelfPeer(), icmp_type=256)
+
+
+def test_acl_rule_accepts_icmp_type_and_code():
+    rule = AclRule(
+        number=100,
+        direction="ingress",
+        protocol="icmp",
+        cidr="0.0.0.0/0",
+        action="allow",
+        icmp_type=3,
+        icmp_code=1,
+    )
+
+    assert rule.icmp_type == 3
+    assert rule.icmp_code == 1
+
+
+def test_prefix_list_peer_round_trips():
+    peer = PrefixListPeer(prefix_list_id="pl-12345")
+
+    assert PrefixListPeer.model_validate_json(peer.model_dump_json()) == peer
