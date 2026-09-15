@@ -15,6 +15,7 @@ from rich.table import Table
 from easymigrate import __version__
 from easymigrate.core.errors import EasyMigrateError
 from easymigrate.core.pipeline import analyze as run_analyze
+from easymigrate.core.pipeline import resolve as run_resolve
 from easymigrate.core.pipeline import scan as run_scan
 from easymigrate.core.project import Project, StageInputMissing
 
@@ -121,3 +122,81 @@ def analyze() -> None:
     console.print(table)
     _print_findings(doc.findings)
     console.print(f"Wrote {project.ir_path.relative_to(project.root)}.", markup=False)
+
+
+def _prompt_choice(view: dict[str, Any]) -> tuple[str, bool]:
+    diff = view["difference"]
+    rule = view["rule"]
+    current = view["current_strategy"]
+
+    console.print(f"[bold]{rule.title}[/bold] ({diff.key})")
+    console.print(f"  subjects: {', '.join(diff.subjects)}", markup=False)
+    console.print(f"  impact: {rule.impact}", markup=False)
+    if diff.context:
+        console.print(f"  context: {diff.context}", markup=False)
+    for index, strategy in enumerate(rule.strategies, start=1):
+        marker = " (default)" if strategy.id == rule.default else ""
+        console.print(
+            f"  {index}. {strategy.id} — {strategy.effect} (risk: {strategy.risk}){marker}",
+            markup=False,
+        )
+
+    while True:
+        raw = typer.prompt("Strategy (Enter to keep current)", default="", show_default=False)
+        if not raw.strip():
+            chosen = rule.strategy(current)
+        else:
+            try:
+                index = int(raw.strip()) - 1
+                if not 0 <= index < len(rule.strategies):
+                    raise ValueError
+            except ValueError:
+                console.print("Invalid choice.", markup=False)
+                continue
+            chosen = rule.strategies[index]
+        if not chosen.manual:
+            return chosen.id, False
+        answer = typer.prompt("I will handle this myself [y/N]", default="n", show_default=False)
+        if answer.strip().lower() == "y":
+            return chosen.id, True
+        # anything else re-asks the strategy choice
+
+
+@app.command()
+def resolve(
+    accept_defaults: bool = typer.Option(
+        False, "--accept-defaults", help="Choose every default without prompting."
+    ),
+    acknowledge_manual: bool = typer.Option(
+        False,
+        "--acknowledge-manual",
+        help="Acknowledge every manual decision (with --accept-defaults).",
+    ),
+) -> None:
+    """Choose a strategy for every AWS→GCP difference and save decisions.yaml."""
+    if acknowledge_manual and not accept_defaults:
+        _fail("--acknowledge-manual requires --accept-defaults")
+    project = Project(Path.cwd())
+    choose = None if accept_defaults else _prompt_choice
+    with _user_errors():
+        summary = run_resolve(
+            project,
+            choose=choose,
+            accept_defaults=accept_defaults,
+            acknowledge_manual=acknowledge_manual,
+        )
+    if summary.dropped:
+        console.print(f"Dropped {len(summary.dropped)} decision(s) no longer needed:", markup=False)
+        for key in summary.dropped:
+            console.print(f"  {key}", markup=False)
+    table = Table("Key", "Strategy", "Decided by", "Acknowledged", title="Decisions")
+    for decision in summary.decisions.decisions:
+        table.add_row(
+            decision.key, decision.strategy, decision.decided_by, str(decision.acknowledged)
+        )
+    console.print(table)
+    if summary.problems:
+        for problem in summary.problems:
+            error_console.print(f"[red]{problem}[/red]")
+        raise typer.Exit(code=2)
+    console.print("Next: run `easymigrate plan`.", markup=False)

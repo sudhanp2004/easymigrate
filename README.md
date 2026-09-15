@@ -8,10 +8,19 @@ Migrates cloud infrastructure from AWS to GCP. It scans the live source cloud, b
     easymigrate scan --region ap-south-1 --aws-profile my-readonly-profile
     #    or: easymigrate scan --region ap-south-1 --aws-role-arn arn:aws:iam::123456789012:role/EasyMigrateScan
 
-    # 2. Turn the scan into the intent-level IR (.easymigrate/ir.json)
+    # 2. Turn the scan into the intent-level IR and detect AWS→GCP differences
+    #    (.easymigrate/ir.json, .easymigrate/differences.json)
     easymigrate analyze
 
-Both commands work in the current directory and keep their output in `.easymigrate/`. That folder holds account metadata such as account IDs and ARNs; keep it private. It is added to `.gitignore` automatically inside a git repository.
+    # 3. Choose a strategy per difference (safe defaults preselected) and save
+    #    .easymigrate/decisions.yaml
+    easymigrate resolve
+    #    or, to accept every default and stop only on unacknowledged manual differences:
+    easymigrate resolve --accept-defaults
+    #    or to also acknowledge those in bulk:
+    easymigrate resolve --accept-defaults --acknowledge-manual
+
+These commands work in the current directory and keep their output in `.easymigrate/`. That folder holds account metadata such as account IDs and ARNs; keep it private. It is added to `.gitignore` automatically inside a git repository.
 
 Permissions `scan` needs: `ec2:DescribeVpcs`, `ec2:DescribeVpcAttribute`, `ec2:DescribeSubnets`, `ec2:DescribeRouteTables`, `ec2:DescribeInternetGateways`, `ec2:DescribeNatGateways`, `ec2:DescribeSecurityGroups`, `ec2:DescribeNetworkAcls`, `tag:GetResources`, `sts:GetCallerIdentity`. Missing permissions are reported as scan gaps rather than failing the scan.
 

@@ -1,8 +1,8 @@
-"""Stage orchestration for `scan` and `analyze` (spec §2.2, §2.3)."""
+"""Stage orchestration for `scan`, `analyze` and `resolve` (spec §2.2, §2.3, §4.2)."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -10,6 +10,14 @@ from typing import Any
 from easymigrate.core import registry
 from easymigrate.core.plugin import SCAN_FILE, CollectContext, NormalizeContext, Plugin, Snapshot
 from easymigrate.core.project import Project, SourceConfig
+from easymigrate.differences.decisions import (
+    from_yaml,
+    merge_decisions,
+    readiness_problems,
+    to_yaml,
+)
+from easymigrate.differences.engine import catalogue, detect
+from easymigrate.differences.model import Decision, DecisionSet, Difference, DifferenceRule
 from easymigrate.ir.base import Finding, IntentObject, IRDocument
 
 _SAMPLE_ARNS = 3
@@ -148,4 +156,97 @@ def analyze(
         findings=[*(Finding.model_validate(f) for f in meta["findings"]), *ctx.findings],
     )
     project.write_ir(project.ir_path, doc)
+    _write_differences(project, doc)
     return doc
+
+
+def _write_differences(project: Project, doc: IRDocument) -> None:
+    differences = detect(doc)
+    rules_by_id = {rule.id: rule for rule in catalogue()}
+    fired = sorted({diff.rule_id for diff in differences})
+    project.write_json(
+        project.differences_path,
+        {
+            "differences": [diff.model_dump(mode="json") for diff in differences],
+            "rules": {
+                rule_id: {
+                    "title": rules_by_id[rule_id].title,
+                    "impact": rules_by_id[rule_id].impact,
+                    "strategies": [
+                        s.model_dump(mode="json") for s in rules_by_id[rule_id].strategies
+                    ],
+                    "default": rules_by_id[rule_id].default,
+                }
+                for rule_id in fired
+            },
+        },
+    )
+
+
+def load_differences(project: Project) -> list[Difference]:
+    data = project.read_json(project.differences_path, produced_by="analyze")
+    return [Difference.model_validate(item) for item in data["differences"]]
+
+
+@dataclass(frozen=True)
+class ResolveSummary:
+    decisions: DecisionSet
+    dropped: list[str]
+    problems: list[str]
+
+
+def resolve(
+    project: Project,
+    *,
+    choose: Callable[[dict[str, Any]], tuple[str, bool]] | None = None,
+    accept_defaults: bool = False,
+    acknowledge_manual: bool = False,
+) -> ResolveSummary:
+    project.read_ir(project.ir_path, produced_by="analyze")
+    differences = load_differences(project)
+    rules: tuple[DifferenceRule, ...] = catalogue()
+    rules_by_id = {rule.id: rule for rule in rules}
+    diffs_by_key = {diff.key: diff for diff in differences}
+
+    existing = (
+        from_yaml(project.decisions_path.read_text(encoding="utf-8"))
+        if project.decisions_path.exists()
+        else None
+    )
+    merged, dropped = merge_decisions(existing, differences, rules)
+
+    if choose is not None and not accept_defaults:
+        updated: list[Decision] = []
+        for decision in merged.decisions:
+            diff = diffs_by_key[decision.key]
+            rule = rules_by_id[diff.rule_id]
+            view = {"difference": diff, "rule": rule, "current_strategy": decision.strategy}
+            strategy_id, acknowledged = choose(view)
+            decided_by = decision.decided_by if strategy_id == decision.strategy else "user"
+            updated.append(
+                Decision(
+                    key=decision.key,
+                    strategy=strategy_id,
+                    decided_by=decided_by,
+                    acknowledged=acknowledged,
+                )
+            )
+        merged = merged.model_copy(update={"decisions": updated})
+
+    if acknowledge_manual:
+        acked: list[Decision] = []
+        for decision in merged.decisions:
+            diff = diffs_by_key[decision.key]
+            rule = rules_by_id[diff.rule_id]
+            try:
+                strategy = rule.strategy(decision.strategy)
+            except KeyError:
+                strategy = None
+            if strategy is not None and strategy.manual:
+                decision = decision.model_copy(update={"acknowledged": True})
+            acked.append(decision)
+        merged = merged.model_copy(update={"decisions": acked, "acknowledged_in_bulk": True})
+
+    project.write_text(project.decisions_path, to_yaml(merged))
+    problems = readiness_problems(merged, differences, rules)
+    return ResolveSummary(decisions=merged, dropped=dropped, problems=problems)
