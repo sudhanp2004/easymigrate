@@ -142,6 +142,18 @@ def test_writes_are_atomic_and_private(tmp_path):
     assert stat.S_IMODE(p.config_path.stat().st_mode) == 0o600
 
 
+def test_write_text_is_atomic_and_private(tmp_path):
+    p = Project(tmp_path)
+    p.init()
+    target = p.decisions_path
+
+    p.write_text(target, "schema_version: '1'\n")
+
+    assert target.read_text() == "schema_version: '1'\n"
+    assert not list(p.dir.glob("*.tmp"))
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+
+
 def test_private_directories_inside_dot_easymigrate(tmp_path):
     (tmp_path / ".git").mkdir()
     git_root_mode_before = stat.S_IMODE(tmp_path.stat().st_mode)

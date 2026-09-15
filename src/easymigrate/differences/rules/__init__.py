@@ -1,0 +1,1 @@
+"""Difference rule catalogues."""

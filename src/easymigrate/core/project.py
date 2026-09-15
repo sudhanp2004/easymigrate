@@ -131,6 +131,9 @@ class Project:
         text = yaml.safe_dump(config.model_dump(mode="json"), sort_keys=False)
         _atomic_write(self.config_path, text)
 
+    def write_text(self, path: Path, text: str) -> None:
+        _atomic_write(path, text)
+
     def write_json(self, path: Path, data: BaseModel | dict[str, Any] | list[Any]) -> None:
         if isinstance(data, BaseModel):
             text = data.model_dump_json(indent=2)
