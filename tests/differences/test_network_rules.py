@@ -5,10 +5,17 @@ Small hand-built IR objects, local to this file.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from easymigrate.differences.rules.aws_gcp.network import (
+    NetCustomRoute,
     NetEgressTag,
     NetIcmpType,
     NetIsolationVmLevel,
+    NetNacl,
+    NetPeering,
     NetPrefixList,
     NetSgXvpcRef,
     NetZoneRegional,
@@ -528,3 +535,358 @@ def test_rules_1_through_6_have_valid_catalogue_ids():
         rule = rule_cls()
         assert rule.family == "network"
         assert rule.id.startswith("NET-")
+
+
+# ---- NET-NACL ------------------------------------------------------------
+
+
+def test_nacl_detects_each_acl():
+    net = _network()
+    acl = NetworkAcl(
+        id="network_acl:a", name="a", source=_source("acl", "acl-1"), network="network:main"
+    )
+    doc = _doc(net, acl)
+    diffs = NetNacl().detect(doc)
+    assert [d.key for d in diffs] == ["NET-NACL@network_acl:a"]
+
+
+def test_nacl_detects_nothing_without_acl():
+    doc = _doc(_network())
+    assert NetNacl().detect(doc) == []
+
+
+def test_nacl_manual_excludes():
+    net = _network()
+    acl = NetworkAcl(
+        id="network_acl:a", name="a", source=_source("acl", "acl-1"), network="network:main"
+    )
+    doc = _doc(net, acl)
+    rule = NetNacl()
+    diff = rule.detect(doc)[0]
+    original = doc.model_copy(deep=True)
+
+    result = rule.apply(doc, diff, "manual")
+
+    assert doc == original
+    assert result.get("network_acl:a").excluded == (
+        "NET-NACL: stateless subnet ACLs have no GCP equivalent"
+    )
+
+
+# ---- NET-PEERING -----------------------------------------------------------
+
+
+def test_peering_detects_peering_route():
+    net = _network()
+    route = CustomRoute(
+        id="custom_route:a",
+        name="a",
+        source=_source("route", "route-1"),
+        network="network:main",
+        destination="10.1.0.0/16",
+        target_type="peering",
+        target_id="pcx-1",
+    )
+    doc = _doc(net, route)
+    diffs = NetPeering().detect(doc)
+    assert [d.key for d in diffs] == ["NET-PEERING@custom_route:a"]
+
+
+def test_peering_detects_nothing_for_non_peering_route():
+    net = _network()
+    route = CustomRoute(
+        id="custom_route:a",
+        name="a",
+        source=_source("route", "route-1"),
+        network="network:main",
+        destination="10.1.0.0/16",
+        target_type="vpn",
+        target_id="vgw-1",
+    )
+    doc = _doc(net, route)
+    assert NetPeering().detect(doc) == []
+
+
+def test_peering_manual_excludes():
+    net = _network()
+    route = CustomRoute(
+        id="custom_route:a",
+        name="a",
+        source=_source("route", "route-1"),
+        network="network:main",
+        destination="10.1.0.0/16",
+        target_type="peering",
+        target_id="pcx-1",
+    )
+    doc = _doc(net, route)
+    rule = NetPeering()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "manual")
+
+    assert result.get("custom_route:a").excluded == (
+        "NET-PEERING: recreate VPC peering after migrating"
+    )
+
+
+# ---- NET-CUSTOM-ROUTE -------------------------------------------------------
+
+
+def test_custom_route_detects_other_targets():
+    net = _network()
+    route = CustomRoute(
+        id="custom_route:a",
+        name="a",
+        source=_source("route", "route-1"),
+        network="network:main",
+        destination="10.1.0.0/16",
+        target_type="vpn",
+        target_id="vgw-1",
+    )
+    doc = _doc(net, route)
+    diffs = NetCustomRoute().detect(doc)
+    assert [d.key for d in diffs] == ["NET-CUSTOM-ROUTE@custom_route:a"]
+
+
+def test_custom_route_detects_nothing_for_peering():
+    net = _network()
+    route = CustomRoute(
+        id="custom_route:a",
+        name="a",
+        source=_source("route", "route-1"),
+        network="network:main",
+        destination="10.1.0.0/16",
+        target_type="peering",
+        target_id="pcx-1",
+    )
+    doc = _doc(net, route)
+    assert NetCustomRoute().detect(doc) == []
+
+
+def test_custom_route_manual_excludes_with_target_details():
+    net = _network()
+    route = CustomRoute(
+        id="custom_route:a",
+        name="a",
+        source=_source("route", "route-1"),
+        network="network:main",
+        destination="10.1.0.0/16",
+        target_type="vpn",
+        target_id="vgw-1",
+    )
+    doc = _doc(net, route)
+    rule = NetCustomRoute()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "manual")
+
+    assert result.get("custom_route:a").excluded == (
+        "NET-CUSTOM-ROUTE: vpn target vgw-1 is not migrated"
+    )
+
+
+# ---- NET-IPV6 ----------------------------------------------------------------
+
+
+def test_ipv6_detects_network_with_ipv6_cidrs():
+    net = Network(
+        id="network:main",
+        name="main",
+        source=_source("vpc", "network:main"),
+        cidr_blocks=["10.0.0.0/16"],
+        ipv6_cidr_blocks=["2001:db8::/56"],
+        dns_hostnames=True,
+        dns_resolution=True,
+    )
+    subnet = Subnet(
+        id="subnet:a",
+        name="a",
+        source=_source("subnet", "subnet-1"),
+        network="network:main",
+        cidr="10.0.1.0/24",
+        ipv6_cidr="2001:db8::/64",
+        zone="ap-south-1a",
+        internet="public",
+        map_public_ip=True,
+    )
+    doc = _doc(net, subnet)
+    from easymigrate.differences.rules.aws_gcp.network import NetIpv6
+
+    diffs = NetIpv6().detect(doc)
+    assert [d.key for d in diffs] == ["NET-IPV6@network:main"]
+    assert diffs[0].subjects == ["network:main", "subnet:a"]
+
+
+def test_ipv6_detects_nothing_without_ipv6():
+    doc = _doc(_network())
+    from easymigrate.differences.rules.aws_gcp.network import NetIpv6
+
+    assert NetIpv6().detect(doc) == []
+
+
+def test_ipv6_ipv4_only_clears_ipv6_fields():
+    net = Network(
+        id="network:main",
+        name="main",
+        source=_source("vpc", "network:main"),
+        cidr_blocks=["10.0.0.0/16"],
+        ipv6_cidr_blocks=["2001:db8::/56"],
+        dns_hostnames=True,
+        dns_resolution=True,
+    )
+    subnet = Subnet(
+        id="subnet:a",
+        name="a",
+        source=_source("subnet", "subnet-1"),
+        network="network:main",
+        cidr="10.0.1.0/24",
+        ipv6_cidr="2001:db8::/64",
+        zone="ap-south-1a",
+        internet="public",
+        map_public_ip=True,
+    )
+    doc = _doc(net, subnet)
+    from easymigrate.differences.rules.aws_gcp.network import NetIpv6
+
+    rule = NetIpv6()
+    diff = rule.detect(doc)[0]
+    original = doc.model_copy(deep=True)
+
+    result = rule.apply(doc, diff, "ipv4_only")
+
+    assert doc == original
+    assert result.get("network:main").ipv6_cidr_blocks == []
+    assert result.get("subnet:a").ipv6_cidr is None
+
+
+def test_ipv6_manual_makes_the_same_change():
+    net = Network(
+        id="network:main",
+        name="main",
+        source=_source("vpc", "network:main"),
+        cidr_blocks=["10.0.0.0/16"],
+        ipv6_cidr_blocks=["2001:db8::/56"],
+        dns_hostnames=True,
+        dns_resolution=True,
+    )
+    doc = _doc(net)
+    from easymigrate.differences.rules.aws_gcp.network import NetIpv6
+
+    rule = NetIpv6()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "manual")
+
+    assert result.get("network:main").ipv6_cidr_blocks == []
+
+
+def test_ipv6_strategies_include_manual_marker():
+    from easymigrate.differences.rules.aws_gcp.network import NetIpv6
+
+    rule = NetIpv6()
+    assert any(s.id == "manual" and s.manual for s in rule.strategies)
+    assert "isolated" in rule.impact
+
+
+# ---- NET-CIDR-OVERLAP ---------------------------------------------------------
+
+
+def test_cidr_overlap_detects_overlapping_networks():
+    from easymigrate.differences.rules.aws_gcp.network import NetCidrOverlap
+
+    net_a = _network("network:a", cidr="10.0.0.0/16")
+    net_b = _network("network:b", cidr="10.0.0.0/16")
+    doc = _doc(net_a, net_b)
+    diffs = NetCidrOverlap().detect(doc)
+    assert [d.key for d in diffs] == ["NET-CIDR-OVERLAP@network:a"]
+    assert diffs[0].subjects == ["network:a", "network:b"]
+
+
+def test_cidr_overlap_detects_nothing_for_disjoint_networks():
+    from easymigrate.differences.rules.aws_gcp.network import NetCidrOverlap
+
+    net_a = _network("network:a", cidr="10.0.0.0/16")
+    net_b = _network("network:b", cidr="10.1.0.0/16")
+    doc = _doc(net_a, net_b)
+    assert NetCidrOverlap().detect(doc) == []
+
+
+def test_cidr_overlap_keep_is_a_no_op():
+    from easymigrate.differences.rules.aws_gcp.network import NetCidrOverlap
+
+    net_a = _network("network:a", cidr="10.0.0.0/16")
+    net_b = _network("network:b", cidr="10.0.0.0/16")
+    doc = _doc(net_a, net_b)
+    rule = NetCidrOverlap()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "keep")
+
+    assert result == doc
+
+
+def test_rules_7_through_11_have_valid_catalogue_ids():
+    from easymigrate.differences.rules.aws_gcp.network import (
+        NetCidrOverlap,
+        NetCustomRoute,
+        NetIpv6,
+        NetPeering,
+    )
+
+    for rule_cls in (NetNacl, NetPeering, NetCustomRoute, NetIpv6, NetCidrOverlap):
+        rule = rule_cls()
+        assert rule.family == "network"
+        assert rule.id.startswith("NET-")
+
+
+# ---- fixture-based detection (plan 3 task 3) -------------------------------
+
+_FIXTURES_DIR = Path(__file__).resolve().parents[1] / "plugins" / "network" / "fixtures"
+
+_EXPECTED_KEYS: dict[str, list[str]] = {
+    "basic_public": ["NET-ZONE-REGIONAL@network:migration-test-vpc"],
+    "custom_nacl": ["NET-NACL@network_acl:db-acl", "NET-ZONE-REGIONAL@network:locked-vpc"],
+    "external_sg_ref": ["NET-SG-XVPC-REF@firewall_policy:app"],
+    "ipv6": ["NET-IPV6@network:dual-stack", "NET-ZONE-REGIONAL@network:dual-stack"],
+    "multi_vpc": [
+        "NET-CIDR-OVERLAP@network:prod",
+        "NET-ZONE-REGIONAL@network:prod",
+        "NET-ZONE-REGIONAL@network:staging",
+    ],
+    "peering_route": [
+        "NET-PEERING@custom_route:app-rt-172-16-0-0-16",
+        "NET-ZONE-REGIONAL@network:requester",
+    ],
+    "private_with_nat": ["NET-ZONE-REGIONAL@network:app-vpc"],
+    "sg_references_sg": [
+        "NET-EGRESS-TAG@firewall_policy:web",
+        "NET-ICMP-TYPE@firewall_policy:web",
+    ],
+}
+
+
+def _golden_doc(case: str) -> IRDocument:
+    from easymigrate.core.plugin import NormalizeContext, Snapshot
+    from easymigrate.plugins.network import NetworkPlugin
+
+    ctx = NormalizeContext(account_id="123456789012", region="ap-south-1", strict=True)
+    objects = NetworkPlugin().normalize(Snapshot.from_dir(_FIXTURES_DIR / case / "snapshot"), ctx)
+    return IRDocument(
+        source={"cloud": "aws", "account_id": "123456789012", "region": "ap-south-1"},
+        objects=objects,
+        findings=ctx.findings,
+    )
+
+
+def test_every_fixture_case_has_expected_keys():
+    cases = sorted(p.name for p in _FIXTURES_DIR.glob("*") if (p / "snapshot").is_dir())
+    assert set(cases) == set(_EXPECTED_KEYS)
+
+
+@pytest.mark.parametrize("case", sorted(_EXPECTED_KEYS))
+def test_golden_detected_difference_keys(case):
+    from easymigrate.differences.engine import detect
+
+    doc = _golden_doc(case)
+    differences = detect(doc)
+    assert [d.key for d in differences] == _EXPECTED_KEYS[case]

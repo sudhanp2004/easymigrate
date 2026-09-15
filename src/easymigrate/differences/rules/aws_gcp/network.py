@@ -20,6 +20,11 @@ from easymigrate.ir.network import (
     Subnet,
 )
 
+
+def _exclude(obj: IntentObject, reason: str) -> IntentObject:
+    return obj.model_copy(update={"excluded": reason})
+
+
 _EXPOSURE_ORDER = ("isolated", "private_nat", "public")
 
 
@@ -418,3 +423,212 @@ class NetIcmpType(DifferenceRule):
             updated = _add_omitted(updated, len(matching))
             return _replace_object(doc, updated)
         raise ValueError(f"unknown strategy {strategy_id!r}")
+
+
+class NetNacl(DifferenceRule):
+    id = "NET-NACL"
+    family = "network"
+    title = "Stateless subnet ACLs have no GCP equivalent"
+    impact = "AWS network ACLs apply stateless, numbered rules per subnet; GCP has nothing like it."
+    strategies = (
+        Strategy(
+            id="manual",
+            title="Handle manually",
+            effect="not generated; the object is excluded",
+            risk="low",
+            manual=True,
+        ),
+    )
+    default = "manual"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [
+            self.difference([acl.id]) for acl in sorted(ir.of_kind(NetworkAcl), key=lambda a: a.id)
+        ]
+
+    def apply(self, ir: IRDocument, diff: Difference, strategy_id: str) -> IRDocument:
+        doc = ir.model_copy(deep=True)
+        acl_id = diff.subjects[0]
+        if acl_id not in {o.id for o in doc.objects}:
+            return doc
+        if strategy_id != "manual":
+            raise ValueError(f"unknown strategy {strategy_id!r}")
+        return _replace_object(
+            doc,
+            _exclude(doc.get(acl_id), "NET-NACL: stateless subnet ACLs have no GCP equivalent"),
+        )
+
+
+class NetPeering(DifferenceRule):
+    id = "NET-PEERING"
+    family = "network"
+    title = "VPC peering is not migrated automatically"
+    impact = "A peering route depends on the peer VPC, which may not exist yet on GCP."
+    strategies = (
+        Strategy(
+            id="manual",
+            title="Handle manually",
+            effect="not generated; the object is excluded",
+            risk="low",
+            manual=True,
+        ),
+    )
+    default = "manual"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [
+            self.difference([route.id])
+            for route in sorted(ir.of_kind(CustomRoute), key=lambda r: r.id)
+            if route.target_type == "peering"
+        ]
+
+    def apply(self, ir: IRDocument, diff: Difference, strategy_id: str) -> IRDocument:
+        doc = ir.model_copy(deep=True)
+        route_id = diff.subjects[0]
+        if route_id not in {o.id for o in doc.objects}:
+            return doc
+        if strategy_id != "manual":
+            raise ValueError(f"unknown strategy {strategy_id!r}")
+        return _replace_object(
+            doc,
+            _exclude(doc.get(route_id), "NET-PEERING: recreate VPC peering after migrating"),
+        )
+
+
+class NetCustomRoute(DifferenceRule):
+    id = "NET-CUSTOM-ROUTE"
+    family = "network"
+    title = "Custom routes to other targets are not migrated"
+    impact = (
+        "A custom route to a VPN, transit gateway, ENI or other target has no GCP equivalent here."
+    )
+    strategies = (
+        Strategy(
+            id="manual",
+            title="Handle manually",
+            effect="not generated; the object is excluded",
+            risk="low",
+            manual=True,
+        ),
+    )
+    default = "manual"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [
+            self.difference([route.id])
+            for route in sorted(ir.of_kind(CustomRoute), key=lambda r: r.id)
+            if route.target_type != "peering"
+        ]
+
+    def apply(self, ir: IRDocument, diff: Difference, strategy_id: str) -> IRDocument:
+        doc = ir.model_copy(deep=True)
+        route_id = diff.subjects[0]
+        if route_id not in {o.id for o in doc.objects}:
+            return doc
+        if strategy_id != "manual":
+            raise ValueError(f"unknown strategy {strategy_id!r}")
+        route = doc.get(route_id)
+        reason = f"NET-CUSTOM-ROUTE: {route.target_type} target {route.target_id} is not migrated"
+        return _replace_object(doc, _exclude(route, reason))
+
+
+class NetIpv6(DifferenceRule):
+    id = "NET-IPV6"
+    family = "network"
+    title = "IPv6 is migrated separately, if at all"
+    impact = (
+        "GCP dual-stack support has different rules than AWS. A subnet that was public "
+        "only through IPv6 is recorded as `isolated` once migrated IPv4-only, since it "
+        "no longer has any public path."
+    )
+    strategies = (
+        Strategy(
+            id="ipv4_only",
+            title="Migrate IPv4 only",
+            effect="ipv6_cidr_blocks/ipv6_cidr are cleared on the network and its subnets",
+            risk="medium",
+        ),
+        Strategy(
+            id="manual",
+            title="Handle manually",
+            effect="the same change as ipv4_only, but requires acknowledgement",
+            risk="medium",
+            manual=True,
+        ),
+    )
+    default = "ipv4_only"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        diffs = []
+        subnets_by_network: dict[str, list[Subnet]] = {}
+        for subnet in ir.of_kind(Subnet):
+            subnets_by_network.setdefault(subnet.network, []).append(subnet)
+        for network in sorted(ir.of_kind(Network), key=lambda n: n.id):
+            if not network.ipv6_cidr_blocks:
+                continue
+            ipv6_subnets = sorted(
+                (s for s in subnets_by_network.get(network.id, []) if s.ipv6_cidr is not None),
+                key=lambda s: s.id,
+            )
+            diffs.append(
+                self.difference(
+                    [network.id, *(s.id for s in ipv6_subnets)],
+                    ipv6_cidr_blocks=list(network.ipv6_cidr_blocks),
+                )
+            )
+        return diffs
+
+    def apply(self, ir: IRDocument, diff: Difference, strategy_id: str) -> IRDocument:
+        doc = ir.model_copy(deep=True)
+        network_id = diff.subjects[0]
+        if network_id not in {o.id for o in doc.objects}:
+            return doc
+        if strategy_id not in ("ipv4_only", "manual"):
+            raise ValueError(f"unknown strategy {strategy_id!r}")
+        subnet_ids = set(diff.subjects[1:])
+        objects = []
+        for obj in doc.objects:
+            if obj.id == network_id:
+                obj = obj.model_copy(update={"ipv6_cidr_blocks": []})
+            elif obj.id in subnet_ids:
+                obj = obj.model_copy(update={"ipv6_cidr": None})
+            objects.append(obj)
+        return doc.model_copy(update={"objects": objects})
+
+
+class NetCidrOverlap(DifferenceRule):
+    id = "NET-CIDR-OVERLAP"
+    family = "network"
+    title = "Overlapping CIDRs are allowed on GCP, for now"
+    impact = (
+        "AWS VPCs with overlapping CIDRs coexist because they are isolated. GCP networks "
+        "are isolated too, but connecting these networks later (peering, a shared VPC) "
+        "will conflict."
+    )
+    strategies = (
+        Strategy(
+            id="keep", title="Keep both networks as they are", effect="no change", risk="none"
+        ),
+    )
+    default = "keep"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        networks = sorted(ir.of_kind(Network), key=lambda n: n.id)
+        diffs = []
+        for i, net_a in enumerate(networks):
+            for net_b in networks[i + 1 :]:
+                if self._overlaps(net_a, net_b):
+                    diffs.append(self.difference(sorted([net_a.id, net_b.id])))
+        return diffs
+
+    @staticmethod
+    def _overlaps(net_a: Network, net_b: Network) -> bool:
+        a_nets = [ipaddress.ip_network(c) for c in net_a.cidr_blocks]
+        b_nets = [ipaddress.ip_network(c) for c in net_b.cidr_blocks]
+        return any(a.overlaps(b) for a in a_nets for b in b_nets)
+
+    def apply(self, ir: IRDocument, diff: Difference, strategy_id: str) -> IRDocument:
+        doc = ir.model_copy(deep=True)
+        if strategy_id != "keep":
+            raise ValueError(f"unknown strategy {strategy_id!r}")
+        return doc
