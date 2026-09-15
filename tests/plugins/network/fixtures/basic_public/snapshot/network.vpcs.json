@@ -1,0 +1,27 @@
+[
+  {
+    "CidrBlock": "10.0.0.0/16",
+    "CidrBlockAssociationSet": [
+      {
+        "AssociationId": "vpc-cidr-assoc-00000000000000001",
+        "CidrBlock": "10.0.0.0/16",
+        "CidrBlockState": {
+          "State": "associated"
+        }
+      }
+    ],
+    "DhcpOptionsId": "default",
+    "InstanceTenancy": "default",
+    "Ipv6CidrBlockAssociationSet": [],
+    "IsDefault": false,
+    "OwnerId": "123456789012",
+    "State": "available",
+    "Tags": [
+      {
+        "Key": "Name",
+        "Value": "migration-test-vpc"
+      }
+    ],
+    "VpcId": "vpc-00000000000000001"
+  }
+]

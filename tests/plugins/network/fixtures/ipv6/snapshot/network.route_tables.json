@@ -1,0 +1,32 @@
+[
+  {
+    "Associations": [
+      {
+        "AssociationState": {
+          "State": "associated"
+        },
+        "Main": true,
+        "RouteTableAssociationId": "rtbassoc-00000000000000001",
+        "RouteTableId": "rtb-00000000000000001"
+      }
+    ],
+    "OwnerId": "123456789012",
+    "RouteTableId": "rtb-00000000000000001",
+    "Routes": [
+      {
+        "DestinationCidrBlock": "10.60.0.0/16",
+        "GatewayId": "local",
+        "Origin": "CreateRouteTable",
+        "State": "active"
+      },
+      {
+        "DestinationIpv6CidrBlock": "2400:6500:673c:8500::/56",
+        "GatewayId": "local",
+        "Origin": "CreateRouteTable",
+        "State": "active"
+      }
+    ],
+    "Tags": [],
+    "VpcId": "vpc-00000000000000001"
+  }
+]

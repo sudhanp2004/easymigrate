@@ -1,0 +1,111 @@
+{
+  "schema_version": "1",
+  "source": {
+    "cloud": "aws",
+    "account_id": "123456789012",
+    "region": "ap-south-1"
+  },
+  "objects": [
+    {
+      "kind": "network",
+      "id": "network:migration-test-vpc",
+      "name": "migration-test-vpc",
+      "labels": {
+        "name": "migration-test-vpc"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "vpc",
+        "id": "vpc-00000000000000001",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "cidr_blocks": [
+        "10.0.0.0/16"
+      ],
+      "ipv6_cidr_blocks": [],
+      "dns_hostnames": true,
+      "dns_resolution": true
+    },
+    {
+      "kind": "subnet",
+      "id": "subnet:migration-test-subnet-1",
+      "name": "migration-test-subnet-1",
+      "labels": {
+        "name": "migration-test-subnet-1"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "subnet",
+        "id": "subnet-00000000000000001",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:migration-test-vpc",
+      "cidr": "10.0.1.0/24",
+      "ipv6_cidr": null,
+      "zone": "ap-south-1a",
+      "internet": "public",
+      "map_public_ip": true
+    },
+    {
+      "kind": "subnet",
+      "id": "subnet:migration-test-subnet-2",
+      "name": "migration-test-subnet-2",
+      "labels": {
+        "name": "migration-test-subnet-2"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "subnet",
+        "id": "subnet-00000000000000002",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:migration-test-vpc",
+      "cidr": "10.0.2.0/24",
+      "ipv6_cidr": null,
+      "zone": "ap-south-1b",
+      "internet": "public",
+      "map_public_ip": true
+    },
+    {
+      "kind": "firewall_policy",
+      "id": "firewall_policy:default",
+      "name": "default",
+      "labels": {},
+      "source": {
+        "cloud": "aws",
+        "type": "security_group",
+        "id": "sg-00000000000000001",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:migration-test-vpc",
+      "rules": [
+        {
+          "direction": "egress",
+          "protocol": "all",
+          "ports": [],
+          "peer": {
+            "type": "cidr",
+            "cidr": "0.0.0.0/0"
+          },
+          "description": null,
+          "icmp_type": null,
+          "icmp_code": null
+        }
+      ],
+      "applies_to": []
+    }
+  ],
+  "findings": []
+}

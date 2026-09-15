@@ -1,0 +1,6 @@
+{
+  "vpc-00000000000000001": {
+    "enableDnsHostnames": true,
+    "enableDnsSupport": true
+  }
+}

@@ -1,0 +1,143 @@
+{
+  "schema_version": "1",
+  "source": {
+    "cloud": "aws",
+    "account_id": "123456789012",
+    "region": "ap-south-1"
+  },
+  "objects": [
+    {
+      "kind": "network",
+      "id": "network:locked-vpc",
+      "name": "locked-vpc",
+      "labels": {
+        "name": "locked-vpc"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "vpc",
+        "id": "vpc-00000000000000001",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "cidr_blocks": [
+        "10.30.0.0/16"
+      ],
+      "ipv6_cidr_blocks": [],
+      "dns_hostnames": false,
+      "dns_resolution": true
+    },
+    {
+      "kind": "subnet",
+      "id": "subnet:db",
+      "name": "db",
+      "labels": {
+        "name": "db"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "subnet",
+        "id": "subnet-00000000000000001",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:locked-vpc",
+      "cidr": "10.30.1.0/24",
+      "ipv6_cidr": null,
+      "zone": "ap-south-1a",
+      "internet": "isolated",
+      "map_public_ip": false
+    },
+    {
+      "kind": "firewall_policy",
+      "id": "firewall_policy:default",
+      "name": "default",
+      "labels": {},
+      "source": {
+        "cloud": "aws",
+        "type": "security_group",
+        "id": "sg-00000000000000001",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:locked-vpc",
+      "rules": [
+        {
+          "direction": "egress",
+          "protocol": "all",
+          "ports": [],
+          "peer": {
+            "type": "cidr",
+            "cidr": "0.0.0.0/0"
+          },
+          "description": null,
+          "icmp_type": null,
+          "icmp_code": null
+        }
+      ],
+      "applies_to": []
+    },
+    {
+      "kind": "network_acl",
+      "id": "network_acl:db-acl",
+      "name": "db-acl",
+      "labels": {
+        "name": "db-acl"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "network_acl",
+        "id": "acl-00000000000000001",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:locked-vpc",
+      "subnets": [
+        "subnet:db"
+      ],
+      "rules": [
+        {
+          "number": 100,
+          "direction": "egress",
+          "protocol": "all",
+          "ports": [],
+          "cidr": "10.30.0.0/16",
+          "action": "allow",
+          "icmp_type": null,
+          "icmp_code": null
+        },
+        {
+          "number": 100,
+          "direction": "ingress",
+          "protocol": "tcp",
+          "ports": [
+            "5432"
+          ],
+          "cidr": "10.30.0.0/16",
+          "action": "allow",
+          "icmp_type": null,
+          "icmp_code": null
+        },
+        {
+          "number": 110,
+          "direction": "ingress",
+          "protocol": "icmp",
+          "ports": [],
+          "cidr": "10.30.0.0/16",
+          "action": "allow",
+          "icmp_type": null,
+          "icmp_code": null
+        }
+      ]
+    }
+  ],
+  "findings": []
+}

@@ -1,0 +1,192 @@
+{
+  "schema_version": "1",
+  "source": {
+    "cloud": "aws",
+    "account_id": "123456789012",
+    "region": "ap-south-1"
+  },
+  "objects": [
+    {
+      "kind": "network",
+      "id": "network:web-vpc",
+      "name": "web-vpc",
+      "labels": {
+        "name": "web-vpc"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "vpc",
+        "id": "vpc-00000000000000001",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "cidr_blocks": [
+        "10.20.0.0/16"
+      ],
+      "ipv6_cidr_blocks": [],
+      "dns_hostnames": false,
+      "dns_resolution": true
+    },
+    {
+      "kind": "firewall_policy",
+      "id": "firewall_policy:default",
+      "name": "default",
+      "labels": {},
+      "source": {
+        "cloud": "aws",
+        "type": "security_group",
+        "id": "sg-00000000000000001",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:web-vpc",
+      "rules": [
+        {
+          "direction": "egress",
+          "protocol": "all",
+          "ports": [],
+          "peer": {
+            "type": "cidr",
+            "cidr": "0.0.0.0/0"
+          },
+          "description": null,
+          "icmp_type": null,
+          "icmp_code": null
+        }
+      ],
+      "applies_to": []
+    },
+    {
+      "kind": "firewall_policy",
+      "id": "firewall_policy:db",
+      "name": "db",
+      "labels": {},
+      "source": {
+        "cloud": "aws",
+        "type": "security_group",
+        "id": "sg-00000000000000002",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:web-vpc",
+      "rules": [
+        {
+          "direction": "egress",
+          "protocol": "all",
+          "ports": [],
+          "peer": {
+            "type": "cidr",
+            "cidr": "0.0.0.0/0"
+          },
+          "description": null,
+          "icmp_type": null,
+          "icmp_code": null
+        },
+        {
+          "direction": "ingress",
+          "protocol": "all",
+          "ports": [],
+          "peer": {
+            "type": "self"
+          },
+          "description": null,
+          "icmp_type": null,
+          "icmp_code": null
+        },
+        {
+          "direction": "ingress",
+          "protocol": "tcp",
+          "ports": [
+            "5432"
+          ],
+          "peer": {
+            "type": "policy",
+            "policy": "firewall_policy:web"
+          },
+          "description": "from web",
+          "icmp_type": null,
+          "icmp_code": null
+        }
+      ],
+      "applies_to": []
+    },
+    {
+      "kind": "firewall_policy",
+      "id": "firewall_policy:web",
+      "name": "web",
+      "labels": {},
+      "source": {
+        "cloud": "aws",
+        "type": "security_group",
+        "id": "sg-00000000000000003",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:web-vpc",
+      "rules": [
+        {
+          "direction": "egress",
+          "protocol": "all",
+          "ports": [],
+          "peer": {
+            "type": "cidr",
+            "cidr": "0.0.0.0/0"
+          },
+          "description": null,
+          "icmp_type": null,
+          "icmp_code": null
+        },
+        {
+          "direction": "egress",
+          "protocol": "tcp",
+          "ports": [
+            "5432"
+          ],
+          "peer": {
+            "type": "policy",
+            "policy": "firewall_policy:db"
+          },
+          "description": null,
+          "icmp_type": null,
+          "icmp_code": null
+        },
+        {
+          "direction": "ingress",
+          "protocol": "icmp",
+          "ports": [],
+          "peer": {
+            "type": "cidr",
+            "cidr": "10.20.0.0/16"
+          },
+          "description": null,
+          "icmp_type": 8,
+          "icmp_code": null
+        },
+        {
+          "direction": "ingress",
+          "protocol": "tcp",
+          "ports": [
+            "443"
+          ],
+          "peer": {
+            "type": "cidr",
+            "cidr": "0.0.0.0/0"
+          },
+          "description": "https",
+          "icmp_type": null,
+          "icmp_code": null
+        }
+      ],
+      "applies_to": []
+    }
+  ],
+  "findings": []
+}

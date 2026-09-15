@@ -1,0 +1,29 @@
+[
+  {
+    "AssignIpv6AddressOnCreation": false,
+    "AvailabilityZone": "ap-south-1a",
+    "AvailabilityZoneId": "aps1-az1",
+    "AvailableIpAddressCount": 251,
+    "CidrBlock": "10.40.1.0/24",
+    "DefaultForAz": false,
+    "Ipv6CidrBlockAssociationSet": [],
+    "Ipv6Native": false,
+    "MapPublicIpOnLaunch": false,
+    "OwnerId": "123456789012",
+    "PrivateDnsNameOptionsOnLaunch": {
+      "EnableResourceNameDnsAAAARecord": false,
+      "EnableResourceNameDnsARecord": false,
+      "HostnameType": "ip-name"
+    },
+    "State": "available",
+    "SubnetArn": "arn:aws:ec2:ap-south-1:123456789012:subnet/subnet-00000000000000001",
+    "SubnetId": "subnet-00000000000000001",
+    "Tags": [
+      {
+        "Key": "Name",
+        "Value": "app"
+      }
+    ],
+    "VpcId": "vpc-00000000000000001"
+  }
+]

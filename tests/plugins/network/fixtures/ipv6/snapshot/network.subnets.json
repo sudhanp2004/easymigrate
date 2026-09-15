@@ -1,0 +1,37 @@
+[
+  {
+    "AssignIpv6AddressOnCreation": false,
+    "AvailabilityZone": "ap-south-1a",
+    "AvailabilityZoneId": "aps1-az1",
+    "AvailableIpAddressCount": 251,
+    "CidrBlock": "10.60.1.0/24",
+    "DefaultForAz": false,
+    "Ipv6CidrBlockAssociationSet": [
+      {
+        "AssociationId": "subnet-cidr-assoc-00000000000000001",
+        "Ipv6CidrBlock": "2400:6500:673c:8500::/64",
+        "Ipv6CidrBlockState": {
+          "State": "associated"
+        }
+      }
+    ],
+    "Ipv6Native": false,
+    "MapPublicIpOnLaunch": false,
+    "OwnerId": "123456789012",
+    "PrivateDnsNameOptionsOnLaunch": {
+      "EnableResourceNameDnsAAAARecord": false,
+      "EnableResourceNameDnsARecord": false,
+      "HostnameType": "ip-name"
+    },
+    "State": "available",
+    "SubnetArn": "arn:aws:ec2:ap-south-1:123456789012:subnet/subnet-00000000000000001",
+    "SubnetId": "subnet-00000000000000001",
+    "Tags": [
+      {
+        "Key": "Name",
+        "Value": "dual"
+      }
+    ],
+    "VpcId": "vpc-00000000000000001"
+  }
+]

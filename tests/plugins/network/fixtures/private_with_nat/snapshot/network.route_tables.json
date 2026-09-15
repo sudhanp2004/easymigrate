@@ -1,0 +1,98 @@
+[
+  {
+    "Associations": [
+      {
+        "AssociationState": {
+          "State": "associated"
+        },
+        "Main": true,
+        "RouteTableAssociationId": "rtbassoc-00000000000000001",
+        "RouteTableId": "rtb-00000000000000001"
+      }
+    ],
+    "OwnerId": "123456789012",
+    "RouteTableId": "rtb-00000000000000001",
+    "Routes": [
+      {
+        "DestinationCidrBlock": "10.10.0.0/16",
+        "GatewayId": "local",
+        "Origin": "CreateRouteTable",
+        "State": "active"
+      }
+    ],
+    "Tags": [],
+    "VpcId": "vpc-00000000000000001"
+  },
+  {
+    "Associations": [
+      {
+        "AssociationState": {
+          "State": "associated"
+        },
+        "Main": false,
+        "RouteTableAssociationId": "rtbassoc-00000000000000002",
+        "RouteTableId": "rtb-00000000000000002",
+        "SubnetId": "subnet-00000000000000002"
+      }
+    ],
+    "OwnerId": "123456789012",
+    "RouteTableId": "rtb-00000000000000002",
+    "Routes": [
+      {
+        "DestinationCidrBlock": "10.10.0.0/16",
+        "GatewayId": "local",
+        "Origin": "CreateRouteTable",
+        "State": "active"
+      },
+      {
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "NatGatewayId": "nat-00000000000000001",
+        "Origin": "CreateRoute",
+        "State": "active"
+      }
+    ],
+    "Tags": [
+      {
+        "Key": "Name",
+        "Value": "private-rt"
+      }
+    ],
+    "VpcId": "vpc-00000000000000001"
+  },
+  {
+    "Associations": [
+      {
+        "AssociationState": {
+          "State": "associated"
+        },
+        "Main": false,
+        "RouteTableAssociationId": "rtbassoc-00000000000000003",
+        "RouteTableId": "rtb-00000000000000003",
+        "SubnetId": "subnet-00000000000000001"
+      }
+    ],
+    "OwnerId": "123456789012",
+    "RouteTableId": "rtb-00000000000000003",
+    "Routes": [
+      {
+        "DestinationCidrBlock": "10.10.0.0/16",
+        "GatewayId": "local",
+        "Origin": "CreateRouteTable",
+        "State": "active"
+      },
+      {
+        "DestinationCidrBlock": "0.0.0.0/0",
+        "GatewayId": "igw-00000000000000001",
+        "Origin": "CreateRoute",
+        "State": "active"
+      }
+    ],
+    "Tags": [
+      {
+        "Key": "Name",
+        "Value": "public-rt"
+      }
+    ],
+    "VpcId": "vpc-00000000000000001"
+  }
+]

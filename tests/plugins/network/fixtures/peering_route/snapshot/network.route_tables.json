@@ -1,0 +1,62 @@
+[
+  {
+    "Associations": [
+      {
+        "AssociationState": {
+          "State": "associated"
+        },
+        "Main": false,
+        "RouteTableAssociationId": "rtbassoc-00000000000000001",
+        "RouteTableId": "rtb-00000000000000001",
+        "SubnetId": "subnet-00000000000000001"
+      }
+    ],
+    "OwnerId": "123456789012",
+    "RouteTableId": "rtb-00000000000000001",
+    "Routes": [
+      {
+        "DestinationCidrBlock": "10.40.0.0/16",
+        "GatewayId": "local",
+        "Origin": "CreateRouteTable",
+        "State": "active"
+      },
+      {
+        "DestinationCidrBlock": "172.16.0.0/16",
+        "Origin": "CreateRoute",
+        "State": "active",
+        "VpcPeeringConnectionId": "pcx-00000000000000001"
+      }
+    ],
+    "Tags": [
+      {
+        "Key": "Name",
+        "Value": "app-rt"
+      }
+    ],
+    "VpcId": "vpc-00000000000000001"
+  },
+  {
+    "Associations": [
+      {
+        "AssociationState": {
+          "State": "associated"
+        },
+        "Main": true,
+        "RouteTableAssociationId": "rtbassoc-00000000000000002",
+        "RouteTableId": "rtb-00000000000000002"
+      }
+    ],
+    "OwnerId": "123456789012",
+    "RouteTableId": "rtb-00000000000000002",
+    "Routes": [
+      {
+        "DestinationCidrBlock": "10.40.0.0/16",
+        "GatewayId": "local",
+        "Origin": "CreateRouteTable",
+        "State": "active"
+      }
+    ],
+    "Tags": [],
+    "VpcId": "vpc-00000000000000001"
+  }
+]
