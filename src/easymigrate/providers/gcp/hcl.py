@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Union
 
@@ -21,15 +22,30 @@ class Ref:
 Value = Union[str, bool, int, float, None, Ref, list["Value"], dict[str, "Value"]]  # noqa: UP007
 
 
+_SIMPLE_ESCAPES = {"\\": "\\\\", '"': '\\"', "\n": "\\n", "\r": "\\r", "\t": "\\t"}
+
+
 def escape(text: str) -> str:
-    escaped = (
-        text.replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace("\t", "\\t")
-    )
-    return escaped.replace("${", "$${").replace("%{", "%%{")
+    """Escape `text` for an HCL string literal. Every control character other than
+    \\n, \\r and \\t (Unicode category Cc, e.g. NUL, ESC, DEL) becomes \\uNNNN, so
+    generated files never contain a raw control byte."""
+    out: list[str] = []
+    i = 0
+    n = len(text)
+    while i < n:
+        ch = text[i]
+        simple = _SIMPLE_ESCAPES.get(ch)
+        if simple is not None:
+            out.append(simple)
+        elif ch in "$%" and i + 1 < n and text[i + 1] == "{":
+            out.append(f"{ch}{ch}{{")
+            i += 1
+        elif unicodedata.category(ch) == "Cc":
+            out.append(f"\\u{ord(ch):04x}")
+        else:
+            out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 def _check_identifier(name: str, what: str) -> str:
@@ -129,6 +145,20 @@ def _render_body(body: list[tuple[str, Value] | Block], depth: int) -> list[str]
     return lines
 
 
+def _render_list_of_maps(items: list[Value], depth: int) -> str:
+    """A list containing at least one map renders one entry per line, each indented one
+    level deeper than the list itself, with a trailing comma after every entry."""
+    pad = INDENT * (depth + 1)
+    lines = ["["]
+    for item in items:
+        first, *rest = _render_value(item, depth + 1).split("\n")
+        lines.append(f"{pad}{first}")
+        lines.extend(rest)
+        lines[-1] += ","
+    lines.append(INDENT * depth + "]")
+    return "\n".join(lines)
+
+
 def _map_key(key: str) -> str:
     return key if _IDENT.match(key) else f'"{escape(key)}"'
 
@@ -149,6 +179,8 @@ def _render_value(value: Value, depth: int) -> str:
     if isinstance(value, str):
         return f'"{escape(value)}"'
     if isinstance(value, list):
+        if any(isinstance(item, dict) for item in value):
+            return _render_list_of_maps(value, depth)
         return "[" + ", ".join(_render_value(item, depth) for item in value) + "]"
     if isinstance(value, dict):
         if not value:

@@ -94,6 +94,59 @@ def test_escape_handles_tabs_and_carriage_returns():
     assert escape("a\tb\rc") == "a\\tb\\rc"
 
 
+def test_escape_encodes_other_control_characters_as_unicode_escapes():
+    assert escape("a\x00b\x1fc\x7fd") == "a\\u0000b\\u001fc\\u007fd"
+    assert escape("\n\r\t") == "\\n\\r\\t"
+
+
+def test_list_of_scalars_stays_on_one_line():
+    f = HclFile()
+    f.block("resource", "google_compute_firewall", "fw").attr("source_ranges", ["10.0.0.0/8"])
+
+    assert f.render() == (
+        'resource "google_compute_firewall" "fw" {\n  source_ranges = ["10.0.0.0/8"]\n}\n'
+    )
+
+
+def test_list_of_maps_renders_multiline_with_indentation():
+    f = HclFile()
+    r = f.block("resource", "google_compute_firewall", "fw")
+    r.attr(
+        "allow",
+        [{"protocol": "tcp", "ports": ["443"]}],
+    )
+
+    assert f.render() == (
+        'resource "google_compute_firewall" "fw" {\n'
+        "  allow = [\n"
+        "    {\n"
+        '      ports    = ["443"]\n'
+        '      protocol = "tcp"\n'
+        "    },\n"
+        "  ]\n"
+        "}\n"
+    )
+
+
+def test_list_of_maps_with_multiple_entries_gets_trailing_comma_each():
+    f = HclFile()
+    r = f.block("resource", "google_compute_firewall", "fw")
+    r.attr("allow", [{"protocol": "tcp"}, {"protocol": "udp"}])
+
+    assert f.render() == (
+        'resource "google_compute_firewall" "fw" {\n'
+        "  allow = [\n"
+        "    {\n"
+        '      protocol = "tcp"\n'
+        "    },\n"
+        "    {\n"
+        '      protocol = "udp"\n'
+        "    },\n"
+        "  ]\n"
+        "}\n"
+    )
+
+
 def test_empty_file_renders_empty_string():
     assert HclFile().render() == ""
 
