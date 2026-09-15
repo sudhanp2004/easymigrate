@@ -174,9 +174,10 @@ def test_allow_all_acls_are_omitted_but_restrictive_ones_kept():
         ],
     )
 
-    _, acls, _ = run(snap)
+    _, acls, ctx = run(snap)
 
     assert sorted(a.id for a in acls) == ["network_acl:acl-deny", "network_acl:db-acl"]
+    assert [(f.code, f.subject) for f in ctx.findings] == [("NET-NACL-ALLOW-ALL", "acl-open")]
     db = next(a for a in acls if a.id == "network_acl:db-acl")
     assert db.subnets == ["subnet:db"]
     assert [

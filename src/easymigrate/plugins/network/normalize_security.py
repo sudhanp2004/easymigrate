@@ -147,11 +147,19 @@ def _rule_sort_key(rule: FirewallRule) -> tuple[Any, ...]:
 
 
 def _acls(snapshot: Snapshot, ctx: NormalizeContext, topology: Topology) -> list[NetworkAcl]:
-    kept = [
-        acl
-        for acl in snapshot.get("network.network_acls") or []
-        if acl["VpcId"] in topology.network_ids and not _is_allow_all(acl.get("Entries") or [])
-    ]
+    kept = []
+    for acl in snapshot.get("network.network_acls") or []:
+        if acl["VpcId"] not in topology.network_ids:
+            continue
+        if not _is_allow_all(acl.get("Entries") or []):
+            kept.append(acl)
+        elif not acl.get("IsDefault"):
+            ctx.info(
+                "NET-NACL-ALLOW-ALL",
+                f"{acl['NetworkAclId']} allows all traffic in both directions, so it has no "
+                "effect and is not recorded as a network ACL.",
+                subject=acl["NetworkAclId"],
+            )
     acl_ids = allocate_ids("network_acl", [(av.name_tag(a), a["NetworkAclId"]) for a in kept])
     return [
         NetworkAcl(
