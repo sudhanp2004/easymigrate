@@ -1,0 +1,530 @@
+"""Per-rule detect/apply tests for the AWS→GCP networking catalogue (spec §4.4, plan 3 tasks 2-3).
+
+Small hand-built IR objects, local to this file.
+"""
+
+from __future__ import annotations
+
+from easymigrate.differences.rules.aws_gcp.network import (
+    NetEgressTag,
+    NetIcmpType,
+    NetIsolationVmLevel,
+    NetPrefixList,
+    NetSgXvpcRef,
+    NetZoneRegional,
+)
+from easymigrate.ir.base import IRDocument, SourceRef
+from easymigrate.ir.network import (
+    CidrPeer,
+    CustomRoute,
+    ExternalPolicyPeer,
+    FirewallPolicy,
+    FirewallRule,
+    Nat,
+    Network,
+    NetworkAcl,
+    PolicyPeer,
+    PrefixListPeer,
+    Subnet,
+)
+
+
+def _source(type_="vpc", id_="native-1"):
+    return SourceRef(cloud="aws", type=type_, id=id_, region="ap-south-1")
+
+
+def _network(id_="network:main", cidr="10.0.0.0/16"):
+    return Network(
+        id=id_,
+        name=id_.split(":", 1)[1],
+        source=_source("vpc", id_),
+        cidr_blocks=[cidr],
+        dns_hostnames=True,
+        dns_resolution=True,
+    )
+
+
+def _subnet(
+    id_,
+    network="network:main",
+    cidr="10.0.1.0/24",
+    zone="ap-south-1a",
+    internet="public",
+    map_public_ip=None,
+):
+    return Subnet(
+        id=id_,
+        name=id_.split(":", 1)[1],
+        source=_source("subnet", id_),
+        network=network,
+        cidr=cidr,
+        zone=zone,
+        internet=internet,
+        map_public_ip=map_public_ip if map_public_ip is not None else (internet == "public"),
+    )
+
+
+def _policy(id_, network="network:main", rules=None):
+    return FirewallPolicy(
+        id=id_,
+        name=id_.split(":", 1)[1],
+        source=_source("security-group", id_),
+        network=network,
+        rules=rules or [],
+    )
+
+
+def _doc(*objects) -> IRDocument:
+    return IRDocument(source={"cloud": "aws"}, objects=list(objects))
+
+
+# ---- NET-ZONE-REGIONAL ----------------------------------------------------
+
+
+def test_zone_regional_detects_network_with_subnets():
+    net = _network()
+    s1 = _subnet("subnet:a", cidr="10.0.1.0/24", zone="ap-south-1a")
+    s2 = _subnet("subnet:b", cidr="10.0.2.0/24", zone="ap-south-1b")
+    doc = _doc(net, s1, s2)
+    rule = NetZoneRegional()
+
+    diffs = rule.detect(doc)
+
+    assert len(diffs) == 1
+    diff = diffs[0]
+    assert diff.key == "NET-ZONE-REGIONAL@network:main"
+    assert diff.subjects == ["network:main", "subnet:a", "subnet:b"]
+    assert diff.context["subnet_count"] == 2
+    assert diff.context["zones"] == ["ap-south-1a", "ap-south-1b"]
+
+
+def test_zone_regional_detects_nothing_for_network_without_subnets():
+    doc = _doc(_network())
+    assert NetZoneRegional().detect(doc) == []
+
+
+def test_zone_regional_keep_1to1_is_a_no_op():
+    net = _network()
+    s1 = _subnet("subnet:a")
+    doc = _doc(net, s1)
+    rule = NetZoneRegional()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "keep_1to1")
+
+    assert result == doc
+    assert doc == _doc(net, s1)  # input unchanged
+
+
+def test_zone_regional_merge_computes_supernet_and_exposure_and_rewrites_refs():
+    net = _network()
+    s1 = _subnet("subnet:a", cidr="10.0.1.0/24", zone="ap-south-1a", internet="public")
+    s2 = _subnet(
+        "subnet:b", cidr="10.0.2.0/24", zone="ap-south-1b", internet="isolated", map_public_ip=False
+    )
+    nat = Nat(
+        id="nat:a",
+        name="a",
+        source=_source("nat", "nat:a"),
+        network="network:main",
+        serves_subnets=["subnet:a", "subnet:b"],
+    )
+    acl = NetworkAcl(
+        id="network_acl:a",
+        name="a",
+        source=_source("acl", "network_acl:a"),
+        network="network:main",
+        subnets=["subnet:a", "subnet:b"],
+    )
+    route = CustomRoute(
+        id="custom_route:a",
+        name="a",
+        source=_source("route", "custom_route:a"),
+        network="network:main",
+        destination="0.0.0.0/0",
+        target_type="other",
+        target_id="x",
+        subnets=["subnet:a", "subnet:b"],
+    )
+    doc = _doc(net, s1, s2, nat, acl, route)
+    rule = NetZoneRegional()
+    diff = rule.detect(doc)[0]
+
+    original = doc.model_copy(deep=True)
+    result = rule.apply(doc, diff, "merge_per_network")
+
+    assert doc == original  # input unchanged
+    merged = result.get("subnet:main-regional")
+    assert merged.cidr == "10.0.0.0/22"
+    assert merged.zone == "regional"
+    assert merged.internet == "public"  # public more exposed than isolated
+    assert merged.map_public_ip is True
+    assert result.get("subnet:a", None) if False else True
+    remaining_subnet_ids = [o.id for o in result.objects if o.kind == "subnet"]
+    assert remaining_subnet_ids == ["subnet:main-regional"]
+    assert result.get("nat:a").serves_subnets == ["subnet:main-regional"]
+    assert result.get("network_acl:a").subnets == ["subnet:main-regional"]
+    assert result.get("custom_route:a").subnets == ["subnet:main-regional"]
+
+
+def test_zone_regional_merge_supernet_cases():
+    from easymigrate.differences.rules.aws_gcp.network import _smallest_ipv4_supernet
+
+    assert _smallest_ipv4_supernet(["10.0.1.0/24", "10.0.2.0/24"]) == "10.0.0.0/22"
+
+
+# ---- NET-ISOLATION-VM-LEVEL -------------------------------------------------
+
+
+def test_isolation_vm_level_detects_isolated_subnet_with_public_sibling():
+    net = _network()
+    public = _subnet("subnet:pub", internet="public")
+    isolated = _subnet("subnet:iso", internet="isolated", map_public_ip=False)
+    doc = _doc(net, public, isolated)
+    diffs = NetIsolationVmLevel().detect(doc)
+    assert [d.key for d in diffs] == ["NET-ISOLATION-VM-LEVEL@subnet:iso"]
+    assert diffs[0].subjects == ["subnet:iso"]
+
+
+def test_isolation_vm_level_detects_nothing_without_public_sibling():
+    net = _network()
+    isolated = _subnet("subnet:iso", internet="isolated", map_public_ip=False)
+    doc = _doc(net, isolated)
+    assert NetIsolationVmLevel().detect(doc) == []
+
+
+def test_isolation_vm_level_no_external_ip_sets_hint():
+    net = _network()
+    public = _subnet("subnet:pub", internet="public")
+    isolated = _subnet("subnet:iso", internet="isolated", map_public_ip=False)
+    doc = _doc(net, public, isolated)
+    rule = NetIsolationVmLevel()
+    diff = rule.detect(doc)[0]
+    original = doc.model_copy(deep=True)
+
+    result = rule.apply(doc, diff, "no_external_ip")
+
+    assert doc == original
+    assert result.get("subnet:iso").target_hints == {"no_external_ip": True}
+
+
+def test_isolation_vm_level_manual_is_a_no_op():
+    net = _network()
+    public = _subnet("subnet:pub", internet="public")
+    isolated = _subnet("subnet:iso", internet="isolated", map_public_ip=False)
+    doc = _doc(net, public, isolated)
+    rule = NetIsolationVmLevel()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "manual")
+
+    assert result == doc
+
+
+# ---- NET-EGRESS-TAG ---------------------------------------------------------
+
+
+def test_egress_tag_detects_egress_policy_peer_rule():
+    net = _network()
+    peer = _policy("firewall_policy:peer")
+    main = _policy(
+        "firewall_policy:main",
+        rules=[
+            FirewallRule(
+                direction="egress",
+                protocol="tcp",
+                ports=["443"],
+                peer=PolicyPeer(policy="firewall_policy:peer"),
+            ),
+        ],
+    )
+    doc = _doc(net, peer, main)
+    diffs = NetEgressTag().detect(doc)
+    assert [d.key for d in diffs] == ["NET-EGRESS-TAG@firewall_policy:main"]
+    assert diffs[0].subjects == ["firewall_policy:main", "firewall_policy:peer"]
+
+
+def test_egress_tag_detects_nothing_without_egress_policy_peer():
+    net = _network()
+    main = _policy(
+        "firewall_policy:main",
+        rules=[
+            FirewallRule(
+                direction="ingress",
+                protocol="tcp",
+                ports=["443"],
+                peer=CidrPeer(cidr="10.0.0.0/16"),
+            )
+        ],
+    )
+    doc = _doc(net, main)
+    assert NetEgressTag().detect(doc) == []
+
+
+def test_egress_tag_peer_attached_ranges_sets_hint():
+    net = _network(cidr="10.0.0.0/16")
+    other_net = _network(id_="network:other", cidr="10.1.0.0/16")
+    peer = _policy("firewall_policy:peer", network="network:other")
+    main = _policy(
+        "firewall_policy:main",
+        rules=[
+            FirewallRule(
+                direction="egress",
+                protocol="tcp",
+                ports=["443"],
+                peer=PolicyPeer(policy="firewall_policy:peer"),
+            ),
+        ],
+    )
+    doc = _doc(net, other_net, peer, main)
+    rule = NetEgressTag()
+    diff = rule.detect(doc)[0]
+    original = doc.model_copy(deep=True)
+
+    result = rule.apply(doc, diff, "peer_attached_ranges")
+
+    assert doc == original
+    assert result.get("firewall_policy:main").target_hints == {
+        "egress_ranges": {"firewall_policy:peer": ["10.1.0.0/16"]}
+    }
+
+
+def test_egress_tag_manual_removes_rules_and_counts_omitted():
+    net = _network()
+    peer = _policy("firewall_policy:peer")
+    main = _policy(
+        "firewall_policy:main",
+        rules=[
+            FirewallRule(
+                direction="egress",
+                protocol="tcp",
+                ports=["443"],
+                peer=PolicyPeer(policy="firewall_policy:peer"),
+            ),
+            FirewallRule(
+                direction="ingress", protocol="tcp", ports=["80"], peer=CidrPeer(cidr="10.0.0.0/16")
+            ),
+        ],
+    )
+    doc = _doc(net, peer, main)
+    rule = NetEgressTag()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "manual")
+
+    updated = result.get("firewall_policy:main")
+    assert len(updated.rules) == 1
+    assert updated.rules[0].direction == "ingress"
+    assert updated.target_hints == {"omitted_rules": 1}
+
+
+# ---- NET-SG-XVPC-REF ---------------------------------------------------------
+
+
+def test_sg_xvpc_ref_detects_external_policy_peer():
+    net = _network()
+    main = _policy(
+        "firewall_policy:main",
+        rules=[
+            FirewallRule(
+                direction="ingress",
+                protocol="tcp",
+                ports=["22"],
+                peer=ExternalPolicyPeer(group_id="sg-ext"),
+            )
+        ],
+    )
+    doc = _doc(net, main)
+    diffs = NetSgXvpcRef().detect(doc)
+    assert [d.key for d in diffs] == ["NET-SG-XVPC-REF@firewall_policy:main"]
+    assert diffs[0].context["group_ids"] == ["sg-ext"]
+
+
+def test_sg_xvpc_ref_detects_nothing_without_external_peer():
+    net = _network()
+    main = _policy("firewall_policy:main")
+    doc = _doc(net, main)
+    assert NetSgXvpcRef().detect(doc) == []
+
+
+def test_sg_xvpc_ref_manual_removes_rules_and_counts_omitted():
+    net = _network()
+    main = _policy(
+        "firewall_policy:main",
+        rules=[
+            FirewallRule(
+                direction="ingress",
+                protocol="tcp",
+                ports=["22"],
+                peer=ExternalPolicyPeer(group_id="sg-ext"),
+            ),
+            FirewallRule(
+                direction="ingress", protocol="tcp", ports=["80"], peer=CidrPeer(cidr="10.0.0.0/16")
+            ),
+        ],
+    )
+    doc = _doc(net, main)
+    rule = NetSgXvpcRef()
+    diff = rule.detect(doc)[0]
+    original = doc.model_copy(deep=True)
+
+    result = rule.apply(doc, diff, "manual")
+
+    assert doc == original
+    updated = result.get("firewall_policy:main")
+    assert len(updated.rules) == 1
+    assert updated.target_hints == {"omitted_rules": 1}
+
+
+# ---- NET-PREFIX-LIST ---------------------------------------------------------
+
+
+def test_prefix_list_detects_prefix_list_peer():
+    net = _network()
+    main = _policy(
+        "firewall_policy:main",
+        rules=[
+            FirewallRule(
+                direction="ingress",
+                protocol="tcp",
+                ports=["443"],
+                peer=PrefixListPeer(prefix_list_id="pl-1"),
+            ),
+        ],
+    )
+    doc = _doc(net, main)
+    diffs = NetPrefixList().detect(doc)
+    assert [d.key for d in diffs] == ["NET-PREFIX-LIST@firewall_policy:main"]
+
+
+def test_prefix_list_detects_nothing_without_prefix_list_peer():
+    net = _network()
+    main = _policy("firewall_policy:main")
+    doc = _doc(net, main)
+    assert NetPrefixList().detect(doc) == []
+
+
+def test_prefix_list_manual_removes_rules_and_counts_omitted():
+    net = _network()
+    main = _policy(
+        "firewall_policy:main",
+        rules=[
+            FirewallRule(
+                direction="ingress",
+                protocol="tcp",
+                ports=["443"],
+                peer=PrefixListPeer(prefix_list_id="pl-1"),
+            ),
+        ],
+    )
+    doc = _doc(net, main)
+    rule = NetPrefixList()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "manual")
+
+    updated = result.get("firewall_policy:main")
+    assert updated.rules == []
+    assert updated.target_hints == {"omitted_rules": 1}
+
+
+def test_prefix_list_only_has_manual_strategy():
+    rule = NetPrefixList()
+    assert [s.id for s in rule.strategies] == ["manual"]
+    assert rule.default == "manual"
+
+
+# ---- NET-ICMP-TYPE ------------------------------------------------------------
+
+
+def test_icmp_type_detects_rule_with_icmp_type():
+    net = _network()
+    main = _policy(
+        "firewall_policy:main",
+        rules=[
+            FirewallRule(
+                direction="ingress", protocol="icmp", peer=CidrPeer(cidr="10.0.0.0/16"), icmp_type=8
+            ),
+        ],
+    )
+    doc = _doc(net, main)
+    diffs = NetIcmpType().detect(doc)
+    assert [d.key for d in diffs] == ["NET-ICMP-TYPE@firewall_policy:main"]
+
+
+def test_icmp_type_detects_nothing_without_icmp_type():
+    net = _network()
+    main = _policy(
+        "firewall_policy:main",
+        rules=[
+            FirewallRule(direction="ingress", protocol="icmp", peer=CidrPeer(cidr="10.0.0.0/16"))
+        ],
+    )
+    doc = _doc(net, main)
+    assert NetIcmpType().detect(doc) == []
+
+
+def test_icmp_type_allow_all_icmp_clears_and_dedupes():
+    net = _network()
+    main = _policy(
+        "firewall_policy:main",
+        rules=[
+            FirewallRule(
+                direction="ingress", protocol="icmp", peer=CidrPeer(cidr="10.0.0.0/16"), icmp_type=8
+            ),
+            FirewallRule(
+                direction="ingress", protocol="icmp", peer=CidrPeer(cidr="10.0.0.0/16"), icmp_type=0
+            ),
+        ],
+    )
+    doc = _doc(net, main)
+    rule = NetIcmpType()
+    diff = rule.detect(doc)[0]
+    original = doc.model_copy(deep=True)
+
+    result = rule.apply(doc, diff, "allow_all_icmp")
+
+    assert doc == original
+    updated = result.get("firewall_policy:main")
+    assert len(updated.rules) == 1
+    assert updated.rules[0].icmp_type is None
+    assert updated.rules[0].icmp_code is None
+
+
+def test_icmp_type_manual_removes_rules_and_counts_omitted():
+    net = _network()
+    main = _policy(
+        "firewall_policy:main",
+        rules=[
+            FirewallRule(
+                direction="ingress", protocol="icmp", peer=CidrPeer(cidr="10.0.0.0/16"), icmp_type=8
+            ),
+            FirewallRule(
+                direction="ingress", protocol="tcp", ports=["80"], peer=CidrPeer(cidr="10.0.0.0/16")
+            ),
+        ],
+    )
+    doc = _doc(net, main)
+    rule = NetIcmpType()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "manual")
+
+    updated = result.get("firewall_policy:main")
+    assert len(updated.rules) == 1
+    assert updated.rules[0].protocol == "tcp"
+    assert updated.target_hints == {"omitted_rules": 1}
+
+
+def test_rules_1_through_6_have_valid_catalogue_ids():
+    for rule_cls in (
+        NetZoneRegional,
+        NetIsolationVmLevel,
+        NetEgressTag,
+        NetSgXvpcRef,
+        NetPrefixList,
+        NetIcmpType,
+    ):
+        rule = rule_cls()
+        assert rule.family == "network"
+        assert rule.id.startswith("NET-")

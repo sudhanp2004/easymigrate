@@ -290,7 +290,7 @@ class Decision(BaseModel):
 # decisions.yaml
 schema_version: "1"
 decisions:
-  - key: NET-ZONE-REGIONAL@subnet:migration-test-subnet-1
+  - key: NET-ZONE-REGIONAL@network:migration-test-vpc
     strategy: keep_1to1
     decided_by: default
   - key: NET-NACL@network_acl:restricted-db-acl
@@ -311,17 +311,19 @@ Generators read only the resolved IR and its hints.
 
 | Rule | Detects | Strategies (**default** first) |
 |---|---|---|
-| `NET-ZONE-REGIONAL` | any subnet (AWS subnets are single-zone; GCP subnets span the region) | **`keep_1to1`**: one GCP subnet per AWS subnet, same CIDRs, zone isolation lost at the subnet level (risk low) · `merge_per_network`: one regional subnet per network covering the smallest CIDR that contains them; IPs may change (risk high) |
+| `NET-ZONE-REGIONAL` | each network that has at least one subnet, once per network — not once per subnet, since `merge_per_network` is a per-network choice and per-subnet decisions could contradict each other. Key: `NET-ZONE-REGIONAL@network:<id>`. Subjects: the network, then its subnets (AWS subnets are single-zone; GCP subnets span the region) | **`keep_1to1`**: one GCP subnet per AWS subnet, same CIDRs, zone isolation lost at the subnet level (risk low) · `merge_per_network`: one regional subnet per network covering the smallest CIDR that contains them; IPs may change (risk high) |
 | `NET-ISOLATION-VM-LEVEL` | an `isolated` subnet in a network that also has a `public` subnet (GCP routes are network-wide) | **`no_external_ip`**: isolation depends on resources in that subnet having no external IP; later plugins enforce this (risk medium) · `manual` |
 | `NET-EGRESS-TAG` | an egress rule with a `PolicyPeer` (GCP egress rules can't target tags) | **`peer_attached_ranges`**: destination = CIDRs of the peer's attached resources, or the peer's whole network if not yet known (risk medium) · `manual` |
 | `NET-SG-XVPC-REF` | `ExternalPolicyPeer` | **`manual`**: the rule is left out; recreate it after migrating the peer network |
+| `NET-PREFIX-LIST` | a rule referencing an AWS managed prefix list (GCP firewalls have no equivalent) | **`manual`**: the rule is left out |
+| `NET-ICMP-TYPE` | a rule with an ICMP type or code set (GCP firewall rules can't filter by ICMP type or code) | **`allow_all_icmp`**: the type/code restriction is dropped, broader than the source (risk medium) · `manual`: the rule is left out |
 | `NET-NACL` | `network_acl` | **`manual`**: not generated; stateless subnet ACLs have no GCP equivalent |
 | `NET-PEERING` | `custom_route` with `target_type = peering` | **`manual`**: set up VPC peering after migrating |
 | `NET-CUSTOM-ROUTE` | any other `custom_route` | **`manual`** |
-| `NET-IPV6` | IPv6 CIDRs on a network or subnet | **`ipv4_only`**: migrate IPv4 only (risk medium) · `manual` |
+| `NET-IPV6` | IPv6 CIDRs on a network or subnet | **`ipv4_only`**: migrate IPv4 only (risk medium) · `manual`. A subnet left public only through IPv6 is recorded as `isolated` once IPv4-only |
 | `NET-CIDR-OVERLAP` | two networks with overlapping CIDRs | **`keep`**: allowed on GCP because networks are isolated; connecting them later will conflict (risk none) |
 
-Rules with a single strategy still appear in `resolve`, so the user sees and approves every difference.
+Rules with a single strategy still appear in `resolve`, so the user sees and approves every difference. Every `manual` strategy needs an explicit acknowledgement, regardless of what it generates: some manual strategies still change the IR (§4.4 rows above), others mark the subject `excluded`.
 
 ## 5. IaC engine, generation, review and apply
 
