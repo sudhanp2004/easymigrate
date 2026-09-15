@@ -167,6 +167,28 @@ def test_resolve_warns_about_superseded_decisions_and_exits_0(tmp_path, monkeypa
     assert "choose a different strategy for NET-ZONE-REGIONAL@network:main" in result.output
 
 
+def test_interactive_enter_keeps_acknowledged_manual_without_reasking(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _manual_project(tmp_path)
+
+    # First pass: accept the manual default and acknowledge it in bulk.
+    result = runner.invoke(app, ["resolve", "--accept-defaults", "--acknowledge-manual"])
+    assert result.exit_code == 0
+
+    # Second, interactive pass: pressing Enter for the already-acknowledged NET-NACL
+    # decision must NOT re-ask "I will handle this myself" — only one more Enter is
+    # needed, for NET-ZONE-REGIONAL.
+    result = runner.invoke(app, ["resolve"], input="\n\n")
+
+    assert result.exit_code == 0
+    project = Project(tmp_path)
+    from easymigrate.differences.decisions import from_yaml
+
+    decisions = from_yaml(project.decisions_path.read_text())
+    manual_decision = next(d for d in decisions.decisions if d.strategy == "manual")
+    assert manual_decision.acknowledged is True
+
+
 def test_interactive_manual_answer_n_reasks(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _manual_project(tmp_path)

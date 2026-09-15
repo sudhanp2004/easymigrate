@@ -227,7 +227,12 @@ def resolve(
         for decision in merged.decisions:
             diff = diffs_by_key[decision.key]
             rule = rules_by_id[diff.rule_id]
-            view = {"difference": diff, "rule": rule, "current_strategy": decision.strategy}
+            view = {
+                "difference": diff,
+                "rule": rule,
+                "current_strategy": decision.strategy,
+                "current_acknowledged": decision.acknowledged,
+            }
             strategy_id, acknowledged = choose(view)
             decided_by = decision.decided_by if strategy_id == decision.strategy else "user"
             updated.append(

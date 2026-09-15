@@ -128,6 +128,7 @@ def _prompt_choice(view: dict[str, Any]) -> tuple[str, bool]:
     diff = view["difference"]
     rule = view["rule"]
     current = view["current_strategy"]
+    current_acknowledged = view.get("current_acknowledged", False)
 
     console.print(f"[bold]{rule.title}[/bold] ({diff.key})")
     console.print(f"  subjects: {', '.join(diff.subjects)}", markup=False)
@@ -145,6 +146,9 @@ def _prompt_choice(view: dict[str, Any]) -> tuple[str, bool]:
         raw = typer.prompt("Strategy (Enter to keep current)", default="", show_default=False)
         if not raw.strip():
             chosen = rule.strategy(current)
+            if chosen.manual and current_acknowledged:
+                # Keeping an already-acknowledged manual strategy needs no re-confirmation.
+                return chosen.id, True
         else:
             try:
                 index = int(raw.strip()) - 1
