@@ -99,7 +99,7 @@ class Project:
     def init(self) -> bool:
         """Create the project directory. Returns True on the first run."""
         created = not self.dir.exists()
-        self.dir.mkdir(parents=True, exist_ok=True)
+        _create_private_dirs(self.dir)
         if not self.config_path.exists():
             self.save_config(ProjectConfig(tool_version=__version__))
         self.ensure_gitignored()
@@ -162,13 +162,34 @@ def _find_git_root(start: Path) -> Path | None:
     return None
 
 
+def _create_private_dirs(path: Path) -> None:
+    """Create `path` and any missing parents. Directories under `.easymigrate/` are created
+    with mode 0o700 (the umask would otherwise mask that), since they hold sensitive scan and
+    plan data; directories outside it (e.g. the git root) are created with default permissions
+    and never touched."""
+    if DIR_NAME not in path.parts:
+        path.mkdir(parents=True, exist_ok=True)
+        return
+    to_create: list[Path] = []
+    current = path
+    while not current.exists():
+        to_create.append(current)
+        current = current.parent
+    for directory in reversed(to_create):
+        directory.mkdir(exist_ok=True)
+        if DIR_NAME in directory.parts:
+            os.chmod(directory, 0o700)
+
+
 def _atomic_write(path: Path, text: str, *, mode: int = _PRIVATE) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _create_private_dirs(path.parent)
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     tmp = Path(tmp_name)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
+            handle.flush()
+            os.fsync(handle.fileno())
         os.chmod(tmp, mode)
         os.replace(tmp, path)
     except BaseException:

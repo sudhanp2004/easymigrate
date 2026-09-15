@@ -142,6 +142,20 @@ def test_writes_are_atomic_and_private(tmp_path):
     assert stat.S_IMODE(p.config_path.stat().st_mode) == 0o600
 
 
+def test_private_directories_inside_dot_easymigrate(tmp_path):
+    (tmp_path / ".git").mkdir()
+    git_root_mode_before = stat.S_IMODE(tmp_path.stat().st_mode)
+    p = Project(tmp_path)
+
+    p.init()
+    p.write_json(p.snapshot_dir("aws") / "x.json", {})
+
+    assert stat.S_IMODE(p.dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE((p.dir / "snapshot").stat().st_mode) == 0o700
+    assert stat.S_IMODE(p.snapshot_dir("aws").stat().st_mode) == 0o700
+    assert stat.S_IMODE(tmp_path.stat().st_mode) == git_root_mode_before
+
+
 def test_init_adds_gitignore_entry_in_git_repo(tmp_path):
     (tmp_path / ".git").mkdir()
     project_root = tmp_path / "work"
