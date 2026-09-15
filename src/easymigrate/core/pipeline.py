@@ -22,7 +22,6 @@ from easymigrate.differences.model import (
     DecisionSet,
     Difference,
     DifferenceRule,
-    DifferenceRuleError,
 )
 from easymigrate.ir.base import Finding, IntentObject, IRDocument
 
@@ -268,7 +267,7 @@ def resolve(
     if can_resolve:
         try:
             superseded = resolve_ir(ir_doc, differences, merged, rules).superseded
-        except (ValueError, DifferenceRuleError):
+        except ValueError:
             # e.g. a decision uses an unknown strategy; readiness_problems already
             # reports this, and resolve_ir cannot meaningfully run here.
             superseded = []
