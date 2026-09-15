@@ -195,6 +195,16 @@ def resolve(
             decision.key, decision.strategy, decision.decided_by, str(decision.acknowledged)
         )
     console.print(table)
+    if summary.superseded:
+        console.print(
+            f"[yellow]Decisions that no longer apply ({len(summary.superseded)})[/yellow]"
+        )
+        for entry in summary.superseded:
+            console.print(f"  {entry.message}", markup=False)
+            console.print(
+                f"  choose a different strategy for {entry.superseded_by} to keep this decision",
+                markup=False,
+            )
     if summary.problems:
         for problem in summary.problems:
             error_console.print(f"[red]{problem}[/red]")

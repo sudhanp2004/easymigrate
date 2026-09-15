@@ -284,6 +284,8 @@ class Decision(BaseModel):
    3. **Interactive mode:** for each difference show the title, affected objects, impact, and numbered strategies with effect and risk, with the default marked. Enter accepts the default. Every difference whose chosen strategy is `manual` needs an explicit acknowledgement ("I will handle this myself").
    4. **`--accept-defaults`:** choose every default without prompting, but **still stop** if any unacknowledged manual differences remain, and list them. `--accept-defaults --acknowledge-manual` acknowledges them too, and the report records that they were acknowledged in bulk.
    5. Users may also edit `decisions.yaml` by hand. It is validated on load.
+
+   A decision whose subject was removed or excluded by an earlier difference's strategy is reported as superseded (`resolve` warns; `report.md` lists it).
 3. **`plan`:** refuses if `decisions.yaml` is missing, stale (differences changed since resolve), or has unacknowledged manual decisions. Otherwise it applies the decisions in rule order to produce `resolved_ir.json`, then generates.
 
 ```yaml

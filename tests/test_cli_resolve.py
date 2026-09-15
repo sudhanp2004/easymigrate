@@ -110,6 +110,63 @@ def test_interactive_enter_keeps_default(tmp_path, monkeypatch):
     assert decisions.decisions[0].decided_by == "default"
 
 
+def _merge_and_isolation_project(tmp_path) -> Project:
+    """One network with a public and an isolated subnet, via a direct IR write so both
+    NET-ZONE-REGIONAL and NET-ISOLATION-VM-LEVEL fire together."""
+    from easymigrate.core.pipeline import _write_differences
+    from easymigrate.ir.base import IRDocument, SourceRef
+    from easymigrate.ir.network import Network, Subnet
+
+    project = Project(tmp_path)
+    project.init()
+    network = Network(
+        id="network:main",
+        name="main",
+        source=SourceRef(cloud="aws", type="vpc", id="network:main", region="ap-south-1"),
+        cidr_blocks=["10.0.0.0/16"],
+        dns_hostnames=True,
+        dns_resolution=True,
+    )
+    public = Subnet(
+        id="subnet:pub",
+        name="pub",
+        source=SourceRef(cloud="aws", type="subnet", id="subnet:pub", region="ap-south-1"),
+        network="network:main",
+        cidr="10.0.1.0/24",
+        zone="ap-south-1a",
+        internet="public",
+        map_public_ip=False,
+    )
+    isolated = Subnet(
+        id="subnet:app",
+        name="app",
+        source=SourceRef(cloud="aws", type="subnet", id="subnet:app", region="ap-south-1"),
+        network="network:main",
+        cidr="10.0.2.0/24",
+        zone="ap-south-1b",
+        internet="isolated",
+        map_public_ip=False,
+    )
+    doc = IRDocument(source={"cloud": "aws"}, objects=[network, public, isolated])
+    project.write_ir(project.ir_path, doc)
+    _write_differences(project, doc)
+    return project
+
+
+def test_resolve_warns_about_superseded_decisions_and_exits_0(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _merge_and_isolation_project(tmp_path)
+
+    # Sorted by key: NET-ISOLATION-VM-LEVEL@subnet:app comes before NET-ZONE-REGIONAL@network:main.
+    # Keep the isolation default, then choose merge_per_network for the zone difference.
+    result = runner.invoke(app, ["resolve"], input="\n2\n")
+
+    assert result.exit_code == 0
+    assert "no longer apply" in result.output
+    assert "NET-ISOLATION-VM-LEVEL@subnet:app" in result.output
+    assert "choose a different strategy for NET-ZONE-REGIONAL@network:main" in result.output
+
+
 def test_interactive_manual_answer_n_reasks(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     _manual_project(tmp_path)

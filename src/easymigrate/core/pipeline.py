@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -16,8 +16,14 @@ from easymigrate.differences.decisions import (
     readiness_problems,
     to_yaml,
 )
-from easymigrate.differences.engine import catalogue, detect
-from easymigrate.differences.model import Decision, DecisionSet, Difference, DifferenceRule
+from easymigrate.differences.engine import SupersededDecision, catalogue, detect, resolve_ir
+from easymigrate.differences.model import (
+    Decision,
+    DecisionSet,
+    Difference,
+    DifferenceRule,
+    DifferenceRuleError,
+)
 from easymigrate.ir.base import Finding, IntentObject, IRDocument
 
 _SAMPLE_ARNS = 3
@@ -193,6 +199,7 @@ class ResolveSummary:
     decisions: DecisionSet
     dropped: list[str]
     problems: list[str]
+    superseded: list[SupersededDecision] = field(default_factory=list)
 
 
 def resolve(
@@ -202,7 +209,7 @@ def resolve(
     accept_defaults: bool = False,
     acknowledge_manual: bool = False,
 ) -> ResolveSummary:
-    project.read_ir(project.ir_path, produced_by="analyze")
+    ir_doc = project.read_ir(project.ir_path, produced_by="analyze")
     differences = load_differences(project)
     rules: tuple[DifferenceRule, ...] = catalogue()
     rules_by_id = {rule.id: rule for rule in rules}
@@ -249,4 +256,18 @@ def resolve(
 
     project.write_text(project.decisions_path, to_yaml(merged))
     problems = readiness_problems(merged, differences, rules)
-    return ResolveSummary(decisions=merged, dropped=dropped, problems=problems)
+
+    superseded: list[SupersededDecision] = []
+    merged_by_key = {decision.key: decision for decision in merged.decisions}
+    can_resolve = all(diff.key in merged_by_key for diff in differences)
+    if can_resolve:
+        try:
+            superseded = resolve_ir(ir_doc, differences, merged, rules).superseded
+        except (ValueError, DifferenceRuleError):
+            # e.g. a decision uses an unknown strategy; readiness_problems already
+            # reports this, and resolve_ir cannot meaningfully run here.
+            superseded = []
+
+    return ResolveSummary(
+        decisions=merged, dropped=dropped, problems=problems, superseded=superseded
+    )
