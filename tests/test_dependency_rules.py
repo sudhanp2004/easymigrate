@@ -50,8 +50,15 @@ def violations(module: str, imports: set[str]) -> list[str]:
                 bad(name, "core must not import cloud SDKs")
         if module != "easymigrate.core.registry":
             for name in internal:
-                if _within(name, "easymigrate.plugins") or _within(name, "easymigrate.providers"):
-                    bad(name, "only easymigrate.core.registry may import plugins or providers")
+                if (
+                    _within(name, "easymigrate.plugins")
+                    or _within(name, "easymigrate.providers")
+                    or _within(name, "easymigrate.engine")
+                ):
+                    bad(
+                        name,
+                        "only easymigrate.core.registry may import plugins, providers or engine",
+                    )
     if _within(module, "easymigrate.plugins"):
         allowed = ("easymigrate.ir", "easymigrate.providers", "easymigrate.core.plugin")
         for name in internal:
@@ -65,6 +72,10 @@ def violations(module: str, imports: set[str]) -> list[str]:
         for name in internal:
             if not _within(name, "easymigrate.ir"):
                 bad(name, "ir must not import other easymigrate packages")
+    if _within(module, "easymigrate.engine"):
+        for name in internal:
+            if not _within(name, "easymigrate.core.errors"):
+                bad(name, "engine may only import easymigrate.core.errors")
     return sorted(problems)
 
 
@@ -119,6 +130,18 @@ def test_source_tree_follows_dependency_rules():
         ("easymigrate.differences.engine", "from easymigrate.ir import IRDocument", True),
         ("easymigrate.differences.engine", "from easymigrate.core.project import Project", False),
         ("easymigrate.ir.network", "from easymigrate.core.project import Project", False),
+        ("easymigrate.engine.tofu", "from easymigrate.core.errors import EasyMigrateError", True),
+        ("easymigrate.engine.tofu", "from easymigrate.core.project import Project", False),
+        (
+            "easymigrate.core.registry",
+            "from easymigrate.engine.tofu import ensure_tofu",
+            True,
+        ),
+        (
+            "easymigrate.core.pipeline",
+            "from easymigrate.engine.tofu import ensure_tofu",
+            False,
+        ),
     ],
 )
 def test_rule_checker(module, source, allowed):
