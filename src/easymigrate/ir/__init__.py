@@ -1,5 +1,6 @@
 """Intent-level intermediate representation."""
 
+from easymigrate.ir import network  # registers networking kinds; import order does not matter
 from easymigrate.ir.base import (
     Finding,
     IntentObject,
@@ -18,4 +19,5 @@ __all__ = [
     "SourceRef",
     "StrictModel",
     "intent_class",
+    "network",
 ]
