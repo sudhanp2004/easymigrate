@@ -44,6 +44,8 @@ EasyMigrate migrates cloud infrastructure between providers:
 
 Anything else found during a scan is listed as *not yet supported*.
 
+**Depth-first.** Each family is finished in full before the next one starts. "Finished" means complete collection, faithful IR, a full difference-rule catalogue with tested strategies, generation, and a live testbed run. The project deliberately does not build thin demo slices across families.
+
 ### Out of scope for this spec
 
 - Every resource type except networking
