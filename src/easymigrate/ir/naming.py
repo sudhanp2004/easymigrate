@@ -2,6 +2,7 @@
 
 import re
 import string
+from collections.abc import Iterable
 
 _MAX_LABEL_LENGTH = 63
 _MAX_LABELS = 64
@@ -11,21 +12,42 @@ def slug(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
 
-class IdAllocator:
-    """Allocates unique `<kind>:<name>` ids. Allocate in a stable order for stable ids."""
+def allocate_ids(kind: str, items: Iterable[tuple[str | None, str]]) -> dict[str, str]:
+    """Map each item's native id to a `<kind>:<name>` IR id, independent of `items` order.
 
-    def __init__(self) -> None:
-        self._taken: set[str] = set()
+    `items` holds `(name, native_id)` pairs. Resources sharing a slugged name (base) get
+    their slugged native id appended, so the id assigned to any one resource never depends
+    on which other resources happen to be scanned alongside it.
+    """
+    items = list(items)
 
-    def allocate(self, kind: str, name: str | None, native_id: str) -> str:
+    native_ids: list[str] = [native_id for _, native_id in items]
+    duplicates = sorted({nid for nid in native_ids if native_ids.count(nid) > 1})
+    if duplicates:
+        raise ValueError(f"duplicate native ids: {', '.join(duplicates)}")
+
+    groups: dict[str, list[str]] = {}
+    for name, native_id in items:
         base = slug(name or "") or slug(native_id) or "unnamed"
-        candidate = f"{kind}:{base}"
-        suffix = 2
-        while candidate in self._taken:
-            candidate = f"{kind}:{base}-{suffix}"
-            suffix += 1
-        self._taken.add(candidate)
-        return candidate
+        groups.setdefault(base, []).append(native_id)
+
+    result: dict[str, str] = {}
+    for base, group_native_ids in groups.items():
+        if len(group_native_ids) == 1:
+            result[group_native_ids[0]] = f"{kind}:{base}"
+            continue
+        for native_id in group_native_ids:
+            suffix = slug(native_id)
+            result[native_id] = f"{kind}:{base}-{suffix}" if suffix else f"{kind}:{base}"
+
+    by_id: dict[str, list[str]] = {}
+    for native_id, ir_id in result.items():
+        by_id.setdefault(ir_id, []).append(native_id)
+    colliding = sorted(nid for nids in by_id.values() if len(nids) > 1 for nid in nids)
+    if colliding:
+        raise ValueError(f"id collision among native ids: {', '.join(colliding)}")
+
+    return result
 
 
 def _label_part(text: str) -> str:

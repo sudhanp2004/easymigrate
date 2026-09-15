@@ -2,7 +2,7 @@ import re
 
 import pytest
 
-from easymigrate.ir.naming import IdAllocator, clean_labels, slug
+from easymigrate.ir.naming import allocate_ids, clean_labels, slug
 
 
 @pytest.mark.parametrize(
@@ -20,27 +20,66 @@ def test_slug(raw, expected):
 
 
 def test_allocate_uses_name():
-    assert IdAllocator().allocate("subnet", "migration-test-subnet-1", "subnet-0a") == (
-        "subnet:migration-test-subnet-1"
-    )
+    ids = allocate_ids("subnet", [("migration-test-subnet-1", "subnet-0a")])
+
+    assert ids == {"subnet-0a": "subnet:migration-test-subnet-1"}
 
 
 @pytest.mark.parametrize("name", [None, "", "日本"])
 def test_allocate_falls_back_to_native_id(name):
-    assert IdAllocator().allocate("subnet", name, "subnet-0A") == "subnet:subnet-0a"
+    ids = allocate_ids("subnet", [(name, "subnet-0A")])
+
+    assert ids == {"subnet-0A": "subnet:subnet-0a"}
 
 
 def test_allocate_last_resort_is_unnamed():
-    assert IdAllocator().allocate("nat", None, "") == "nat:unnamed"
+    ids = allocate_ids("nat", [(None, "")])
+
+    assert ids == {"": "nat:unnamed"}
 
 
-def test_collisions_get_numeric_suffixes_per_kind():
-    ids = IdAllocator()
+def test_shared_name_gets_native_id_suffix():
+    ids = allocate_ids("subnet", [("public", "subnet-2"), ("public", "subnet-1")])
 
-    assert ids.allocate("subnet", "public", "subnet-1") == "subnet:public"
-    assert ids.allocate("subnet", "Public", "subnet-2") == "subnet:public-2"
-    assert ids.allocate("subnet", "public", "subnet-3") == "subnet:public-3"
-    assert ids.allocate("network", "public", "vpc-1") == "network:public"
+    assert ids == {
+        "subnet-2": "subnet:public-subnet-2",
+        "subnet-1": "subnet:public-subnet-1",
+    }
+
+
+def test_shared_name_ids_are_order_independent():
+    forward = allocate_ids("subnet", [("public", "subnet-2"), ("public", "subnet-1")])
+    reverse = allocate_ids("subnet", [("public", "subnet-1"), ("public", "subnet-2")])
+
+    assert forward == reverse
+
+
+def test_shared_name_is_case_insensitive():
+    ids = allocate_ids("subnet", [("Public", "subnet-2"), ("public", "subnet-1")])
+
+    assert ids == {
+        "subnet-2": "subnet:public-subnet-2",
+        "subnet-1": "subnet:public-subnet-1",
+    }
+
+
+def test_single_name_keeps_plain_id_until_a_sibling_appears():
+    ids = allocate_ids("subnet", [("public", "subnet-1")])
+
+    assert ids == {"subnet-1": "subnet:public"}
+
+
+def test_duplicate_native_id_raises():
+    with pytest.raises(ValueError, match="subnet-1"):
+        allocate_ids("subnet", [("a", "subnet-1"), ("b", "subnet-1")])
+
+
+def test_forced_final_collision_raises():
+    with pytest.raises(ValueError):
+        allocate_ids(
+            "subnet",
+            [("a", "x-1"), ("a", "x-2"), ("a-x-1", "zzz")],
+        )
 
 
 def test_clean_labels_follows_gcp_rules():

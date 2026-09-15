@@ -197,7 +197,7 @@ class IRDocument(BaseModel):
 
 Findings now cover only what the scan could see and what the tool supports. **Every way the source and target clouds differ is a `Difference` (§4), never a Finding.**
 
-- **IDs** use the resource's `Name` tag, with disallowed characters replaced. If there is no `Name` tag, the native ID is used. Collisions get a numeric suffix.
+- **IDs** use the resource's `Name` tag, with disallowed characters replaced. If there is no `Name` tag, the native ID is used. When several resources of the same kind share a name, each gets its slugged native ID appended (`subnet:public-subnet-0a1b…`), so IDs never depend on scan order. A resource that later gains a same-named sibling gets a new ID; any decision keyed by the old ID is then orphaned and reported (§4.2) rather than silently attached to another resource.
 
 ### 3.2 Networking objects (`ir/network.py`)
 
