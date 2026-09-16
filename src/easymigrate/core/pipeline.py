@@ -320,9 +320,12 @@ def _hash_file(path: Path) -> str:
 
 
 def _terraform_hashes(terraform_dir: Path) -> dict[str, str]:
+    """Hashes of every file in terraform/, not just the `.tf` sources: `terraform.tfvars`
+    carries the GCP project and region and must also invalidate a stale plan (spec §5.4
+    step 6: every file in terraform/ is hashed)."""
     if not terraform_dir.is_dir():
         return {}
-    return {tf.name: _hash_file(tf) for tf in sorted(terraform_dir.glob("*.tf"))}
+    return {f.name: _hash_file(f) for f in sorted(terraform_dir.iterdir()) if f.is_file()}
 
 
 def _state_hashes(project: Project) -> dict[str, Any]:

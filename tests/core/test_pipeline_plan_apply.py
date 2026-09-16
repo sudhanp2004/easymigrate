@@ -209,6 +209,19 @@ def test_apply_lock_mismatch_after_editing_terraform_exits_two(tmp_path):
         apply(project, confirm=lambda s: True, stream=lambda line: None)
 
 
+def test_apply_lock_mismatch_after_editing_tfvars_exits_two(tmp_path):
+    """terraform.tfvars carries the GCP project and region (spec §5.4 step 6: every file
+    in terraform/ is hashed), so editing it must also make the plan stale."""
+    project = _project_ready_to_plan(tmp_path)
+    plan(**_plan_kwargs(project=project))
+    tfvars = project.terraform_dir / "terraform.tfvars"
+    assert tfvars.exists()
+    tfvars.write_text(tfvars.read_text() + "\n# tampered\n")
+
+    with pytest.raises(PlanStale):
+        apply(project, confirm=lambda s: True, stream=lambda line: None)
+
+
 def test_apply_missing_tfplan_exits_two(tmp_path):
     project = _project_ready_to_plan(tmp_path)
 
