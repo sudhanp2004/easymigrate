@@ -1,0 +1,13 @@
+{
+  "InstanceTypes": [
+    {
+      "InstanceType": "t3.micro",
+      "MemoryInfo": {
+        "SizeInMiB": 1024
+      },
+      "VCpuInfo": {
+        "DefaultVCpus": 2
+      }
+    }
+  ]
+}

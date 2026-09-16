@@ -1,0 +1,19 @@
+{
+  "flagged-db-params": [
+    {
+      "ParameterName": "log_min_duration_statement",
+      "ParameterValue": "1000",
+      "Source": "user"
+    },
+    {
+      "ParameterName": "rds.force_ssl",
+      "ParameterValue": "1",
+      "Source": "user"
+    },
+    {
+      "ParameterName": "shared_buffers",
+      "ParameterValue": "{DBInstanceClassMemory/32768}",
+      "Source": "user"
+    }
+  ]
+}

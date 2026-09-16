@@ -1,0 +1,13 @@
+{
+  "InstanceTypes": [
+    {
+      "InstanceType": "t3.medium",
+      "MemoryInfo": {
+        "SizeInMiB": 4096
+      },
+      "VCpuInfo": {
+        "DefaultVCpus": 2
+      }
+    }
+  ]
+}

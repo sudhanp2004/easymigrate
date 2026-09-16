@@ -1,0 +1,49 @@
+{
+  "DBInstances": [
+    {
+      "AllocatedStorage": 20,
+      "AutoMinorVersionUpgrade": true,
+      "AvailabilityZone": "ap-south-1a",
+      "BackupRetentionPeriod": 7,
+      "CopyTagsToSnapshot": false,
+      "DBInstanceClass": "db.t3.micro",
+      "DBInstanceIdentifier": "public-postgres-db",
+      "DBInstanceStatus": "available",
+      "DBName": "app",
+      "DBParameterGroups": [],
+      "DBSubnetGroup": {
+        "DBSubnetGroupName": "public-postgres-subgrp"
+      },
+      "DeletionProtection": false,
+      "EnabledCloudwatchLogsExports": [
+        "postgresql"
+      ],
+      "Endpoint": {
+        "Address": "public-postgres-db.example.ap-south-1.rds.amazonaws.com",
+        "Port": 5432
+      },
+      "Engine": "postgres",
+      "EngineVersion": "15.5",
+      "IAMDatabaseAuthenticationEnabled": false,
+      "MasterUsername": "postgres",
+      "MultiAZ": false,
+      "PreferredBackupWindow": "03:00-04:00",
+      "PreferredMaintenanceWindow": "sun:04:00-sun:05:00",
+      "PubliclyAccessible": true,
+      "StorageEncrypted": false,
+      "StorageType": "gp2",
+      "TagList": [
+        {
+          "Key": "Name",
+          "Value": "public-postgres-db"
+        }
+      ],
+      "VpcSecurityGroups": [
+        {
+          "Status": "active",
+          "VpcSecurityGroupId": "sg-1"
+        }
+      ]
+    }
+  ]
+}

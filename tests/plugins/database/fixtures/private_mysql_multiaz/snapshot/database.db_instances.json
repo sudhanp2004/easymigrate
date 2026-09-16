@@ -1,0 +1,46 @@
+{
+  "DBInstances": [
+    {
+      "AllocatedStorage": 100,
+      "AutoMinorVersionUpgrade": true,
+      "AvailabilityZone": "ap-south-1a",
+      "BackupRetentionPeriod": 0,
+      "CopyTagsToSnapshot": false,
+      "DBInstanceClass": "db.m5.large",
+      "DBInstanceIdentifier": "private-mysql-db",
+      "DBInstanceStatus": "available",
+      "DBParameterGroups": [],
+      "DBSubnetGroup": {
+        "DBSubnetGroupName": "mysql-subgrp"
+      },
+      "DeletionProtection": true,
+      "EnabledCloudwatchLogsExports": [],
+      "Endpoint": {
+        "Address": "private-mysql-db.example.ap-south-1.rds.amazonaws.com",
+        "Port": 3306
+      },
+      "Engine": "mysql",
+      "EngineVersion": "8.0.35",
+      "IAMDatabaseAuthenticationEnabled": false,
+      "Iops": 3000,
+      "MasterUsername": "admin",
+      "MultiAZ": true,
+      "PubliclyAccessible": false,
+      "StorageEncrypted": true,
+      "StorageThroughput": 250,
+      "StorageType": "gp3",
+      "TagList": [
+        {
+          "Key": "Name",
+          "Value": "private-mysql-db"
+        }
+      ],
+      "VpcSecurityGroups": [
+        {
+          "Status": "active",
+          "VpcSecurityGroupId": "sg-1"
+        }
+      ]
+    }
+  ]
+}

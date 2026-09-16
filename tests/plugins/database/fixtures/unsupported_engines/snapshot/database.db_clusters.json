@@ -1,0 +1,13 @@
+{
+  "DBClusters": [
+    {
+      "DBClusterIdentifier": "aurora-cluster",
+      "DBClusterMembers": [
+        {
+          "DBInstanceIdentifier": "aurora-instance"
+        }
+      ],
+      "Engine": "aurora-postgresql"
+    }
+  ]
+}

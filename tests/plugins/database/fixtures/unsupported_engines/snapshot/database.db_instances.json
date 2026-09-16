@@ -1,0 +1,58 @@
+{
+  "DBInstances": [
+    {
+      "AllocatedStorage": 20,
+      "AutoMinorVersionUpgrade": true,
+      "AvailabilityZone": "ap-south-1a",
+      "BackupRetentionPeriod": 0,
+      "CopyTagsToSnapshot": false,
+      "DBInstanceClass": "db.t3.micro",
+      "DBInstanceIdentifier": "aurora-instance",
+      "DBInstanceStatus": "available",
+      "DBParameterGroups": [],
+      "DeletionProtection": false,
+      "EnabledCloudwatchLogsExports": [],
+      "Endpoint": {
+        "Address": "aurora-instance.example.ap-south-1.rds.amazonaws.com",
+        "Port": 5432
+      },
+      "Engine": "aurora-postgresql",
+      "EngineVersion": "15.4",
+      "IAMDatabaseAuthenticationEnabled": false,
+      "MasterUsername": "postgres",
+      "MultiAZ": false,
+      "PubliclyAccessible": false,
+      "StorageEncrypted": false,
+      "StorageType": "gp2",
+      "TagList": [],
+      "VpcSecurityGroups": []
+    },
+    {
+      "AllocatedStorage": 20,
+      "AutoMinorVersionUpgrade": true,
+      "AvailabilityZone": "ap-south-1a",
+      "BackupRetentionPeriod": 0,
+      "CopyTagsToSnapshot": false,
+      "DBInstanceClass": "db.t3.micro",
+      "DBInstanceIdentifier": "oracle-instance",
+      "DBInstanceStatus": "available",
+      "DBParameterGroups": [],
+      "DeletionProtection": false,
+      "EnabledCloudwatchLogsExports": [],
+      "Endpoint": {
+        "Address": "oracle-instance.example.ap-south-1.rds.amazonaws.com",
+        "Port": 5432
+      },
+      "Engine": "oracle-se2",
+      "EngineVersion": "19.0.0.0.ru-2023-10",
+      "IAMDatabaseAuthenticationEnabled": false,
+      "MasterUsername": "postgres",
+      "MultiAZ": false,
+      "PubliclyAccessible": false,
+      "StorageEncrypted": false,
+      "StorageType": "gp2",
+      "TagList": [],
+      "VpcSecurityGroups": []
+    }
+  ]
+}

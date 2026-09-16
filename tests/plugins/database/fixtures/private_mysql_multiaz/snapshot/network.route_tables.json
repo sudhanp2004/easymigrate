@@ -1,0 +1,39 @@
+[
+  {
+    "Associations": [
+      {
+        "AssociationState": {
+          "State": "associated"
+        },
+        "Main": false,
+        "RouteTableId": "rtb-vpc-1",
+        "SubnetId": "subnet-1"
+      },
+      {
+        "AssociationState": {
+          "State": "associated"
+        },
+        "Main": false,
+        "RouteTableId": "rtb-vpc-1",
+        "SubnetId": "subnet-2"
+      },
+      {
+        "AssociationState": {
+          "State": "associated"
+        },
+        "Main": true,
+        "RouteTableId": "rtb-vpc-1"
+      }
+    ],
+    "RouteTableId": "rtb-vpc-1",
+    "Routes": [
+      {
+        "DestinationCidrBlock": "10.0.0.0/16",
+        "GatewayId": "local",
+        "State": "active"
+      }
+    ],
+    "Tags": [],
+    "VpcId": "vpc-1"
+  }
+]

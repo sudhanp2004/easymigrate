@@ -1,0 +1,196 @@
+{
+  "schema_version": "1",
+  "source": {
+    "cloud": "aws",
+    "account_id": "123456789012",
+    "region": "ap-south-1"
+  },
+  "objects": [
+    {
+      "kind": "network",
+      "id": "network:app-vpc",
+      "name": "app-vpc",
+      "labels": {
+        "name": "app-vpc"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "vpc",
+        "id": "vpc-1",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "cidr_blocks": [
+        "10.1.0.0/16"
+      ],
+      "ipv6_cidr_blocks": [],
+      "dns_hostnames": true,
+      "dns_resolution": true
+    },
+    {
+      "kind": "subnet",
+      "id": "subnet:private-a",
+      "name": "private-a",
+      "labels": {
+        "name": "private-a"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "subnet",
+        "id": "subnet-1",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:app-vpc",
+      "cidr": "10.1.1.0/24",
+      "ipv6_cidr": null,
+      "zone": "ap-south-1a",
+      "internet": "isolated",
+      "map_public_ip": false
+    },
+    {
+      "kind": "subnet",
+      "id": "subnet:private-b",
+      "name": "private-b",
+      "labels": {
+        "name": "private-b"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "subnet",
+        "id": "subnet-2",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:app-vpc",
+      "cidr": "10.1.2.0/24",
+      "ipv6_cidr": null,
+      "zone": "ap-south-1a",
+      "internet": "isolated",
+      "map_public_ip": false
+    },
+    {
+      "kind": "firewall_policy",
+      "id": "firewall_policy:mysql-sg",
+      "name": "mysql-sg",
+      "labels": {
+        "name": "mysql-sg"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "security_group",
+        "id": "sg-1",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:app-vpc",
+      "rules": [
+        {
+          "direction": "egress",
+          "protocol": "all",
+          "ports": [],
+          "peer": {
+            "type": "cidr",
+            "cidr": "0.0.0.0/0"
+          },
+          "description": null,
+          "icmp_type": null,
+          "icmp_code": null
+        },
+        {
+          "direction": "ingress",
+          "protocol": "tcp",
+          "ports": [
+            "3306"
+          ],
+          "peer": {
+            "type": "cidr",
+            "cidr": "10.1.0.0/16"
+          },
+          "description": "mysql",
+          "icmp_type": null,
+          "icmp_code": null
+        }
+      ],
+      "applies_to": [
+        "database_instance:private-mysql-db"
+      ]
+    },
+    {
+      "kind": "database_instance",
+      "id": "database_instance:private-mysql-db",
+      "name": "private-mysql-db",
+      "labels": {
+        "name": "private-mysql-db"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "db_instance",
+        "id": "private-mysql-db",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "engine": "mysql",
+      "engine_version": "8.0.35",
+      "role": "primary",
+      "replica_of": null,
+      "compute": {
+        "class_name": "db.m5.large",
+        "vcpus": 2,
+        "memory_mib": 8192
+      },
+      "storage": {
+        "size_gib": 100,
+        "max_size_gib": null,
+        "type": "gp3",
+        "iops": 3000,
+        "throughput_mibps": 250,
+        "encrypted": true,
+        "kms_key": null
+      },
+      "network": {
+        "network": "network:app-vpc",
+        "subnets": [
+          "subnet:private-a",
+          "subnet:private-b"
+        ],
+        "publicly_accessible": false,
+        "port": 3306,
+        "firewall_policies": [
+          "firewall_policy:mysql-sg"
+        ]
+      },
+      "high_availability": true,
+      "multi_az_cluster": false,
+      "zone": "ap-south-1a",
+      "backup": {
+        "retention_days": 0,
+        "window": null,
+        "copy_tags_to_snapshot": false
+      },
+      "maintenance": {
+        "window": null,
+        "auto_minor_version_upgrade": true
+      },
+      "deletion_protection": true,
+      "master_username": "admin",
+      "initial_database": null,
+      "parameters": {},
+      "iam_auth": false,
+      "log_exports": [],
+      "ca_certificate": null,
+      "status": null
+    }
+  ],
+  "findings": []
+}

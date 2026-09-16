@@ -1,0 +1,22 @@
+{
+  "DBSubnetGroups": [
+    {
+      "DBSubnetGroupName": "conflict-subgrp",
+      "Subnets": [
+        {
+          "SubnetAvailabilityZone": {
+            "Name": "ap-south-1a"
+          },
+          "SubnetIdentifier": "subnet-1"
+        },
+        {
+          "SubnetAvailabilityZone": {
+            "Name": "ap-south-1b"
+          },
+          "SubnetIdentifier": "subnet-2"
+        }
+      ],
+      "VpcId": "vpc-1"
+    }
+  ]
+}

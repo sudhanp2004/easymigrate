@@ -1,0 +1,6 @@
+{
+  "vpc-1": {
+    "enableDnsHostnames": true,
+    "enableDnsSupport": true
+  }
+}

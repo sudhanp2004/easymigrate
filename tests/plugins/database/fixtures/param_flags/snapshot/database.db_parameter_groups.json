@@ -1,0 +1,8 @@
+{
+  "DBParameterGroups": [
+    {
+      "DBParameterGroupFamily": "postgres15",
+      "DBParameterGroupName": "flagged-db-params"
+    }
+  ]
+}

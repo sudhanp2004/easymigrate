@@ -1,0 +1,264 @@
+{
+  "schema_version": "1",
+  "source": {
+    "cloud": "aws",
+    "account_id": "123456789012",
+    "region": "ap-south-1"
+  },
+  "objects": [
+    {
+      "kind": "network",
+      "id": "network:orders-vpc",
+      "name": "orders-vpc",
+      "labels": {
+        "name": "orders-vpc"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "vpc",
+        "id": "vpc-1",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "cidr_blocks": [
+        "10.2.0.0/16"
+      ],
+      "ipv6_cidr_blocks": [],
+      "dns_hostnames": true,
+      "dns_resolution": true
+    },
+    {
+      "kind": "subnet",
+      "id": "subnet:a",
+      "name": "a",
+      "labels": {
+        "name": "a"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "subnet",
+        "id": "subnet-1",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:orders-vpc",
+      "cidr": "10.2.1.0/24",
+      "ipv6_cidr": null,
+      "zone": "ap-south-1a",
+      "internet": "isolated",
+      "map_public_ip": false
+    },
+    {
+      "kind": "subnet",
+      "id": "subnet:b",
+      "name": "b",
+      "labels": {
+        "name": "b"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "subnet",
+        "id": "subnet-2",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:orders-vpc",
+      "cidr": "10.2.2.0/24",
+      "ipv6_cidr": null,
+      "zone": "ap-south-1a",
+      "internet": "isolated",
+      "map_public_ip": false
+    },
+    {
+      "kind": "firewall_policy",
+      "id": "firewall_policy:orders-sg",
+      "name": "orders-sg",
+      "labels": {
+        "name": "orders-sg"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "security_group",
+        "id": "sg-1",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:orders-vpc",
+      "rules": [
+        {
+          "direction": "egress",
+          "protocol": "all",
+          "ports": [],
+          "peer": {
+            "type": "cidr",
+            "cidr": "0.0.0.0/0"
+          },
+          "description": null,
+          "icmp_type": null,
+          "icmp_code": null
+        },
+        {
+          "direction": "ingress",
+          "protocol": "tcp",
+          "ports": [
+            "5432"
+          ],
+          "peer": {
+            "type": "cidr",
+            "cidr": "10.2.0.0/16"
+          },
+          "description": null,
+          "icmp_type": null,
+          "icmp_code": null
+        }
+      ],
+      "applies_to": [
+        "database_instance:orders-db",
+        "database_instance:orders-db-replica"
+      ]
+    },
+    {
+      "kind": "database_instance",
+      "id": "database_instance:orders-db",
+      "name": "orders-db",
+      "labels": {
+        "name": "orders-db"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "db_instance",
+        "id": "orders-db",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "engine": "postgres",
+      "engine_version": "15.5",
+      "role": "primary",
+      "replica_of": null,
+      "compute": {
+        "class_name": "db.t3.medium",
+        "vcpus": 2,
+        "memory_mib": 4096
+      },
+      "storage": {
+        "size_gib": 50,
+        "max_size_gib": null,
+        "type": "gp2",
+        "iops": null,
+        "throughput_mibps": null,
+        "encrypted": false,
+        "kms_key": null
+      },
+      "network": {
+        "network": "network:orders-vpc",
+        "subnets": [
+          "subnet:a",
+          "subnet:b"
+        ],
+        "publicly_accessible": false,
+        "port": 5432,
+        "firewall_policies": [
+          "firewall_policy:orders-sg"
+        ]
+      },
+      "high_availability": false,
+      "multi_az_cluster": false,
+      "zone": "ap-south-1a",
+      "backup": {
+        "retention_days": 0,
+        "window": null,
+        "copy_tags_to_snapshot": false
+      },
+      "maintenance": {
+        "window": null,
+        "auto_minor_version_upgrade": true
+      },
+      "deletion_protection": false,
+      "master_username": "postgres",
+      "initial_database": null,
+      "parameters": {},
+      "iam_auth": false,
+      "log_exports": [],
+      "ca_certificate": null,
+      "status": null
+    },
+    {
+      "kind": "database_instance",
+      "id": "database_instance:orders-db-replica",
+      "name": "orders-db-replica",
+      "labels": {
+        "name": "orders-db-replica"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "db_instance",
+        "id": "orders-db-replica",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "engine": "postgres",
+      "engine_version": "15.5",
+      "role": "read_replica",
+      "replica_of": "database_instance:orders-db",
+      "compute": {
+        "class_name": "db.t3.medium",
+        "vcpus": 2,
+        "memory_mib": 4096
+      },
+      "storage": {
+        "size_gib": 50,
+        "max_size_gib": null,
+        "type": "gp2",
+        "iops": null,
+        "throughput_mibps": null,
+        "encrypted": false,
+        "kms_key": null
+      },
+      "network": {
+        "network": "network:orders-vpc",
+        "subnets": [
+          "subnet:a",
+          "subnet:b"
+        ],
+        "publicly_accessible": false,
+        "port": 5432,
+        "firewall_policies": [
+          "firewall_policy:orders-sg"
+        ]
+      },
+      "high_availability": false,
+      "multi_az_cluster": false,
+      "zone": "ap-south-1a",
+      "backup": {
+        "retention_days": 0,
+        "window": null,
+        "copy_tags_to_snapshot": false
+      },
+      "maintenance": {
+        "window": null,
+        "auto_minor_version_upgrade": true
+      },
+      "deletion_protection": false,
+      "master_username": "postgres",
+      "initial_database": null,
+      "parameters": {},
+      "iam_auth": false,
+      "log_exports": [],
+      "ca_certificate": null,
+      "status": null
+    }
+  ],
+  "findings": []
+}

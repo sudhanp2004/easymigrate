@@ -1,0 +1,44 @@
+{
+  "DBInstances": [
+    {
+      "AllocatedStorage": 20,
+      "AutoMinorVersionUpgrade": true,
+      "AvailabilityZone": "ap-south-1a",
+      "BackupRetentionPeriod": 0,
+      "CopyTagsToSnapshot": false,
+      "DBInstanceClass": "db.t3.small",
+      "DBInstanceIdentifier": "legacy-db",
+      "DBInstanceStatus": "available",
+      "DBParameterGroups": [],
+      "DBSubnetGroup": {
+        "DBSubnetGroupName": "legacy-subgrp"
+      },
+      "DeletionProtection": false,
+      "EnabledCloudwatchLogsExports": [],
+      "Endpoint": {
+        "Address": "legacy-db.example.ap-south-1.rds.amazonaws.com",
+        "Port": 5432
+      },
+      "Engine": "postgres",
+      "EngineVersion": "9.6.24",
+      "IAMDatabaseAuthenticationEnabled": false,
+      "MasterUsername": "postgres",
+      "MultiAZ": false,
+      "PubliclyAccessible": false,
+      "StorageEncrypted": false,
+      "StorageType": "gp2",
+      "TagList": [
+        {
+          "Key": "Name",
+          "Value": "legacy-db"
+        }
+      ],
+      "VpcSecurityGroups": [
+        {
+          "Status": "active",
+          "VpcSecurityGroupId": "sg-1"
+        }
+      ]
+    }
+  ]
+}

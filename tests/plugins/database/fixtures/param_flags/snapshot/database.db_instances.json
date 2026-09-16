@@ -1,0 +1,49 @@
+{
+  "DBInstances": [
+    {
+      "AllocatedStorage": 20,
+      "AutoMinorVersionUpgrade": true,
+      "AvailabilityZone": "ap-south-1a",
+      "BackupRetentionPeriod": 0,
+      "CopyTagsToSnapshot": false,
+      "DBInstanceClass": "db.t3.micro",
+      "DBInstanceIdentifier": "flagged-db",
+      "DBInstanceStatus": "available",
+      "DBParameterGroups": [
+        {
+          "DBParameterGroupName": "flagged-db-params",
+          "ParameterApplyStatus": "in-sync"
+        }
+      ],
+      "DBSubnetGroup": {
+        "DBSubnetGroupName": "flags-subgrp"
+      },
+      "DeletionProtection": false,
+      "EnabledCloudwatchLogsExports": [],
+      "Endpoint": {
+        "Address": "flagged-db.example.ap-south-1.rds.amazonaws.com",
+        "Port": 5432
+      },
+      "Engine": "postgres",
+      "EngineVersion": "15.5",
+      "IAMDatabaseAuthenticationEnabled": false,
+      "MasterUsername": "postgres",
+      "MultiAZ": false,
+      "PubliclyAccessible": false,
+      "StorageEncrypted": false,
+      "StorageType": "gp2",
+      "TagList": [
+        {
+          "Key": "Name",
+          "Value": "flagged-db"
+        }
+      ],
+      "VpcSecurityGroups": [
+        {
+          "Status": "active",
+          "VpcSecurityGroupId": "sg-1"
+        }
+      ]
+    }
+  ]
+}

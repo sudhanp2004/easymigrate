@@ -1,0 +1,32 @@
+{
+  "schema_version": "1",
+  "source": {
+    "cloud": "aws",
+    "account_id": "123456789012",
+    "region": "ap-south-1"
+  },
+  "objects": [],
+  "findings": [
+    {
+      "level": "unsupported",
+      "code": "DB-ENGINE-UNSUPPORTED",
+      "message": "Cluster 'aurora-cluster' uses engine 'aurora-postgresql', which EasyMigrate does not yet migrate: Aurora's distributed storage, reader endpoints and serverless scaling have no Cloud SQL equivalent and need a spec of their own.",
+      "subject": "aurora-cluster",
+      "suggestion": null
+    },
+    {
+      "level": "unsupported",
+      "code": "DB-ENGINE-UNSUPPORTED",
+      "message": "'aurora-instance' uses engine 'aurora-postgresql', which EasyMigrate does not yet migrate: Aurora's distributed storage, reader endpoints and serverless scaling have no Cloud SQL equivalent and need a spec of their own.",
+      "subject": "aurora-instance",
+      "suggestion": null
+    },
+    {
+      "level": "unsupported",
+      "code": "DB-ENGINE-UNSUPPORTED",
+      "message": "'oracle-instance' uses engine 'oracle-se2', which EasyMigrate does not yet migrate: Cloud SQL does not offer an Oracle engine; consider Bare Metal Solution instead.",
+      "subject": "oracle-instance",
+      "suggestion": null
+    }
+  ]
+}

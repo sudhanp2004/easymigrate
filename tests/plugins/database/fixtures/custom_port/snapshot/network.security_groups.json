@@ -1,0 +1,43 @@
+[
+  {
+    "Description": "custom-port-sg",
+    "GroupId": "sg-1",
+    "GroupName": "custom-port-sg",
+    "IpPermissions": [
+      {
+        "FromPort": 5433,
+        "IpProtocol": "tcp",
+        "IpRanges": [
+          {
+            "CidrIp": "10.4.0.0/16"
+          }
+        ],
+        "Ipv6Ranges": [],
+        "PrefixListIds": [],
+        "ToPort": 5433,
+        "UserIdGroupPairs": []
+      }
+    ],
+    "IpPermissionsEgress": [
+      {
+        "IpProtocol": "-1",
+        "IpRanges": [
+          {
+            "CidrIp": "0.0.0.0/0"
+          }
+        ],
+        "Ipv6Ranges": [],
+        "PrefixListIds": [],
+        "UserIdGroupPairs": []
+      }
+    ],
+    "OwnerId": "123456789012",
+    "Tags": [
+      {
+        "Key": "Name",
+        "Value": "custom-port-sg"
+      }
+    ],
+    "VpcId": "vpc-1"
+  }
+]

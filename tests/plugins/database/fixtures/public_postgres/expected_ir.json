@@ -1,0 +1,198 @@
+{
+  "schema_version": "1",
+  "source": {
+    "cloud": "aws",
+    "account_id": "123456789012",
+    "region": "ap-south-1"
+  },
+  "objects": [
+    {
+      "kind": "network",
+      "id": "network:migration-test-vpc",
+      "name": "migration-test-vpc",
+      "labels": {
+        "name": "migration-test-vpc"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "vpc",
+        "id": "vpc-1",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "cidr_blocks": [
+        "10.0.0.0/16"
+      ],
+      "ipv6_cidr_blocks": [],
+      "dns_hostnames": true,
+      "dns_resolution": true
+    },
+    {
+      "kind": "subnet",
+      "id": "subnet:migration-test-subnet-1",
+      "name": "migration-test-subnet-1",
+      "labels": {
+        "name": "migration-test-subnet-1"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "subnet",
+        "id": "subnet-1",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:migration-test-vpc",
+      "cidr": "10.0.1.0/24",
+      "ipv6_cidr": null,
+      "zone": "ap-south-1a",
+      "internet": "isolated",
+      "map_public_ip": false
+    },
+    {
+      "kind": "subnet",
+      "id": "subnet:migration-test-subnet-2",
+      "name": "migration-test-subnet-2",
+      "labels": {
+        "name": "migration-test-subnet-2"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "subnet",
+        "id": "subnet-2",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:migration-test-vpc",
+      "cidr": "10.0.2.0/24",
+      "ipv6_cidr": null,
+      "zone": "ap-south-1a",
+      "internet": "isolated",
+      "map_public_ip": false
+    },
+    {
+      "kind": "firewall_policy",
+      "id": "firewall_policy:public-db-sg",
+      "name": "public-db-sg",
+      "labels": {
+        "name": "public-db-sg"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "security_group",
+        "id": "sg-1",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:migration-test-vpc",
+      "rules": [
+        {
+          "direction": "egress",
+          "protocol": "all",
+          "ports": [],
+          "peer": {
+            "type": "cidr",
+            "cidr": "0.0.0.0/0"
+          },
+          "description": null,
+          "icmp_type": null,
+          "icmp_code": null
+        },
+        {
+          "direction": "ingress",
+          "protocol": "tcp",
+          "ports": [
+            "5432"
+          ],
+          "peer": {
+            "type": "cidr",
+            "cidr": "0.0.0.0/0"
+          },
+          "description": "postgres",
+          "icmp_type": null,
+          "icmp_code": null
+        }
+      ],
+      "applies_to": [
+        "database_instance:public-postgres-db"
+      ]
+    },
+    {
+      "kind": "database_instance",
+      "id": "database_instance:public-postgres-db",
+      "name": "public-postgres-db",
+      "labels": {
+        "name": "public-postgres-db"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "db_instance",
+        "id": "public-postgres-db",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "engine": "postgres",
+      "engine_version": "15.5",
+      "role": "primary",
+      "replica_of": null,
+      "compute": {
+        "class_name": "db.t3.micro",
+        "vcpus": 2,
+        "memory_mib": 1024
+      },
+      "storage": {
+        "size_gib": 20,
+        "max_size_gib": null,
+        "type": "gp2",
+        "iops": null,
+        "throughput_mibps": null,
+        "encrypted": false,
+        "kms_key": null
+      },
+      "network": {
+        "network": "network:migration-test-vpc",
+        "subnets": [
+          "subnet:migration-test-subnet-1",
+          "subnet:migration-test-subnet-2"
+        ],
+        "publicly_accessible": true,
+        "port": 5432,
+        "firewall_policies": [
+          "firewall_policy:public-db-sg"
+        ]
+      },
+      "high_availability": false,
+      "multi_az_cluster": false,
+      "zone": "ap-south-1a",
+      "backup": {
+        "retention_days": 7,
+        "window": "03:00-04:00",
+        "copy_tags_to_snapshot": false
+      },
+      "maintenance": {
+        "window": "sun:04:00-sun:05:00",
+        "auto_minor_version_upgrade": true
+      },
+      "deletion_protection": false,
+      "master_username": "postgres",
+      "initial_database": "app",
+      "parameters": {},
+      "iam_auth": false,
+      "log_exports": [
+        "postgresql"
+      ],
+      "ca_certificate": null,
+      "status": null
+    }
+  ],
+  "findings": []
+}

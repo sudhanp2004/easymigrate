@@ -1,0 +1,85 @@
+{
+  "DBInstances": [
+    {
+      "AllocatedStorage": 50,
+      "AutoMinorVersionUpgrade": true,
+      "AvailabilityZone": "ap-south-1a",
+      "BackupRetentionPeriod": 0,
+      "CopyTagsToSnapshot": false,
+      "DBInstanceClass": "db.t3.medium",
+      "DBInstanceIdentifier": "orders-db",
+      "DBInstanceStatus": "available",
+      "DBParameterGroups": [],
+      "DBSubnetGroup": {
+        "DBSubnetGroupName": "orders-subgrp"
+      },
+      "DeletionProtection": false,
+      "EnabledCloudwatchLogsExports": [],
+      "Endpoint": {
+        "Address": "orders-db.example.ap-south-1.rds.amazonaws.com",
+        "Port": 5432
+      },
+      "Engine": "postgres",
+      "EngineVersion": "15.5",
+      "IAMDatabaseAuthenticationEnabled": false,
+      "MasterUsername": "postgres",
+      "MultiAZ": false,
+      "PubliclyAccessible": false,
+      "StorageEncrypted": false,
+      "StorageType": "gp2",
+      "TagList": [
+        {
+          "Key": "Name",
+          "Value": "orders-db"
+        }
+      ],
+      "VpcSecurityGroups": [
+        {
+          "Status": "active",
+          "VpcSecurityGroupId": "sg-1"
+        }
+      ]
+    },
+    {
+      "AllocatedStorage": 50,
+      "AutoMinorVersionUpgrade": true,
+      "AvailabilityZone": "ap-south-1a",
+      "BackupRetentionPeriod": 0,
+      "CopyTagsToSnapshot": false,
+      "DBInstanceClass": "db.t3.medium",
+      "DBInstanceIdentifier": "orders-db-replica",
+      "DBInstanceStatus": "available",
+      "DBParameterGroups": [],
+      "DBSubnetGroup": {
+        "DBSubnetGroupName": "orders-subgrp"
+      },
+      "DeletionProtection": false,
+      "EnabledCloudwatchLogsExports": [],
+      "Endpoint": {
+        "Address": "orders-db-replica.example.ap-south-1.rds.amazonaws.com",
+        "Port": 5432
+      },
+      "Engine": "postgres",
+      "EngineVersion": "15.5",
+      "IAMDatabaseAuthenticationEnabled": false,
+      "MasterUsername": "postgres",
+      "MultiAZ": false,
+      "PubliclyAccessible": false,
+      "ReadReplicaSourceDBInstanceIdentifier": "orders-db",
+      "StorageEncrypted": false,
+      "StorageType": "gp2",
+      "TagList": [
+        {
+          "Key": "Name",
+          "Value": "orders-db-replica"
+        }
+      ],
+      "VpcSecurityGroups": [
+        {
+          "Status": "active",
+          "VpcSecurityGroupId": "sg-1"
+        }
+      ]
+    }
+  ]
+}

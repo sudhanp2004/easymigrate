@@ -1,0 +1,32 @@
+[
+  {
+    "AvailabilityZone": "ap-south-1a",
+    "CidrBlock": "10.0.1.0/24",
+    "Ipv6CidrBlockAssociationSet": [],
+    "MapPublicIpOnLaunch": false,
+    "State": "available",
+    "SubnetId": "subnet-1",
+    "Tags": [
+      {
+        "Key": "Name",
+        "Value": "migration-test-subnet-1"
+      }
+    ],
+    "VpcId": "vpc-1"
+  },
+  {
+    "AvailabilityZone": "ap-south-1a",
+    "CidrBlock": "10.0.2.0/24",
+    "Ipv6CidrBlockAssociationSet": [],
+    "MapPublicIpOnLaunch": false,
+    "State": "available",
+    "SubnetId": "subnet-2",
+    "Tags": [
+      {
+        "Key": "Name",
+        "Value": "migration-test-subnet-2"
+      }
+    ],
+    "VpcId": "vpc-1"
+  }
+]

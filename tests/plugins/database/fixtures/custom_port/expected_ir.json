@@ -1,0 +1,196 @@
+{
+  "schema_version": "1",
+  "source": {
+    "cloud": "aws",
+    "account_id": "123456789012",
+    "region": "ap-south-1"
+  },
+  "objects": [
+    {
+      "kind": "network",
+      "id": "network:custom-port-vpc",
+      "name": "custom-port-vpc",
+      "labels": {
+        "name": "custom-port-vpc"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "vpc",
+        "id": "vpc-1",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "cidr_blocks": [
+        "10.4.0.0/16"
+      ],
+      "ipv6_cidr_blocks": [],
+      "dns_hostnames": true,
+      "dns_resolution": true
+    },
+    {
+      "kind": "subnet",
+      "id": "subnet:a",
+      "name": "a",
+      "labels": {
+        "name": "a"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "subnet",
+        "id": "subnet-1",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:custom-port-vpc",
+      "cidr": "10.4.1.0/24",
+      "ipv6_cidr": null,
+      "zone": "ap-south-1a",
+      "internet": "isolated",
+      "map_public_ip": false
+    },
+    {
+      "kind": "subnet",
+      "id": "subnet:b",
+      "name": "b",
+      "labels": {
+        "name": "b"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "subnet",
+        "id": "subnet-2",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:custom-port-vpc",
+      "cidr": "10.4.2.0/24",
+      "ipv6_cidr": null,
+      "zone": "ap-south-1a",
+      "internet": "isolated",
+      "map_public_ip": false
+    },
+    {
+      "kind": "firewall_policy",
+      "id": "firewall_policy:custom-port-sg",
+      "name": "custom-port-sg",
+      "labels": {
+        "name": "custom-port-sg"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "security_group",
+        "id": "sg-1",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:custom-port-vpc",
+      "rules": [
+        {
+          "direction": "egress",
+          "protocol": "all",
+          "ports": [],
+          "peer": {
+            "type": "cidr",
+            "cidr": "0.0.0.0/0"
+          },
+          "description": null,
+          "icmp_type": null,
+          "icmp_code": null
+        },
+        {
+          "direction": "ingress",
+          "protocol": "tcp",
+          "ports": [
+            "5433"
+          ],
+          "peer": {
+            "type": "cidr",
+            "cidr": "10.4.0.0/16"
+          },
+          "description": null,
+          "icmp_type": null,
+          "icmp_code": null
+        }
+      ],
+      "applies_to": [
+        "database_instance:custom-port-db"
+      ]
+    },
+    {
+      "kind": "database_instance",
+      "id": "database_instance:custom-port-db",
+      "name": "custom-port-db",
+      "labels": {
+        "name": "custom-port-db"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "db_instance",
+        "id": "custom-port-db",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "engine": "postgres",
+      "engine_version": "15.5",
+      "role": "primary",
+      "replica_of": null,
+      "compute": {
+        "class_name": "db.t3.micro",
+        "vcpus": 2,
+        "memory_mib": 1024
+      },
+      "storage": {
+        "size_gib": 20,
+        "max_size_gib": null,
+        "type": "gp2",
+        "iops": null,
+        "throughput_mibps": null,
+        "encrypted": false,
+        "kms_key": null
+      },
+      "network": {
+        "network": "network:custom-port-vpc",
+        "subnets": [
+          "subnet:a",
+          "subnet:b"
+        ],
+        "publicly_accessible": false,
+        "port": 5433,
+        "firewall_policies": [
+          "firewall_policy:custom-port-sg"
+        ]
+      },
+      "high_availability": false,
+      "multi_az_cluster": false,
+      "zone": "ap-south-1a",
+      "backup": {
+        "retention_days": 0,
+        "window": null,
+        "copy_tags_to_snapshot": false
+      },
+      "maintenance": {
+        "window": null,
+        "auto_minor_version_upgrade": true
+      },
+      "deletion_protection": false,
+      "master_username": "postgres",
+      "initial_database": null,
+      "parameters": {},
+      "iam_auth": false,
+      "log_exports": [],
+      "ca_certificate": null,
+      "status": null
+    }
+  ],
+  "findings": []
+}
