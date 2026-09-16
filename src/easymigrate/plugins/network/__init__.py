@@ -2,10 +2,12 @@
 
 from typing import Any
 
-from easymigrate.core.plugin import CollectContext, NormalizeContext, Snapshot
-from easymigrate.ir.base import IntentObject
+from easymigrate.core.plugin import CollectContext, GenerateContext, NormalizeContext, Snapshot
+from easymigrate.ir.base import IntentObject, IRDocument
 from easymigrate.plugins.network.collect_aws import collect
+from easymigrate.plugins.network.generate_gcp import generate
 from easymigrate.plugins.network.normalize import normalize
+from easymigrate.providers.gcp.hcl import HclFile
 
 
 class NetworkPlugin:
@@ -27,3 +29,6 @@ class NetworkPlugin:
 
     def normalize(self, snapshot: Snapshot, ctx: NormalizeContext) -> list[IntentObject]:
         return normalize(snapshot, ctx)
+
+    def generate_gcp(self, resolved: IRDocument, ctx: GenerateContext) -> HclFile:
+        return generate(resolved, ctx)
