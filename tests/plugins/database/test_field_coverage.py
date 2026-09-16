@@ -4,6 +4,7 @@ must be declared in FIELD_COVERAGE, so adding a field without declaring it fails
 from __future__ import annotations
 
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -18,6 +19,11 @@ from easymigrate.ir.database import (
     DbStorage,
 )
 from easymigrate.plugins.database.generate_gcp import FIELD_COVERAGE
+
+_ROOT = Path(__file__).resolve().parents[3]
+sys.path.insert(0, str(_ROOT / "scripts"))
+
+from gen_differences_doc import field_coverage_output_path, render_field_coverage  # noqa: E402
 
 _KINDS = {
     "DatabaseInstance": DatabaseInstance,
@@ -71,3 +77,12 @@ def test_every_hint_key_is_produced_by_a_rule():
             key = declaration.removeprefix("hint:")
             pattern = re.compile(rf'["\']{re.escape(key)}["\']')
             assert pattern.search(source), f"hint key {key!r} is not produced by any rule"
+
+
+def test_field_coverage_doc_is_up_to_date():
+    expected = render_field_coverage("database")
+    actual = field_coverage_output_path("database").read_text(encoding="utf-8")
+    assert actual == expected, (
+        "docs/field-coverage-database.md is stale; run "
+        "`uv run python scripts/gen_differences_doc.py` and commit the result"
+    )
