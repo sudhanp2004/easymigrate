@@ -113,7 +113,7 @@ def test_private_nat_generates_router_and_router_nat():
         '  name                               = "egress"\n'
         "  router                             = google_compute_router.egress.name\n"
         "  region                             = var.region\n"
-        '  nat_ip_allocate_option             = "AUTO_ONLY"\\n'
+        '  nat_ip_allocate_option             = "AUTO_ONLY"\n'
         '  source_subnetwork_ip_ranges_to_nat = "LIST_OF_SUBNETWORKS"\n'
         "\n"
         "  subnetwork {\n"
