@@ -1,15 +1,30 @@
-"""Stage orchestration for `scan`, `analyze` and `resolve` (spec §2.2, §2.3, §4.2)."""
+"""Stage orchestration for `scan`, `analyze`, `resolve`, `plan` and `apply`
+(spec §2.2, §2.3, §4.2, §5.4, §5.5)."""
 
 from __future__ import annotations
 
+import hashlib
+import json
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
+from easymigrate import __version__
 from easymigrate.core import registry
-from easymigrate.core.plugin import SCAN_FILE, CollectContext, NormalizeContext, Plugin, Snapshot
-from easymigrate.core.project import Project, SourceConfig
+from easymigrate.core.errors import Declined, EasyMigrateError, NotReady, PlanStale
+from easymigrate.core.plugin import (
+    SCAN_FILE,
+    CollectContext,
+    GenerateContext,
+    NormalizeContext,
+    Plugin,
+    Snapshot,
+)
+from easymigrate.core.project import Project, SourceConfig, TargetConfig
+from easymigrate.core.regions import gcp_region_for
+from easymigrate.core.report import build_report, write_report
 from easymigrate.differences.decisions import (
     from_yaml,
     merge_decisions,
@@ -26,6 +41,7 @@ from easymigrate.differences.model import (
 from easymigrate.ir.base import Finding, IntentObject, IRDocument
 
 _SAMPLE_ARNS = 3
+_STATE_BUCKET_SUFFIX = "-easymigrate-tfstate"
 
 
 @dataclass(frozen=True)
@@ -280,3 +296,247 @@ def resolve(
     return ResolveSummary(
         decisions=merged, dropped=dropped, problems=problems, superseded=superseded
     )
+
+
+@dataclass(frozen=True)
+class PlanSummary:
+    add: int
+    change: int
+    destroy: int
+    changed_or_destroyed: list[str]
+    superseded: list[SupersededDecision]
+    findings: list[Finding]
+    plan_text_path: Path
+
+
+@dataclass(frozen=True)
+class ApplyResult:
+    summary: PlanSummary
+    output: list[str]
+
+
+def _hash_file(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _terraform_hashes(terraform_dir: Path) -> dict[str, str]:
+    if not terraform_dir.is_dir():
+        return {}
+    return {tf.name: _hash_file(tf) for tf in sorted(terraform_dir.glob("*.tf"))}
+
+
+def _state_hashes(project: Project) -> dict[str, Any]:
+    """Hashes of every input `apply` must still match (spec §5.4 step 8, §5.5 step 1)."""
+    hashes: dict[str, Any] = {}
+    for name, path in (
+        ("ir.json", project.ir_path),
+        ("decisions.yaml", project.decisions_path),
+        ("resolved_ir.json", project.resolved_ir_path),
+    ):
+        hashes[name] = _hash_file(path) if path.exists() else None
+    hashes["terraform"] = _terraform_hashes(project.terraform_dir)
+    hashes["tfplan"] = _hash_file(project.tfplan_path) if project.tfplan_path.exists() else None
+    return hashes
+
+
+def _resource_change_counts(show: dict[str, Any]) -> tuple[int, int, int, list[str]]:
+    add = change = destroy = 0
+    changed_or_destroyed: list[str] = []
+    for rc in show.get("resource_changes", []):
+        actions = rc.get("change", {}).get("actions", [])
+        address = rc.get("address", "")
+        if not actions or actions == ["no-op"]:
+            continue
+        if actions == ["create"]:
+            add += 1
+            continue
+        destroyed = "delete" in actions
+        created = "create" in actions
+        if destroyed:
+            destroy += 1
+        if created and actions != ["create"]:
+            add += 1
+        if not destroyed and not created:
+            change += 1
+        if destroyed or (created and actions != ["create"]) or (not destroyed and not created):
+            changed_or_destroyed.append(address)
+    return add, change, destroy, changed_or_destroyed
+
+
+def plan(
+    project: Project,
+    *,
+    gcp_project: str,
+    gcp_region: str | None = None,
+    confirm_bucket: Callable[[str], bool],
+    tofu: Any = None,
+    gcp: Any = None,
+) -> PlanSummary:
+    """Generate GCP Terraform from the resolved IR and run `tofu plan` (spec §5.4)."""
+    config = project.load_config()
+    if config.source is None:
+        raise EasyMigrateError("no scan found; run `easymigrate scan` first")
+
+    region = gcp_region_for(config.source.region, override=gcp_region)
+
+    differences = load_differences(project)
+    rules: tuple[DifferenceRule, ...] = catalogue()
+    decisions = (
+        from_yaml(project.decisions_path.read_text(encoding="utf-8"))
+        if project.decisions_path.exists()
+        else None
+    )
+    problems = readiness_problems(decisions, differences, rules)
+    if problems:
+        raise NotReady(problems)
+    assert decisions is not None  # readiness_problems() would have failed otherwise
+
+    ir_doc = project.read_ir(project.ir_path, produced_by="analyze")
+    resolved = resolve_ir(ir_doc, differences, decisions, rules)
+    project.write_ir(project.resolved_ir_path, resolved.document)
+    project.write_json(
+        project.superseded_path, [entry.model_dump(mode="json") for entry in resolved.superseded]
+    )
+
+    gcp = gcp if gcp is not None else registry.gcp_target()
+    if not gcp.credentials_ok():
+        raise EasyMigrateError(
+            "no GCP credentials found; run `gcloud auth application-default login`"
+        )
+
+    bucket = f"{gcp_project}{_STATE_BUCKET_SUFFIX}"
+    ok = gcp.ensure_bucket(gcp_project, bucket, region, confirm_bucket)
+    if not ok:
+        raise Declined(f"declined creating the state bucket {bucket!r}")
+
+    terraform_dir = project.terraform_dir
+    if terraform_dir.is_dir():
+        for old in terraform_dir.glob("*.tf"):
+            old.unlink()
+    terraform_dir.mkdir(parents=True, exist_ok=True)
+
+    decided_by = {decision.key: decision.decided_by for decision in decisions.decisions}
+    gen_findings: list[Finding] = []
+    ctx = GenerateContext(
+        project=gcp_project,
+        region=region,
+        version=__version__,
+        decided_by=decided_by,
+        findings=gen_findings,
+    )
+    for gen_plugin in registry.PLUGINS:
+        hcl_file = gen_plugin.generate_gcp(resolved.document, ctx)
+        project.write_text(terraform_dir / f"{gen_plugin.name}.tf", hcl_file.render())
+    for name, content in registry.generate_boilerplate_tf(gcp_project, region, __version__).items():
+        project.write_text(terraform_dir / name, content)
+
+    tofu_obj = tofu
+    if tofu_obj is None:
+        binary = registry.ensure_tofu()
+        tofu_obj = registry.new_tofu(binary, terraform_dir)
+    tofu_obj.init(backend_config={"bucket": bucket, "prefix": "easymigrate"})
+    plan_text = tofu_obj.plan(out=project.tfplan_path)
+    project.write_text(project.plan_txt_path, plan_text)
+    show = tofu_obj.show_json(project.tfplan_path)
+    add, change, destroy, changed_or_destroyed = _resource_change_counts(show)
+
+    lock = {
+        "hashes": _state_hashes(project),
+        "gcp_project": gcp_project,
+        "gcp_region": region,
+    }
+    project.write_json(project.plan_lock_path, lock)
+
+    project.save_config(
+        config.model_copy(
+            update={"target": TargetConfig(cloud="gcp", project=gcp_project, region=region)}
+        )
+    )
+
+    all_findings = [*resolved.document.findings, *gen_findings]
+    project.write_json(
+        project.plan_summary_path,
+        {
+            "add": add,
+            "change": change,
+            "destroy": destroy,
+            "changed_or_destroyed": changed_or_destroyed,
+            "plan_text_path": str(project.plan_txt_path),
+            "findings": [f.model_dump(mode="json") for f in all_findings],
+        },
+    )
+
+    write_report(project, build_report(project))
+
+    return PlanSummary(
+        add=add,
+        change=change,
+        destroy=destroy,
+        changed_or_destroyed=changed_or_destroyed,
+        superseded=resolved.superseded,
+        findings=all_findings,
+        plan_text_path=project.plan_txt_path,
+    )
+
+
+def _plan_summary_from_disk(project: Project) -> PlanSummary:
+    data = json.loads(project.plan_summary_path.read_text(encoding="utf-8"))
+    superseded_raw = (
+        json.loads(project.superseded_path.read_text(encoding="utf-8"))
+        if project.superseded_path.exists()
+        else []
+    )
+    return PlanSummary(
+        add=data["add"],
+        change=data["change"],
+        destroy=data["destroy"],
+        changed_or_destroyed=data["changed_or_destroyed"],
+        superseded=[SupersededDecision.model_validate(s) for s in superseded_raw],
+        findings=[Finding.model_validate(f) for f in data.get("findings", [])],
+        plan_text_path=Path(data["plan_text_path"]),
+    )
+
+
+def apply(
+    project: Project,
+    *,
+    confirm: Callable[[PlanSummary], bool],
+    stream: Callable[[str], None],
+    tofu: Any = None,
+) -> ApplyResult:
+    """Apply exactly the plan `plan()` produced, after explicit confirmation (spec §5.5)."""
+    if not project.tfplan_path.exists() or not project.plan_lock_path.exists():
+        raise PlanStale("no plan found; run `easymigrate plan` first")
+
+    lock = json.loads(project.plan_lock_path.read_text(encoding="utf-8"))
+    current_hashes = _state_hashes(project)
+    if current_hashes != lock.get("hashes"):
+        raise PlanStale(
+            "the plan is stale (files changed since `plan`); run `easymigrate plan` again"
+        )
+
+    summary = _plan_summary_from_disk(project)
+    if not confirm(summary):
+        raise Declined("apply declined")
+
+    tofu_obj = tofu
+    if tofu_obj is None:
+        binary = registry.ensure_tofu()
+        tofu_obj = registry.new_tofu(binary, project.terraform_dir)
+
+    output: list[str] = []
+
+    def _capture(line: str) -> None:
+        output.append(line)
+        stream(line)
+
+    try:
+        tofu_obj.apply(project.tfplan_path, _capture)
+    except EasyMigrateError as exc:
+        raise EasyMigrateError(
+            f"{exc}\nstate is safe in the bucket; re-run `easymigrate plan` then `apply`"
+        ) from exc
+
+    write_report(project, build_report(project))
+
+    return ApplyResult(summary=summary, output=output)

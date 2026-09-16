@@ -10,7 +10,7 @@ from easymigrate.core.plugin import Plugin
 from easymigrate.engine import tofu as tofu_engine
 from easymigrate.plugins.network import NetworkPlugin
 from easymigrate.providers.aws import source as aws_source
-from easymigrate.providers.gcp import state_bucket
+from easymigrate.providers.gcp import boilerplate, state_bucket
 
 PLUGINS: tuple[Plugin, ...] = (NetworkPlugin(),)
 
@@ -74,3 +74,13 @@ def ensure_tofu(cache_dir: Path | None = None) -> Path:
 
 def new_tofu(binary: Path, workdir: Path) -> tofu_engine.Tofu:
     return tofu_engine.Tofu(binary, workdir)
+
+
+def generate_boilerplate_tf(gcp_project: str, gcp_region: str, version: str) -> dict[str, str]:
+    """The static terraform/*.tf files `plan` writes alongside plugin output (spec §5.2)."""
+    return {
+        "providers.tf": boilerplate.render_providers_tf(version),
+        "backend.tf": boilerplate.render_backend_tf(version),
+        "variables.tf": boilerplate.render_variables_tf(version),
+        "terraform.tfvars": boilerplate.render_tfvars(gcp_project, gcp_region, version),
+    }
