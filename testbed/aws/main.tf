@@ -72,6 +72,117 @@ resource "aws_route_table_association" "sub2" {
   route_table_id = aws_route_table.public.id
 }
 
+# 5a. A private subnet with a NAT gateway (plan 4 B5)
+resource "aws_subnet" "private_1" {
+  vpc_id            = aws_vpc.main.id
+  cidr_block        = "10.0.10.0/24"
+  availability_zone = "ap-south-1a"
+  tags = {
+    Name = "migration-test-subnet-private-1"
+  }
+}
+
+resource "aws_eip" "nat" {
+  domain = "vpc"
+  tags = {
+    Name = "migration-test-nat-eip"
+  }
+}
+
+resource "aws_nat_gateway" "main" {
+  allocation_id = aws_eip.nat.id
+  subnet_id     = aws_subnet.public_1.id
+  tags = {
+    Name = "migration-test-nat"
+  }
+  depends_on = [aws_internet_gateway.gw]
+}
+
+resource "aws_route_table" "private" {
+  vpc_id = aws_vpc.main.id
+
+  route {
+    cidr_block     = "0.0.0.0/0"
+    nat_gateway_id = aws_nat_gateway.main.id
+  }
+
+  tags = {
+    Name = "migration-test-rt-private"
+  }
+}
+
+resource "aws_route_table_association" "private_1" {
+  subnet_id      = aws_subnet.private_1.id
+  route_table_id = aws_route_table.private.id
+}
+
+# 5b. A custom NACL on the private subnet (manual-only difference in EasyMigrate)
+resource "aws_network_acl" "private" {
+  vpc_id     = aws_vpc.main.id
+  subnet_ids = [aws_subnet.private_1.id]
+
+  ingress {
+    rule_no    = 100
+    protocol   = "-1"
+    action     = "allow"
+    cidr_block = "10.0.0.0/16"
+    from_port  = 0
+    to_port    = 0
+  }
+
+  egress {
+    rule_no    = 100
+    protocol   = "-1"
+    action     = "allow"
+    cidr_block = "0.0.0.0/0"
+    from_port  = 0
+    to_port    = 0
+  }
+
+  tags = {
+    Name = "migration-test-nacl-private"
+  }
+}
+
+# 5c. Two security groups that reference each other (PolicyPeer both directions)
+resource "aws_security_group" "app" {
+  name        = "migration-test-app-sg"
+  description = "App tier"
+  vpc_id      = aws_vpc.main.id
+
+  tags = {
+    Name = "migration-test-app-sg"
+  }
+}
+
+resource "aws_security_group" "db" {
+  name        = "migration-test-db-sg"
+  description = "DB tier"
+  vpc_id      = aws_vpc.main.id
+
+  tags = {
+    Name = "migration-test-db-sg"
+  }
+}
+
+resource "aws_security_group_rule" "app_to_db" {
+  type                     = "egress"
+  security_group_id        = aws_security_group.app.id
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.db.id
+}
+
+resource "aws_security_group_rule" "db_from_app" {
+  type                     = "ingress"
+  security_group_id        = aws_security_group.db.id
+  from_port                = 5432
+  to_port                  = 5432
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.app.id
+}
+
 # 6. Create a DB subnet group spanning both AZs
 resource "aws_db_subnet_group" "default" {
   name       = "migration-db-subnet-group"

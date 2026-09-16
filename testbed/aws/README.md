@@ -8,4 +8,4 @@ A small AWS environment used to test EasyMigrate end to end.
     # ... run the EasyMigrate tests ...
     terraform -chdir=testbed/aws destroy
 
-**Cost:** EKS, RDS and NAT gateways are billed by the hour. Create the testbed only while testing and destroy it straight afterwards.
+**Cost:** EKS, RDS and the NAT gateway are billed by the hour, plus its Elastic IP and data processing charges. Create the testbed only while testing and destroy it straight afterwards.
