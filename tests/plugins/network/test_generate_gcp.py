@@ -270,6 +270,47 @@ def test_default_allow_all_egress_is_skipped_exactly_once():
     assert "google_compute_firewall" not in out
 
 
+def test_colliding_policy_names_get_distinct_tags_via_allocator():
+    # Two security groups whose slugs collide after gcp_name() cleaning must not get the
+    # same network tag: that would let one group's firewall rules match the other
+    # group's instances once a later plugin attaches tags. The allocator must assign a
+    # numeric suffix on collision, and the second (renamed) one must report GEN-RENAMED.
+    net = _network("my_vpc", "my-vpc")
+    web1 = FirewallPolicy(
+        id="firewall_policy:Web!!",
+        name="Web!!",
+        source=_src("security_group", "sg-1"),
+        network="network:my_vpc",
+        rules=[
+            FirewallRule(
+                direction="ingress", protocol="tcp", ports=["80"], peer=CidrPeer(cidr="0.0.0.0/0")
+            )
+        ],
+    )
+    web2 = FirewallPolicy(
+        id="firewall_policy:Web##",
+        name="Web##",
+        source=_src("security_group", "sg-2"),
+        network="network:my_vpc",
+        rules=[
+            FirewallRule(
+                direction="ingress", protocol="tcp", ports=["443"], peer=CidrPeer(cidr="0.0.0.0/0")
+            )
+        ],
+    )
+    doc = IRDocument(source={}, objects=[net, web1, web2])
+    ctx = _ctx()
+
+    out = generate(doc, ctx).render()
+
+    assert 'target_tags   = ["fw-web"]' in out
+    assert 'target_tags   = ["fw-web-2"]' in out
+    assert out.count('source_ranges = ["0.0.0.0/0"]') == 2
+    assert any(
+        f.code == "GEN-RENAMED" and f.subject == "firewall_policy:Web##" for f in ctx.findings
+    )
+
+
 def test_excluded_objects_are_skipped():
     net = _network("my_vpc", "my-vpc", excluded="test")
     doc = IRDocument(source={}, objects=[net])
