@@ -16,6 +16,7 @@ from easymigrate.core.pipeline import analyze as run_analyze
 from easymigrate.core.pipeline import resolve as run_resolve
 from easymigrate.core.project import Project
 from easymigrate.core.registry import source_for
+from easymigrate.core.report import build_report
 
 
 class FakeGcp:
@@ -175,13 +176,53 @@ def test_plan_lock_contains_every_hash(tmp_path):
     assert "providers.tf" in lock["hashes"]["terraform"]
 
 
+def _merge_and_isolation_project(tmp_path) -> Project:
+    """One network with a public and an isolated subnet: with NET-ZONE-REGIONAL resolved
+    as `merge_per_network`, the isolated subnet is merged away, so NET-ISOLATION-VM-LEVEL's
+    `no_external_ip` decision on it becomes a genuine superseded decision (same scenario as
+    tests/differences/test_engine.py and tests/core/test_pipeline_resolve.py)."""
+    project = Project(tmp_path)
+    with mock_aws():
+        ec2 = source_for("aws").connect(region="ap-south-1").client("ec2")
+        vpc = ec2.create_vpc(
+            CidrBlock="10.0.0.0/16",
+            TagSpecifications=[{"ResourceType": "vpc", "Tags": [{"Key": "Name", "Value": "main"}]}],
+        )["Vpc"]["VpcId"]
+        igw = ec2.create_internet_gateway()["InternetGateway"]["InternetGatewayId"]
+        ec2.attach_internet_gateway(InternetGatewayId=igw, VpcId=vpc)
+        public = ec2.create_subnet(
+            VpcId=vpc, CidrBlock="10.0.1.0/24", AvailabilityZone="ap-south-1a"
+        )["Subnet"]["SubnetId"]
+        ec2.create_subnet(VpcId=vpc, CidrBlock="10.0.2.0/24", AvailabilityZone="ap-south-1b")
+        public_rt = ec2.create_route_table(VpcId=vpc)["RouteTable"]["RouteTableId"]
+        ec2.create_route(RouteTableId=public_rt, DestinationCidrBlock="0.0.0.0/0", GatewayId=igw)
+        ec2.associate_route_table(RouteTableId=public_rt, SubnetId=public)
+        scan(project, region="ap-south-1")
+    run_analyze(project)
+
+    def choose(view):
+        if view["difference"].rule_id == "NET-ZONE-REGIONAL":
+            return "merge_per_network", False
+        return view["current_strategy"], False
+
+    resolve_summary = run_resolve(project, choose=choose)
+    assert resolve_summary.problems == []
+    return project
+
+
 def test_plan_superseded_carried_into_summary(tmp_path):
-    project = _project_ready_to_plan(tmp_path)
+    project = _merge_and_isolation_project(tmp_path)
 
     summary = plan(**_plan_kwargs(project=project))
 
     assert isinstance(summary, PlanSummary)
-    assert summary.superseded == []  # nothing superseded in this small fixture
+    assert len(summary.superseded) == 1
+    entry = summary.superseded[0]
+    assert entry.strategy == "no_external_ip"
+    assert "merge_per_network" in entry.message
+
+    report = build_report(project)
+    assert any(entry.message == item for item in report.needs_action)
 
 
 def test_plan_preflight_before_bucket_creation(tmp_path, monkeypatch):
