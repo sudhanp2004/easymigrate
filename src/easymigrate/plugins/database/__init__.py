@@ -5,6 +5,7 @@ from typing import Any
 from easymigrate.core.plugin import CollectContext, GenerateContext, NormalizeContext, Snapshot
 from easymigrate.ir.base import IntentObject, IRDocument
 from easymigrate.plugins.database.collect_aws import collect
+from easymigrate.plugins.database.generate_gcp import generate
 from easymigrate.plugins.database.normalize import normalize
 from easymigrate.providers.gcp.hcl import HclFile
 
@@ -27,4 +28,4 @@ class DatabasePlugin:
         return normalize(snapshot, ctx)
 
     def generate_gcp(self, resolved: IRDocument, ctx: GenerateContext) -> HclFile:
-        return HclFile()
+        return generate(resolved, ctx)

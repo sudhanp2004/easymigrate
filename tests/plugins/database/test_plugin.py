@@ -1,4 +1,4 @@
-from easymigrate.core.plugin import Plugin
+from easymigrate.core.plugin import GenerateContext, Plugin
 from easymigrate.core.registry import PLUGINS
 from easymigrate.ir.base import IRDocument
 from easymigrate.plugins.database import DatabasePlugin
@@ -16,10 +16,11 @@ def test_plugin_satisfies_protocol_and_declares_resource_types():
     assert "ec2:vpc" not in plugin.aws_resource_types
 
 
-def test_generate_gcp_returns_empty_hcl_file():
+def test_generate_gcp_delegates_to_the_generator():
     resolved = IRDocument(source={"cloud": "aws"}, objects=[])
+    ctx = GenerateContext(project="p", region="asia-south1")
 
-    result = DatabasePlugin().generate_gcp(resolved, ctx=None)
+    result = DatabasePlugin().generate_gcp(resolved, ctx)
 
     assert isinstance(result, HclFile)
     assert result.blocks == []
