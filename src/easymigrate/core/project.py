@@ -96,6 +96,14 @@ class Project:
     def plan_lock_path(self) -> Path:
         return self.dir / "plan.lock.json"
 
+    @property
+    def plan_summary_path(self) -> Path:
+        return self.dir / "plan_summary.json"
+
+    @property
+    def superseded_path(self) -> Path:
+        return self.dir / "superseded.json"
+
     def init(self) -> bool:
         """Create the project directory. Returns True on the first run."""
         created = not self.dir.exists()

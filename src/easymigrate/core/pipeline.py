@@ -272,6 +272,11 @@ def resolve(
             # reports this, and resolve_ir cannot meaningfully run here.
             superseded = []
 
+    project.write_json(
+        project.superseded_path,
+        [entry.model_dump(mode="json") for entry in superseded],
+    )
+
     return ResolveSummary(
         decisions=merged, dropped=dropped, problems=problems, superseded=superseded
     )

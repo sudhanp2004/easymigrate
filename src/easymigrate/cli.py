@@ -18,6 +18,7 @@ from easymigrate.core.pipeline import analyze as run_analyze
 from easymigrate.core.pipeline import resolve as run_resolve
 from easymigrate.core.pipeline import scan as run_scan
 from easymigrate.core.project import Project, StageInputMissing
+from easymigrate.core.report import Report, build_report, write_report
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 console = Console(soft_wrap=True, highlight=False)
@@ -83,6 +84,44 @@ def _print_findings(findings: Iterable[Any]) -> None:
         console.print(f"{notes} note(s) recorded in the project files.")
 
 
+def render_report(report: Report) -> None:
+    """Terminal rendering of a Report, reusing the same object md/json use (spec §6.1).
+    `info`-level findings are intentionally omitted here; they appear only in md/json."""
+    console.print(f"[bold]{report.source or '?'} → {report.target or '?'}[/bold]")
+    cov = report.coverage
+    console.print(
+        f"{cov.get('found', 0)} found, {cov.get('translated', 0)} translated, "
+        f"{cov.get('decided', 0)} decided, {cov.get('needs_action', 0)} need action, "
+        f"{cov.get('not_supported', 0)} not yet supported.",
+        markup=False,
+    )
+    if report.scan_gaps:
+        console.print(f"[bold]Scan gaps ({len(report.scan_gaps)})[/bold]")
+        for f in report.scan_gaps:
+            console.print(f"  {f.code}: {f.message}", markup=False)
+    if report.needs_action:
+        console.print(f"[bold]Needs your action ({len(report.needs_action)})[/bold]")
+        for item in report.needs_action:
+            console.print(f"  {item}", markup=False)
+    if report.not_supported:
+        console.print(f"[bold]Not yet supported ({len(report.not_supported)})[/bold]")
+        for f in report.not_supported:
+            console.print(f"  {f.code}: {f.message}", markup=False)
+    if report.plan is not None:
+        console.print(
+            f"Plan: +{report.plan.add} ~{report.plan.change} -{report.plan.destroy}",
+            markup=False,
+        )
+        for addr in report.plan.changed_or_destroyed:
+            console.print(f"  [red]{addr}[/red]")
+
+
+def _write_and_note_report(project: Project) -> None:
+    report = build_report(project)
+    write_report(project, report)
+    console.print(f"Report: {project.report_md_path.relative_to(project.root)}", markup=False)
+
+
 @app.command()
 def scan(
     region: str | None = typer.Option(
@@ -122,6 +161,7 @@ def analyze() -> None:
     console.print(table)
     _print_findings(doc.findings)
     console.print(f"Wrote {project.ir_path.relative_to(project.root)}.", markup=False)
+    _write_and_note_report(project)
 
 
 def _prompt_choice(view: dict[str, Any]) -> tuple[str, bool]:
@@ -209,6 +249,7 @@ def resolve(
                 f"  choose a different strategy for {entry.superseded_by} to keep this decision",
                 markup=False,
             )
+    _write_and_note_report(project)
     if summary.problems:
         for problem in summary.problems:
             error_console.print(f"[red]{problem}[/red]")
