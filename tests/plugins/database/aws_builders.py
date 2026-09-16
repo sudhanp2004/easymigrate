@@ -77,7 +77,9 @@ def db_instance(
             for pg in parameter_group_names
         ],
         "Endpoint": {"Address": f"{identifier}.example.ap-south-1.rds.amazonaws.com", "Port": port},
-        "Tags": _tags(name, tags),
+        # Real DescribeDBInstances reports tags under "TagList", not "Tags" (verified against
+        # moto/boto3); task 2's original builder used "Tags", which normalize.py cannot read.
+        "TagList": _tags(name, tags),
     }
     if max_allocated_storage is not None:
         data["MaxAllocatedStorage"] = max_allocated_storage
