@@ -77,6 +77,24 @@ class DifferenceRule(ABC):
         this instead of relying on the fixed class attribute."""
         return self.default
 
+    def allowed_strategies(self, diff: Difference) -> tuple[Strategy, ...]:
+        """The strategies actually offered for this difference. Defaults to the full
+        class-level `strategies` tuple; a rule whose strategy set varies per difference
+        (the same rules that override `default_strategy`) narrows it here instead of
+        re-deriving an ad-hoc allow-set inside `apply`. The CLI's strategy listing,
+        `merge_decisions`' validity check and `readiness_problems` all consult this, so a
+        strategy `apply` would reject can never be offered, hand-edited in, or persisted
+        as a default in the first place."""
+        return self.strategies
+
+    def risk_for(self, diff: Difference, strategy_id: str) -> Risk:
+        """The risk to show for this strategy on this difference. Defaults to the
+        strategy's own fixed `risk`; a rule whose risk depends on the difference's
+        context (e.g. a public-access strategy that becomes high-risk when it would
+        leave a database open to 0.0.0.0/0) overrides this instead of only recording the
+        fact in `context` where nothing reads it."""
+        return self.strategy(strategy_id).risk
+
     def default_params(self, diff: Difference, strategy_id: str) -> dict[str, Any]:
         return {}
 

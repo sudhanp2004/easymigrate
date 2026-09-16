@@ -15,7 +15,7 @@ import ipaddress
 import re
 from typing import Any
 
-from easymigrate.differences.model import Difference, DifferenceRule, Strategy
+from easymigrate.differences.model import Difference, DifferenceRule, Risk, Strategy
 from easymigrate.differences.rules.aws_gcp.cloudsql_facts import (
     DATABASE_VERSION,
     DAY_NUMBER,
@@ -25,6 +25,7 @@ from easymigrate.differences.rules.aws_gcp.cloudsql_facts import (
     MAX_TRANSACTION_LOG_RETENTION_DAYS,
     MEMORY_PER_VCPU_MIB,
     MEMORY_STEP_MIB,
+    MIN_CUSTOM_MEMORY_MIB,
     MIN_DISK_GIB,
     OLDEST_SUPPORTED,
     SUPPORTED_FLAGS,
@@ -129,6 +130,17 @@ def _vpc_cidrs_context(ir: IRDocument) -> dict[str, list[str]]:
     }
 
 
+def _connectivity_network_ids(ir: IRDocument) -> list[str]:
+    """Every network a PSA range might be allocated for: DB-PRIVATE-IP always needs one
+    for a non-public instance, and DB-PUBLIC-ACCESS's `private_only` strategy needs one
+    for a public instance too. Both rules allocate from this single combined list so
+    they can never hand two different networks the same range (spec §5)."""
+    return [
+        _network_id_of(ir, instance)
+        for instance in sorted(ir.of_kind(DatabaseInstance), key=lambda i: i.id)
+    ]
+
+
 def _psa_default_params(diff: Difference) -> dict[str, Any]:
     return {"range": diff.context["psa_range"], "prefix_length": diff.context["psa_prefix_length"]}
 
@@ -152,6 +164,13 @@ def _validate_psa_params(diff: Difference, params: dict[str, Any]) -> None:
         for cidr in cidrs:
             if candidate.overlaps(ipaddress.ip_network(cidr)):
                 raise ValueError(f"range {candidate} overlaps VPC {vpc_id}'s CIDR {cidr}")
+    this_network = diff.context["network"]
+    for network_id, allocated in diff.context["psa_allocations"].items():
+        if network_id == this_network:
+            continue
+        other = ipaddress.ip_network(f"{allocated}/{_PSA_PREFIX_LENGTH}")
+        if candidate.overlaps(other):
+            raise ValueError(f"range {candidate} overlaps network {network_id}'s allocated range")
 
 
 # ---- 1. DB-ENGINE-VERSION --------------------------------------------------
@@ -164,6 +183,12 @@ def _engine_major(engine: str, engine_version: str) -> str:
     if engine == "mysql":
         return f"{parts[0]}.{parts[1]}"
     raise ValueError(f"unsupported engine {engine!r}")
+
+
+def _version_key(major: str) -> tuple[int, ...]:
+    """Numeric sort key so majors compare by value, not lexicographically
+    (`"9.6" < "13"`, `"18" > "17"`)."""
+    return tuple(int(part) for part in major.split("."))
 
 
 class DbEngineVersion(DifferenceRule):
@@ -194,18 +219,37 @@ class DbEngineVersion(DifferenceRule):
     default = "nearest_major"
 
     def default_strategy(self, diff: Difference) -> str:
-        if diff.context["major"] != diff.context["target"]:
-            return "upgrade_to_oldest_supported"
-        return "nearest_major"
+        return (
+            "upgrade_to_oldest_supported" if diff.context["upgrade_required"] else "nearest_major"
+        )
+
+    def allowed_strategies(self, diff: Difference) -> tuple[Strategy, ...]:
+        ids = (
+            {"upgrade_to_oldest_supported", "manual"}
+            if diff.context["upgrade_required"]
+            else {"nearest_major", "manual"}
+        )
+        return tuple(s for s in self.strategies if s.id in ids)
 
     def detect(self, ir: IRDocument) -> list[Difference]:
         diffs = []
         for instance in sorted(ir.of_kind(DatabaseInstance), key=lambda i: i.id):
             major = _engine_major(instance.engine, instance.engine_version)
-            if major in SUPPORTED_VERSIONS[instance.engine]:
+            supported = SUPPORTED_VERSIONS[instance.engine]
+            if major in supported:
+                # Exactly supported: no upgrade, no downgrade.
                 target = major
+                upgrade_required = False
+            elif _version_key(major) > _version_key(supported[0]):
+                # Newer than anything Cloud SQL supports: the nearest achievable major
+                # is the newest supported one, below the source — a downgrade, not an
+                # upgrade, so it must not be routed through `upgrade_to_oldest_supported`.
+                target = supported[0]
+                upgrade_required = False
             else:
+                # Older than Cloud SQL's floor: a genuine upgrade is required.
                 target = OLDEST_SUPPORTED[instance.engine]
+                upgrade_required = True
             diffs.append(
                 self.difference(
                     [instance.id],
@@ -213,6 +257,7 @@ class DbEngineVersion(DifferenceRule):
                     version=instance.engine_version,
                     major=major,
                     target=target,
+                    upgrade_required=upgrade_required,
                 )
             )
         return diffs
@@ -228,12 +273,7 @@ class DbEngineVersion(DifferenceRule):
         instance_id = diff.subjects[0]
         if instance_id not in {o.id for o in doc.objects}:
             return doc
-        upgrade_required = diff.context["major"] != diff.context["target"]
-        allowed = (
-            {"upgrade_to_oldest_supported", "manual"}
-            if upgrade_required
-            else {"nearest_major", "manual"}
-        )
+        allowed = {s.id for s in self.allowed_strategies(diff)}
         if strategy_id not in allowed:
             raise ValueError(f"unknown strategy {strategy_id!r}")
         instance = doc.get(instance_id)
@@ -257,8 +297,8 @@ def _shared_core_tier(class_name: str) -> str | None:
 
 
 def _custom_tier_memory_mib(vcpus: int, memory_mib: int) -> int:
-    floor = vcpus * MEMORY_PER_VCPU_MIB[0]
-    ceiling = vcpus * MEMORY_PER_VCPU_MIB[1]
+    floor = max(vcpus * MEMORY_PER_VCPU_MIB[0], MIN_CUSTOM_MEMORY_MIB)
+    ceiling = max(vcpus * MEMORY_PER_VCPU_MIB[1], floor)
     clamped = min(max(memory_mib, floor), ceiling)
     return -(-clamped // MEMORY_STEP_MIB) * MEMORY_STEP_MIB
 
@@ -296,6 +336,14 @@ class DbTier(DifferenceRule):
             return "shared_core"
         return "nearest_custom_tier"
 
+    def allowed_strategies(self, diff: Difference) -> tuple[Strategy, ...]:
+        ids = (
+            {"nearest_custom_tier", "shared_core", "manual"}
+            if diff.context["sizing_known"]
+            else {"manual"}
+        )
+        return tuple(s for s in self.strategies if s.id in ids)
+
     def detect(self, ir: IRDocument) -> list[Difference]:
         diffs = []
         for instance in sorted(ir.of_kind(DatabaseInstance), key=lambda i: i.id):
@@ -323,8 +371,7 @@ class DbTier(DifferenceRule):
         instance_id = diff.subjects[0]
         if instance_id not in {o.id for o in doc.objects}:
             return doc
-        sizing_known = diff.context["sizing_known"]
-        allowed = {"nearest_custom_tier", "shared_core", "manual"} if sizing_known else {"manual"}
+        allowed = {s.id for s in self.allowed_strategies(diff)}
         if strategy_id not in allowed:
             raise ValueError(f"unknown strategy {strategy_id!r}")
         instance = doc.get(instance_id)
@@ -388,8 +435,7 @@ class DbPrivateIp(DifferenceRule):
         ]
         if not instances:
             return []
-        network_ids = [_network_id_of(ir, i) for i in instances]
-        allocations = _allocate_psa_ranges(ir, network_ids)
+        allocations = _allocate_psa_ranges(ir, _connectivity_network_ids(ir))
         vpc_cidrs = _vpc_cidrs_context(ir)
         diffs = []
         for instance in instances:
@@ -401,6 +447,7 @@ class DbPrivateIp(DifferenceRule):
                     psa_range=allocations[network_id],
                     psa_prefix_length=_PSA_PREFIX_LENGTH,
                     vpc_cidrs=vpc_cidrs,
+                    psa_allocations=dict(allocations),
                 )
             )
         return diffs
@@ -486,8 +533,7 @@ class DbPublicAccess(DifferenceRule):
         ]
         if not instances:
             return []
-        network_ids = [_network_id_of(ir, i) for i in instances]
-        allocations = _allocate_psa_ranges(ir, network_ids)
+        allocations = _allocate_psa_ranges(ir, _connectivity_network_ids(ir))
         vpc_cidrs = _vpc_cidrs_context(ir)
         diffs = []
         for instance in instances:
@@ -502,6 +548,7 @@ class DbPublicAccess(DifferenceRule):
                     psa_range=allocations[network_id],
                     psa_prefix_length=_PSA_PREFIX_LENGTH,
                     vpc_cidrs=vpc_cidrs,
+                    psa_allocations=dict(allocations),
                 )
             )
         return diffs
@@ -514,6 +561,11 @@ class DbPublicAccess(DifferenceRule):
     def validate_params(self, diff: Difference, strategy_id: str, params: dict[str, Any]) -> None:
         if strategy_id == "private_only":
             _validate_psa_params(diff, params)
+
+    def risk_for(self, diff: Difference, strategy_id: str) -> Risk:
+        if strategy_id == "public_ip_authorized_networks" and diff.context["open_to_world"]:
+            return "high"
+        return super().risk_for(diff, strategy_id)
 
     def apply(
         self,
@@ -631,6 +683,13 @@ class DbMultiAz(DifferenceRule):
     )
     default = "regional_ha"
 
+    def default_strategy(self, diff: Difference) -> str:
+        return "manual" if diff.context["multi_az_cluster"] else "regional_ha"
+
+    def allowed_strategies(self, diff: Difference) -> tuple[Strategy, ...]:
+        ids = {"manual"} if diff.context["multi_az_cluster"] else {"regional_ha", "zonal"}
+        return tuple(s for s in self.strategies if s.id in ids)
+
     def detect(self, ir: IRDocument) -> list[Difference]:
         diffs = []
         for instance in sorted(ir.of_kind(DatabaseInstance), key=lambda i: i.id):
@@ -651,8 +710,7 @@ class DbMultiAz(DifferenceRule):
         instance_id = diff.subjects[0]
         if instance_id not in {o.id for o in doc.objects}:
             return doc
-        cluster = diff.context["multi_az_cluster"]
-        allowed = {"manual"} if cluster else {"regional_ha", "zonal"}
+        allowed = {s.id for s in self.allowed_strategies(diff)}
         if strategy_id not in allowed:
             raise ValueError(f"unknown strategy {strategy_id!r}")
         instance = doc.get(instance_id)
@@ -963,14 +1021,24 @@ class DbBackupWindow(DifferenceRule):
     def default_strategy(self, diff: Difference) -> str:
         return "nearest_equivalent" if diff.context["retention_days"] > 0 else "no_backups"
 
+    def allowed_strategies(self, diff: Difference) -> tuple[Strategy, ...]:
+        ids = (
+            {"nearest_equivalent", "manual"}
+            if diff.context["retention_days"] > 0
+            else {"no_backups", "enable_default_backups"}
+        )
+        return tuple(s for s in self.strategies if s.id in ids)
+
     def detect(self, ir: IRDocument) -> list[Difference]:
         diffs = []
         for instance in sorted(ir.of_kind(DatabaseInstance), key=lambda i: i.id):
+            window = instance.backup.window
             diffs.append(
                 self.difference(
                     [instance.id],
                     retention_days=instance.backup.retention_days,
-                    window=instance.backup.window,
+                    window=window,
+                    window_defaulted=window is None,
                     backups_clamped=instance.backup.retention_days > MAX_RETAINED_BACKUPS,
                 )
             )
@@ -987,12 +1055,7 @@ class DbBackupWindow(DifferenceRule):
         instance_id = diff.subjects[0]
         if instance_id not in {o.id for o in doc.objects}:
             return doc
-        retention_days = diff.context["retention_days"]
-        allowed = (
-            {"nearest_equivalent", "manual"}
-            if retention_days > 0
-            else {"no_backups", "enable_default_backups"}
-        )
+        allowed = {s.id for s in self.allowed_strategies(diff)}
         if strategy_id not in allowed:
             raise ValueError(f"unknown strategy {strategy_id!r}")
         instance = doc.get(instance_id)
@@ -1005,9 +1068,10 @@ class DbBackupWindow(DifferenceRule):
         if strategy_id == "enable_default_backups":
             backup = {"enabled": True, "start_time": "03:00", "retained_backups": 7}
             return _replace_object(doc, _set_hint(instance, "backup", backup))
-        # nearest_equivalent
+        # nearest_equivalent: a missing window (window_defaulted) still needs a start
+        # time to report, so one is invented here rather than left unset.
         window = diff.context["window"] or "00:00-01:00"
-        retained = min(retention_days, MAX_RETAINED_BACKUPS)
+        retained = min(diff.context["retention_days"], MAX_RETAINED_BACKUPS)
         backup = {
             "enabled": True,
             "start_time": _window_start(window),
@@ -1369,6 +1433,10 @@ class DbReplica(DifferenceRule):
     def default_strategy(self, diff: Difference) -> str:
         return "manual" if diff.context["primary_id"] is None else "cloud_sql_replica"
 
+    def allowed_strategies(self, diff: Difference) -> tuple[Strategy, ...]:
+        ids = {"manual"} if diff.context["primary_id"] is None else {"cloud_sql_replica", "manual"}
+        return tuple(s for s in self.strategies if s.id in ids)
+
     def detect(self, ir: IRDocument) -> list[Difference]:
         diffs = []
         for instance in sorted(ir.of_kind(DatabaseInstance), key=lambda i: i.id):
@@ -1393,7 +1461,7 @@ class DbReplica(DifferenceRule):
         if instance_id not in {o.id for o in doc.objects}:
             return doc
         primary_id = diff.context["primary_id"]
-        allowed = {"manual"} if primary_id is None else {"cloud_sql_replica", "manual"}
+        allowed = {s.id for s in self.allowed_strategies(diff)}
         if strategy_id not in allowed:
             raise ValueError(f"unknown strategy {strategy_id!r}")
         instance = doc.get(instance_id)

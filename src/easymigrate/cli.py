@@ -188,15 +188,19 @@ def _prompt_choice(view: dict[str, Any]) -> tuple[str, bool]:
     current_acknowledged = view.get("current_acknowledged", False)
     current_params = view.get("current_params", {})
 
+    allowed = rule.allowed_strategies(diff)
+    default_strategy = rule.default_strategy(diff)
+
     console.print(f"[bold]{rule.title}[/bold] ({diff.key})")
     console.print(f"  subjects: {', '.join(diff.subjects)}", markup=False)
     console.print(f"  impact: {rule.impact}", markup=False)
     if diff.context:
         console.print(f"  context: {diff.context}", markup=False)
-    for index, strategy in enumerate(rule.strategies, start=1):
-        marker = " (default)" if strategy.id == rule.default else ""
+    for index, strategy in enumerate(allowed, start=1):
+        marker = " (default)" if strategy.id == default_strategy else ""
+        risk = rule.risk_for(diff, strategy.id)
         console.print(
-            f"  {index}. {strategy.id} — {strategy.effect} (risk: {strategy.risk}){marker}",
+            f"  {index}. {strategy.id} — {strategy.effect} (risk: {risk}){marker}",
             markup=False,
         )
 
@@ -211,12 +215,12 @@ def _prompt_choice(view: dict[str, Any]) -> tuple[str, bool]:
         else:
             try:
                 index = int(raw.strip()) - 1
-                if not 0 <= index < len(rule.strategies):
+                if not 0 <= index < len(allowed):
                     raise ValueError
             except ValueError:
                 console.print("Invalid choice.", markup=False)
                 continue
-            chosen = rule.strategies[index]
+            chosen = allowed[index]
         if not chosen.manual:
             _print_params(rule, diff, current, chosen.id, current_params)
             return chosen.id, False

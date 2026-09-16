@@ -14,6 +14,7 @@ import pytest
 
 from easymigrate.core.plugin import NormalizeContext, Snapshot
 from easymigrate.differences.engine import detect
+from easymigrate.differences.rules.aws_gcp.database import DbPrivateIp
 from easymigrate.ir import IRDocument
 from easymigrate.plugins.database.normalize import normalize as normalize_database
 from easymigrate.plugins.network.normalize import normalize as normalize_network
@@ -201,3 +202,16 @@ def test_golden(case, update_golden):
 
     detected_db_keys = sorted(d.key for d in detect(doc) if d.rule_id.startswith("DB-"))
     assert detected_db_keys == DETECTED_DB_KEYS[case]
+
+
+def test_psa_range_conflict_fixture_actually_forces_a_non_default_allocation():
+    """This fixture's VPC CIDR is 10.64.0.0/16, deliberately colliding with the PSA
+    allocator's first candidate; it exists to prove DB-PRIVATE-IP skips past it, but
+    nothing previously asserted the range it lands on, so a regression that stopped
+    skipping the VPC CIDR would still pass every other check on this fixture."""
+    doc = _normalize("psa_range_conflict")
+
+    diffs = DbPrivateIp().detect(doc)
+
+    assert len(diffs) == 1
+    assert diffs[0].context["psa_range"] == "10.65.0.0"

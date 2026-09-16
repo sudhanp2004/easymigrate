@@ -67,6 +67,38 @@ def _param_rule(rule_id="PARAM-RULE"):
     return type(f"_Rule_{rule_id.replace('-', '_')}", (DifferenceRule,), attrs)()
 
 
+_ONLY_STRATEGY = Strategy(id="only", title="Only", effect="only", risk="low")
+_OTHER_STRATEGY = Strategy(id="other", title="Other", effect="other", risk="low")
+
+
+def _varying_rule(rule_id="VARY-RULE"):
+    """A rule whose offered strategies depend on the difference's context, the same
+    shape as DB-ENGINE-VERSION/DB-TIER/DB-MULTI-AZ: when `context["restricted"]` is
+    set, `other` is not a legal choice at all."""
+
+    def allowed_strategies(self, diff):
+        if diff.context.get("restricted"):
+            return (_ONLY_STRATEGY,)
+        return (_ONLY_STRATEGY, _OTHER_STRATEGY)
+
+    def default_strategy(self, diff):
+        return "only" if diff.context.get("restricted") else "other"
+
+    attrs = {
+        "id": rule_id,
+        "family": "test",
+        "title": rule_id,
+        "impact": "impact",
+        "strategies": (_ONLY_STRATEGY, _OTHER_STRATEGY),
+        "default": "other",
+        "detect": lambda self, ir: [],
+        "apply": lambda self, ir, diff, strategy_id, params=None: ir,
+        "allowed_strategies": allowed_strategies,
+        "default_strategy": default_strategy,
+    }
+    return type(f"_Rule_{rule_id.replace('-', '_')}", (DifferenceRule,), attrs)()
+
+
 def test_fingerprint_depends_only_on_sorted_keys():
     d1 = _diff("network:a")
     d2 = _diff("network:b")
@@ -290,3 +322,83 @@ def test_readiness_problems_reports_invalid_params():
     )
     problems = readiness_problems(decisions, [diff], (rule,))
     assert problems == ["PARAM-RULE@network:a: prefix_length must be between 16 and 24"]
+
+
+# ---- C2: strategy selection must respect allowed_strategies(diff), not the full class set --
+
+
+def test_merge_decisions_uses_default_strategy_for_a_restricted_difference():
+    rule = _varying_rule()
+    diff = _diff(rule_id="VARY-RULE")
+    restricted = diff.model_copy(update={"context": {"restricted": True}})
+
+    merged, dropped = merge_decisions(None, [restricted], (rule,))
+
+    assert dropped == []
+    assert merged.decisions[0].strategy == "only"
+
+
+def test_merge_decisions_drops_a_strategy_not_offered_for_this_difference():
+    """A hand-edited decisions.yaml can carry a strategy that is valid for the rule in
+    general but not for this specific difference (e.g. `nearest_major` recorded against
+    a postgres-9.6 difference); it must be dropped and replaced, not kept."""
+    rule = _varying_rule()
+    diff = _diff(rule_id="VARY-RULE")
+    restricted = diff.model_copy(update={"context": {"restricted": True}})
+    existing = DecisionSet(
+        differences_fingerprint="stale",
+        decisions=[Decision(key=restricted.key, strategy="other", decided_by="user")],
+    )
+
+    merged, dropped = merge_decisions(existing, [restricted], (rule,))
+
+    assert dropped == [restricted.key]
+    assert merged.decisions[0].strategy == "only"
+
+
+def test_readiness_problems_reports_a_strategy_not_offered_for_this_difference():
+    """Even if an invalid-for-this-difference strategy reaches decisions.yaml some other
+    way (bypassing merge_decisions), readiness_problems must still catch it rather than
+    letting `plan`/`resolve_ir` crash on it."""
+    rule = _varying_rule()
+    diff = _diff(rule_id="VARY-RULE")
+    restricted = diff.model_copy(update={"context": {"restricted": True}})
+    decisions = DecisionSet(
+        differences_fingerprint=fingerprint([restricted]),
+        decisions=[Decision(key=restricted.key, strategy="other", decided_by="user")],
+    )
+
+    problems = readiness_problems(decisions, [restricted], (rule,))
+
+    assert len(problems) == 1
+    assert "not offered" in problems[0]
+
+
+# ---- I6: params are refilled when the strategy changed, not only on validation failure --
+
+
+def test_merge_decisions_refills_params_when_hand_switched_to_a_still_valid_strategy():
+    """A strategy switched by hand in decisions.yaml, from a param-carrying strategy to
+    one that takes none, is a strategy *change* the plan requires be refilled — but the
+    new strategy ("manual") is itself perfectly valid, so nothing here would fail
+    `validate_params` and trigger the old reset-on-failure path. Reverting the I6 fix
+    (comparing param key sets) leaves the orphaned params in place."""
+    rule = _param_rule()
+    diff = _diff(rule_id="PARAM-RULE")
+    existing = DecisionSet(
+        differences_fingerprint="stale",
+        decisions=[
+            Decision(
+                key=diff.key,
+                strategy="manual",
+                decided_by="user",
+                params={"range": "10.80.0.0", "prefix_length": 20},
+            )
+        ],
+    )
+
+    merged, dropped = merge_decisions(existing, [diff], (rule,))
+
+    assert dropped == []
+    assert merged.decisions[0].strategy == "manual"
+    assert merged.decisions[0].params == {}

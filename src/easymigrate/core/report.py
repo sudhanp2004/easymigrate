@@ -243,7 +243,10 @@ def build_report(project: Project) -> Report:
                 strategy = rule.strategy(decision.strategy) if rule else None
             except KeyError:
                 strategy = None
-            risk = strategy.risk if strategy else "none"
+            if strategy is not None and rule is not None and diff is not None:
+                risk = rule.risk_for(diff, decision.strategy)
+            else:
+                risk = "none"
             decision_rows.append(
                 DecisionRow(
                     key=decision.key,

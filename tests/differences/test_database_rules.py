@@ -158,6 +158,7 @@ def test_engine_version_detects_every_instance():
         "version": "15.4",
         "major": "15",
         "target": "15",
+        "upgrade_required": False,
     }
 
 
@@ -188,16 +189,38 @@ def test_engine_version_mysql_8_0_maps_directly():
     assert result.get(instance.id).target_hints == {"database_version": "MYSQL_8_0"}
 
 
+def test_engine_version_too_new_major_routes_to_newest_supported_not_oldest():
+    """I4: a major newer than anything Cloud SQL supports must be treated as a
+    downgrade to the newest supported major, not silently routed through the
+    `upgrade_to_oldest_supported` path (which would turn a postgres 18 source into a
+    five-major downgrade to 12, labelled an upgrade)."""
+    instance = _instance(engine="postgres", engine_version="18.1")
+    doc = _doc(instance)
+    rule = DbEngineVersion()
+    diff = rule.detect(doc)[0]
+    assert diff.context["major"] == "18"
+    assert diff.context["target"] == "17"
+    assert diff.context["upgrade_required"] is False
+    assert rule.default_strategy(diff) == "nearest_major"
+    assert {s.id for s in rule.allowed_strategies(diff)} == {"nearest_major", "manual"}
+
+    result = rule.apply(doc, diff, "nearest_major")
+
+    assert result.get(instance.id).target_hints == {"database_version": "POSTGRES_17"}
+    with pytest.raises(ValueError):
+        rule.apply(doc, diff, "upgrade_to_oldest_supported")
+
+
 def test_engine_version_postgres_9_6_is_the_upgrade_variant_with_only_two_strategies():
     instance = _instance(engine="postgres", engine_version="9.6.24")
     doc = _doc(instance)
     rule = DbEngineVersion()
     diff = rule.detect(doc)[0]
     assert diff.context["major"] == "9.6"
-    assert diff.context["target"] == "13"
+    assert diff.context["target"] == "12"
 
     upgraded = rule.apply(doc, diff, "upgrade_to_oldest_supported")
-    assert upgraded.get(instance.id).target_hints == {"database_version": "POSTGRES_13"}
+    assert upgraded.get(instance.id).target_hints == {"database_version": "POSTGRES_12"}
 
     excluded = rule.apply(doc, diff, "manual")
     assert (
@@ -273,8 +296,22 @@ def test_tier_memory_below_band_rounds_up_to_floor():
 
     result = rule.apply(doc, diff, "nearest_custom_tier")
 
-    # floor = 2 * 922 = 1844, rounded up to a 256 multiple = 2048
-    assert result.get(instance.id).target_hints == {"tier": "db-custom-2-2048"}
+    # per-vCPU floor = 2 * 922 = 1844, but Cloud SQL's absolute custom-tier floor of
+    # 3840 MiB (MIN_CUSTOM_MEMORY_MIB) is higher and wins.
+    assert result.get(instance.id).target_hints == {"tier": "db-custom-2-3840"}
+
+
+def test_tier_custom_tier_below_absolute_minimum_clamps_to_3840_mib():
+    """Cloud SQL rejects a custom tier below 3840 MiB total memory regardless of vCPU
+    count (I3); a 1-vCPU/1 GiB non-burstable class must not emit db-custom-1-1024."""
+    instance = _instance(class_name="db.m5.custom-tiny", vcpus=1, memory_mib=1024)
+    doc = _doc(instance)
+    rule = DbTier()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "nearest_custom_tier")
+
+    assert result.get(instance.id).target_hints == {"tier": "db-custom-1-3840"}
 
 
 def test_tier_unknown_sizing_is_manual_only():
@@ -353,6 +390,49 @@ def test_private_ip_two_networks_get_different_ranges():
     params_b = rule.default_params(diffs["database_instance:b"], "psa_auto_range")
 
     assert params_a["range"] != params_b["range"]
+
+
+def test_private_ip_and_public_access_share_one_psa_allocation_pool():
+    """I1: a private instance in one network and a public instance in another (which
+    might resolve `private_only`, consuming the same PSA plumbing) must not be handed
+    the same range — each rule used to allocate over only its own instances'
+    networks, so both landed on 10.64.0.0 independently."""
+    net_a = _network(id_="network:a", cidr="10.1.0.0/16")
+    net_b = _network(id_="network:b", cidr="10.2.0.0/16")
+    private_instance = _instance(
+        id_="database_instance:private", network=net_a.id, publicly_accessible=False
+    )
+    public_instance = _instance(
+        id_="database_instance:public", network=net_b.id, publicly_accessible=True
+    )
+    doc = _doc(net_a, net_b, private_instance, public_instance)
+
+    private_diff = DbPrivateIp().detect(doc)[0]
+    public_diff = DbPublicAccess().detect(doc)[0]
+
+    assert private_diff.context["psa_range"] == "10.64.0.0"
+    assert public_diff.context["psa_range"] == "10.64.1.0"
+    assert private_diff.context["psa_allocations"] == public_diff.context["psa_allocations"]
+
+
+def test_private_ip_validate_params_rejects_range_colliding_with_another_networks_allocation():
+    net_a = _network(id_="network:a", cidr="10.1.0.0/16")
+    net_b = _network(id_="network:b", cidr="10.2.0.0/16")
+    private_instance = _instance(
+        id_="database_instance:private", network=net_a.id, publicly_accessible=False
+    )
+    public_instance = _instance(
+        id_="database_instance:public", network=net_b.id, publicly_accessible=True
+    )
+    doc = _doc(net_a, net_b, private_instance, public_instance)
+    rule = DbPrivateIp()
+    diff = rule.detect(doc)[0]
+    network_b_range = diff.context["psa_allocations"]["network:b"]
+
+    with pytest.raises(ValueError, match="network:b"):
+        rule.validate_params(
+            diff, "psa_auto_range", {"range": network_b_range, "prefix_length": 24}
+        )
 
 
 def test_private_ip_validate_params_rejects_overlapping_range_naming_vpc():
@@ -515,6 +595,58 @@ def test_public_access_open_to_world_sets_context_flag():
     diff = rule.detect(doc)[0]
 
     assert diff.context["open_to_world"] is True
+
+
+def test_public_access_risk_escalates_to_high_when_open_to_world():
+    """Spec §5: a strategy that would leave the database reachable from 0.0.0.0/0 must
+    be shown as high risk, not the strategy's fixed medium (I2) — otherwise an
+    internet-open database is presented as a routine default."""
+    net = _network()
+    policy = _policy(
+        "firewall_policy:sg1",
+        network=net.id,
+        rules=[
+            FirewallRule(
+                direction="ingress", protocol="tcp", ports=["5432"], peer=CidrPeer(cidr="0.0.0.0/0")
+            ),
+        ],
+    )
+    instance = _instance(
+        network=net.id, publicly_accessible=True, port=5432, firewall_policies=[policy.id]
+    )
+    doc = _doc(net, policy, instance)
+    rule = DbPublicAccess()
+    diff = rule.detect(doc)[0]
+
+    assert rule.risk_for(diff, "public_ip_authorized_networks") == "high"
+    # unaffected strategies keep their fixed risk
+    assert rule.risk_for(diff, "private_only") == "medium"
+    assert rule.risk_for(diff, "manual") == "low"
+
+
+def test_public_access_risk_stays_at_declared_risk_when_not_open_to_world():
+    net = _network()
+    policy = _policy(
+        "firewall_policy:sg2",
+        network=net.id,
+        rules=[
+            FirewallRule(
+                direction="ingress",
+                protocol="tcp",
+                ports=["5432"],
+                peer=CidrPeer(cidr="1.2.3.0/24"),
+            ),
+        ],
+    )
+    instance = _instance(
+        network=net.id, publicly_accessible=True, port=5432, firewall_policies=[policy.id]
+    )
+    doc = _doc(net, policy, instance)
+    rule = DbPublicAccess()
+    diff = rule.detect(doc)[0]
+    assert diff.context["open_to_world"] is False
+
+    assert rule.risk_for(diff, "public_ip_authorized_networks") == "medium"
 
 
 def test_public_access_private_only_apply_uses_psa_params():
@@ -687,6 +819,41 @@ def test_multi_az_cluster_is_manual_only():
         rule.apply(doc, diff, "regional_ha")
     with pytest.raises(ValueError):
         rule.apply(doc, diff, "zonal")
+
+
+def test_multi_az_cluster_default_strategy_is_manual():
+    """C1: DB-MULTI-AZ had no `default_strategy` override, so `merge_decisions` handed a
+    multi-AZ-cluster instance the class default `regional_ha`, which `apply` then
+    rejects — the exact defect class fixed for DB-ENGINE-VERSION/DB-TIER."""
+    instance = _instance(high_availability=True, multi_az_cluster=True)
+    doc = _doc(instance)
+    rule = DbMultiAz()
+    diff = rule.detect(doc)[0]
+
+    assert rule.default_strategy(diff) == "manual"
+    assert {s.id for s in rule.allowed_strategies(diff)} == {"manual"}
+
+
+def test_multi_az_cluster_resolves_end_to_end_with_accept_defaults():
+    instance = _instance(high_availability=True, multi_az_cluster=True)
+    doc = _doc(instance)
+
+    differences = detect(doc, AWS_GCP_RULES)
+    decisions, dropped = merge_decisions(None, differences, AWS_GCP_RULES)
+    assert dropped == []
+    ma_decision = next(d for d in decisions.decisions if d.key == f"DB-MULTI-AZ@{instance.id}")
+    assert ma_decision.strategy == "manual"
+
+    resolved = resolve_ir(doc, differences, decisions, AWS_GCP_RULES)
+
+    # No DifferenceRuleError: that is the crash this test exists to prevent. Every
+    # other rule targeting the same (now-excluded) instance is superseded rather than
+    # raising, which is the engine's normal handling of an excluded subject.
+    assert (
+        resolved.document.get(instance.id).excluded
+        == "DB-MULTI-AZ: multi-AZ DB clusters have no Cloud SQL equivalent"
+    )
+    assert all(s.superseded_by == "DB-MULTI-AZ@database_instance:db1" for s in resolved.superseded)
 
 
 # ---- DB-STORAGE-AUTORESIZE ---------------------------------------------------------
@@ -904,7 +1071,7 @@ def test_postgres_9_6_resolves_end_to_end_with_accept_defaults():
     resolved = resolve_ir(doc, differences, decisions, AWS_GCP_RULES)
 
     assert resolved.superseded == []
-    assert resolved.document.get(instance.id).target_hints["database_version"] == "POSTGRES_13"
+    assert resolved.document.get(instance.id).target_hints["database_version"] == "POSTGRES_12"
 
 
 def test_tier_unknown_sizing_defaults_to_manual():

@@ -9,14 +9,16 @@ from __future__ import annotations
 import re
 
 # Cloud SQL supported major versions per engine, newest first. Checked 2026-09-16.
+# Round 1 review (I5): this previously omitted postgres 12 and mysql 8.4, forcing an
+# unnecessary high-risk major upgrade for either.
 SUPPORTED_VERSIONS: dict[str, list[str]] = {
-    "postgres": ["17", "16", "15", "14", "13"],
-    "mysql": ["8.0", "5.7"],
+    "postgres": ["17", "16", "15", "14", "13", "12"],
+    "mysql": ["8.4", "8.0", "5.7"],
 }
 
 # Oldest Cloud SQL major version still supported per engine. Checked 2026-09-16.
 OLDEST_SUPPORTED: dict[str, str] = {
-    "postgres": "13",
+    "postgres": "12",
     "mysql": "5.7",
 }
 
@@ -27,6 +29,8 @@ DATABASE_VERSION: dict[tuple[str, str], str] = {
     ("postgres", "15"): "POSTGRES_15",
     ("postgres", "14"): "POSTGRES_14",
     ("postgres", "13"): "POSTGRES_13",
+    ("postgres", "12"): "POSTGRES_12",
+    ("mysql", "8.4"): "MYSQL_8_4",
     ("mysql", "8.0"): "MYSQL_8_0",
     ("mysql", "5.7"): "MYSQL_5_7",
 }
@@ -44,6 +48,10 @@ SHARED_CORE_SPECS: dict[str, tuple[int, int]] = {
 # multiple memory must round up to. Checked 2026-09-16.
 MEMORY_PER_VCPU_MIB = (922, 6656)
 MEMORY_STEP_MIB = 256
+
+# Cloud SQL custom machine types additionally require at least this much total memory,
+# regardless of vCPU count (a 1-vCPU floor of 922 MiB is below it). Checked 2026-09-16.
+MIN_CUSTOM_MEMORY_MIB = 3840
 
 # Minimum Cloud SQL disk size, in GiB. Checked 2026-09-16.
 MIN_DISK_GIB = 10

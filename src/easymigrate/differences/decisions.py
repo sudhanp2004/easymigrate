@@ -21,7 +21,8 @@ def merge_decisions(
 ) -> tuple[DecisionSet, list[str]]:
     by_id = {rule.id: rule for rule in rules}
     valid_strategies = {
-        diff.key: {s.id for s in by_id[diff.rule_id].strategies} for diff in differences
+        diff.key: {s.id for s in by_id[diff.rule_id].allowed_strategies(diff)}
+        for diff in differences
     }
 
     existing_by_key = (
@@ -39,7 +40,17 @@ def merge_decisions(
         rule = by_id[diff.rule_id]
         kept = existing_by_key.get(diff.key)
         if kept is not None and diff.key not in dropped_set:
-            decision = kept
+            # A strategy is unchanged, and its params kept, only when the params' key set
+            # still matches what that strategy would default to; a strategy switched by
+            # hand (params left over from the old one) is refilled here too, without being
+            # reported as `dropped` — that list is reserved for validation failures.
+            current_keys = set(rule.default_params(diff, kept.strategy))
+            if set(kept.params) == current_keys:
+                decision = kept
+            else:
+                decision = kept.model_copy(
+                    update={"params": rule.default_params(diff, kept.strategy)}
+                )
         else:
             default_strategy = rule.default_strategy(diff)
             decision = Decision(
@@ -83,6 +94,12 @@ def readiness_problems(
             strategy = rule.strategy(decision.strategy)
         except KeyError:
             problems.append(f"{decision.key} uses an unknown strategy {decision.strategy!r}")
+            continue
+        if decision.strategy not in {s.id for s in rule.allowed_strategies(diff)}:
+            problems.append(
+                f"{decision.key} uses strategy {decision.strategy!r}, which is not offered "
+                "for this difference"
+            )
             continue
         if strategy.manual and not decision.acknowledged:
             problems.append(f"{decision.key} uses a manual strategy and is not acknowledged")
