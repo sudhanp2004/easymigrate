@@ -56,7 +56,7 @@ def _rule(rule_id, detect_fn=None, apply_fn=None, strategies=(_KEEP,), default="
         "strategies": strategies,
         "default": default,
         "detect": detect_fn or (lambda self, ir: []),
-        "apply": apply_fn or (lambda self, ir, diff, strategy_id: ir),
+        "apply": apply_fn or (lambda self, ir, diff, strategy_id, params=None: ir),
     }
     return type(f"_Rule_{rule_id.replace('-', '_')}", (DifferenceRule,), attrs)()
 
@@ -115,7 +115,7 @@ def test_apply_failing_rule_raises_difference_rule_error():
         update={"decisions": [Decision(key=diff.key, strategy="keep", decided_by="default")]}
     )
 
-    def boom(self, ir, diff, strategy_id):
+    def boom(self, ir, diff, strategy_id, params=None):
         raise RuntimeError("kaboom")
 
     rule = _rule("TEST-RULE", apply_fn=boom)
@@ -159,7 +159,7 @@ def test_resolve_ir_skips_removed_subject_without_error():
         differences_fingerprint="x",
         decisions=[Decision(key=diff.key, strategy="keep", decided_by="default")],
     )
-    rule = _rule("TEST-RULE", apply_fn=lambda self, ir, diff, strategy_id: _doc())
+    rule = _rule("TEST-RULE", apply_fn=lambda self, ir, diff, strategy_id, params=None: _doc())
 
     result = resolve_ir(doc, [diff], decisions, rules=(rule,))
     assert result.document.objects == []
@@ -228,7 +228,7 @@ def test_resolve_ir_supersedes_decision_whose_subject_was_excluded():
         key="LATER-RULE@network:a", rule_id="LATER-RULE", subjects=["network:a"], context={}
     )
 
-    def exclude_apply(self, ir, diff, strategy_id):
+    def exclude_apply(self, ir, diff, strategy_id, params=None):
         obj = ir.get("network:a")
         return ir.model_copy(
             update={

@@ -95,3 +95,32 @@ def test_apply_and_detect_receive_ir_document():
     doc = IRDocument(source={})
     assert rule.detect(doc) == []
     assert rule.apply(doc, rule.difference(["x:1"]), "keep") is doc
+
+
+def test_default_param_hooks_are_noop_by_default():
+    rule_cls = _make_rule()
+    rule = rule_cls()
+    diff = rule.difference(["x:1"])
+    assert rule.default_params(diff, "keep") == {}
+    assert rule.validate_params(diff, "keep", {}) is None
+
+
+def test_apply_accepts_optional_params():
+    rule_cls = _make_rule(apply=lambda self, ir, diff, strategy_id, params=None: (ir, params))
+    rule = rule_cls()
+    doc = IRDocument(source={})
+    diff = rule.difference(["x:1"])
+    assert rule.apply(doc, diff, "keep") == (doc, None)
+    assert rule.apply(doc, diff, "keep", {"a": 1}) == (doc, {"a": 1})
+
+
+def test_decision_params_default_empty_and_round_trips():
+    decision = Decision(key="TEST-RULE@network:a", strategy="keep", decided_by="default")
+    assert decision.params == {}
+    with_params = Decision(
+        key="TEST-RULE@network:a",
+        strategy="ranged",
+        decided_by="user",
+        params={"range": "10.0.0.0", "prefix_length": 24},
+    )
+    assert with_params.params == {"range": "10.0.0.0", "prefix_length": 24}

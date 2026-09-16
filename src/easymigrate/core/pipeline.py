@@ -247,15 +247,22 @@ def resolve(
                 "rule": rule,
                 "current_strategy": decision.strategy,
                 "current_acknowledged": decision.acknowledged,
+                "current_params": decision.params,
             }
             strategy_id, acknowledged = choose(view)
             decided_by = decision.decided_by if strategy_id == decision.strategy else "user"
+            params = (
+                decision.params
+                if strategy_id == decision.strategy
+                else rule.default_params(diff, strategy_id)
+            )
             updated.append(
                 Decision(
                     key=decision.key,
                     strategy=strategy_id,
                     decided_by=decided_by,
                     acknowledged=acknowledged,
+                    params=params,
                 )
             )
         merged = merged.model_copy(update={"decisions": updated})

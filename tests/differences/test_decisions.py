@@ -39,6 +39,34 @@ def _diff(subject="network:a", rule_id="TEST-RULE"):
     return Difference(key=f"{rule_id}@{subject}", rule_id=rule_id, subjects=[subject], context={})
 
 
+_PARAM_STRATEGY = Strategy(id="ranged", title="Ranged", effect="picks a range", risk="medium")
+
+
+def _param_rule(rule_id="PARAM-RULE"):
+    def default_params(self, diff, strategy_id):
+        if strategy_id == "ranged":
+            return {"range": "10.0.0.0", "prefix_length": 24}
+        return {}
+
+    def validate_params(self, diff, strategy_id, params):
+        if strategy_id == "ranged" and params.get("prefix_length") not in range(16, 25):
+            raise ValueError("prefix_length must be between 16 and 24")
+
+    attrs = {
+        "id": rule_id,
+        "family": "test",
+        "title": rule_id,
+        "impact": "impact",
+        "strategies": (_PARAM_STRATEGY, _MANUAL),
+        "default": "ranged",
+        "detect": lambda self, ir: [],
+        "apply": lambda self, ir, diff, strategy_id, params=None: ir,
+        "default_params": default_params,
+        "validate_params": validate_params,
+    }
+    return type(f"_Rule_{rule_id.replace('-', '_')}", (DifferenceRule,), attrs)()
+
+
 def test_fingerprint_depends_only_on_sorted_keys():
     d1 = _diff("network:a")
     d2 = _diff("network:b")
@@ -147,3 +175,118 @@ def test_from_yaml_wrong_shape_raises_validation_error():
 
     with pytest.raises(ValidationError):
         from_yaml("just: a string\n")
+
+
+def test_decision_with_params_round_trips_through_yaml():
+    diff = _diff(rule_id="PARAM-RULE")
+    decisions = DecisionSet(
+        differences_fingerprint=fingerprint([diff]),
+        decisions=[
+            Decision(
+                key=diff.key,
+                strategy="ranged",
+                decided_by="user",
+                params={"range": "10.80.0.0", "prefix_length": 24},
+            )
+        ],
+    )
+    text = to_yaml(decisions)
+    assert "range" in text
+    assert from_yaml(text) == decisions
+
+
+def test_yaml_omits_empty_params():
+    diff = _diff()
+    decisions = DecisionSet(
+        differences_fingerprint=fingerprint([diff]),
+        decisions=[Decision(key=diff.key, strategy="keep", decided_by="default")],
+    )
+    assert "params" not in to_yaml(decisions)
+
+
+def test_merge_decisions_fills_default_params_on_creation():
+    rule = _param_rule()
+    diff = _diff(rule_id="PARAM-RULE")
+    merged, dropped = merge_decisions(None, [diff], (rule,))
+    assert dropped == []
+    assert merged.decisions[0].params == {"range": "10.0.0.0", "prefix_length": 24}
+
+
+def test_merge_decisions_keeps_user_params_when_strategy_unchanged():
+    rule = _param_rule()
+    diff = _diff(rule_id="PARAM-RULE")
+    existing = DecisionSet(
+        differences_fingerprint="stale",
+        decisions=[
+            Decision(
+                key=diff.key,
+                strategy="ranged",
+                decided_by="user",
+                params={"range": "10.80.0.0", "prefix_length": 20},
+            )
+        ],
+    )
+    merged, dropped = merge_decisions(existing, [diff], (rule,))
+    assert dropped == []
+    assert merged.decisions[0].params == {"range": "10.80.0.0", "prefix_length": 20}
+
+
+def test_merge_decisions_refills_params_when_strategy_changed_to_invalid_then_reset():
+    # An invalid-strategy decision is treated as a fresh default (existing behaviour),
+    # which also means it gets fresh default params rather than carrying over stale ones.
+    rule = _param_rule()
+    diff = _diff(rule_id="PARAM-RULE")
+    existing = DecisionSet(
+        differences_fingerprint="stale",
+        decisions=[
+            Decision(
+                key=diff.key,
+                strategy="no-such-strategy",
+                decided_by="user",
+                params={"range": "10.80.0.0", "prefix_length": 20},
+            )
+        ],
+    )
+    merged, dropped = merge_decisions(existing, [diff], (rule,))
+    assert dropped == [diff.key]
+    assert merged.decisions[0].strategy == "ranged"
+    assert merged.decisions[0].params == {"range": "10.0.0.0", "prefix_length": 24}
+
+
+def test_merge_decisions_resets_invalid_params_and_reports_dropped():
+    rule = _param_rule()
+    diff = _diff(rule_id="PARAM-RULE")
+    existing = DecisionSet(
+        differences_fingerprint="stale",
+        decisions=[
+            Decision(
+                key=diff.key,
+                strategy="ranged",
+                decided_by="user",
+                params={"range": "10.80.0.0", "prefix_length": 30},
+            )
+        ],
+    )
+    merged, dropped = merge_decisions(existing, [diff], (rule,))
+    assert len(dropped) == 1
+    assert dropped[0].startswith(f"{diff.key}: ")
+    assert dropped[0].endswith("; reset to defaults")
+    assert merged.decisions[0].params == {"range": "10.0.0.0", "prefix_length": 24}
+
+
+def test_readiness_problems_reports_invalid_params():
+    rule = _param_rule()
+    diff = _diff(rule_id="PARAM-RULE")
+    decisions = DecisionSet(
+        differences_fingerprint=fingerprint([diff]),
+        decisions=[
+            Decision(
+                key=diff.key,
+                strategy="ranged",
+                decided_by="user",
+                params={"range": "10.80.0.0", "prefix_length": 30},
+            )
+        ],
+    )
+    problems = readiness_problems(decisions, [diff], (rule,))
+    assert problems == ["PARAM-RULE@network:a: prefix_length must be between 16 and 24"]

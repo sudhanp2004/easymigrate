@@ -172,11 +172,21 @@ def analyze() -> None:
     _write_and_note_report(project)
 
 
+def _print_params(rule: Any, diff: Any, current: str, chosen_id: str, current_params: dict) -> None:
+    params = current_params if chosen_id == current else rule.default_params(diff, chosen_id)
+    if not params:
+        return
+    for key, value in params.items():
+        console.print(f"  {key}: {value}", markup=False)
+    console.print("  Edit decisions.yaml to change these.", markup=False)
+
+
 def _prompt_choice(view: dict[str, Any]) -> tuple[str, bool]:
     diff = view["difference"]
     rule = view["rule"]
     current = view["current_strategy"]
     current_acknowledged = view.get("current_acknowledged", False)
+    current_params = view.get("current_params", {})
 
     console.print(f"[bold]{rule.title}[/bold] ({diff.key})")
     console.print(f"  subjects: {', '.join(diff.subjects)}", markup=False)
@@ -196,6 +206,7 @@ def _prompt_choice(view: dict[str, Any]) -> tuple[str, bool]:
             chosen = rule.strategy(current)
             if chosen.manual and current_acknowledged:
                 # Keeping an already-acknowledged manual strategy needs no re-confirmation.
+                _print_params(rule, diff, current, chosen.id, current_params)
                 return chosen.id, True
         else:
             try:
@@ -207,9 +218,11 @@ def _prompt_choice(view: dict[str, Any]) -> tuple[str, bool]:
                 continue
             chosen = rule.strategies[index]
         if not chosen.manual:
+            _print_params(rule, diff, current, chosen.id, current_params)
             return chosen.id, False
         answer = typer.prompt("I will handle this myself [y/N]", default="n", show_default=False)
         if answer.strip().lower() == "y":
+            _print_params(rule, diff, current, chosen.id, current_params)
             return chosen.id, True
         # anything else re-asks the strategy choice
 

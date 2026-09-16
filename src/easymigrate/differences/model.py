@@ -6,6 +6,8 @@ import re
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar, Literal
 
+from pydantic import Field
+
 from easymigrate.ir.base import IRDocument, StrictModel
 
 Risk = Literal["none", "low", "medium", "high"]
@@ -67,11 +69,23 @@ class DifferenceRule(ABC):
             key=f"{self.id}@{subjects[0]}", rule_id=self.id, subjects=subjects, context=context
         )
 
+    def default_params(self, diff: Difference, strategy_id: str) -> dict[str, Any]:
+        return {}
+
+    def validate_params(self, diff: Difference, strategy_id: str, params: dict[str, Any]) -> None:
+        return None
+
     @abstractmethod
     def detect(self, ir: IRDocument) -> list[Difference]: ...
 
     @abstractmethod
-    def apply(self, ir: IRDocument, diff: Difference, strategy_id: str) -> IRDocument: ...
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument: ...
 
 
 class Decision(StrictModel):
@@ -79,6 +93,7 @@ class Decision(StrictModel):
     strategy: str
     decided_by: Literal["default", "user"]
     acknowledged: bool = False
+    params: dict[str, Any] = Field(default_factory=dict)
 
 
 class DecisionSet(StrictModel):

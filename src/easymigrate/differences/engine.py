@@ -116,7 +116,7 @@ def resolve_ir(
 
             before = {obj.id: obj.excluded for obj in doc.objects}
             try:
-                doc = rule.apply(doc, diff, decision.strategy)
+                doc = rule.apply(doc, diff, decision.strategy, decision.params)
             except Exception as exc:
                 raise DifferenceRuleError(rule.id, exc) from exc
             ref = ResolutionRef(key=diff.key, strategy=decision.strategy)

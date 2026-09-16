@@ -36,13 +36,26 @@ def merge_decisions(
 
     decisions: list[Decision] = []
     for diff in differences:
+        rule = by_id[diff.rule_id]
         kept = existing_by_key.get(diff.key)
         if kept is not None and diff.key not in dropped_set:
-            decisions.append(kept)
+            decision = kept
         else:
-            decisions.append(
-                Decision(key=diff.key, strategy=by_id[diff.rule_id].default, decided_by="default")
+            decision = Decision(
+                key=diff.key,
+                strategy=rule.default,
+                decided_by="default",
+                params=rule.default_params(diff, rule.default),
             )
+
+        try:
+            rule.validate_params(diff, decision.strategy, decision.params)
+        except ValueError as exc:
+            dropped.append(f"{decision.key}: {exc}; reset to defaults")
+            decision = decision.model_copy(
+                update={"params": rule.default_params(diff, decision.strategy)}
+            )
+        decisions.append(decision)
     decisions.sort(key=lambda d: d.key)
 
     merged = DecisionSet(differences_fingerprint=fingerprint(differences), decisions=decisions)
@@ -72,11 +85,19 @@ def readiness_problems(
             continue
         if strategy.manual and not decision.acknowledged:
             problems.append(f"{decision.key} uses a manual strategy and is not acknowledged")
+        try:
+            rule.validate_params(diff, decision.strategy, decision.params)
+        except ValueError as exc:
+            problems.append(f"{decision.key}: {exc}")
     return problems
 
 
 def to_yaml(decisions: DecisionSet) -> str:
-    return yaml.safe_dump(decisions.model_dump(mode="json"), sort_keys=False)
+    data = decisions.model_dump(mode="json")
+    for decision in data["decisions"]:
+        if not decision["params"]:
+            del decision["params"]
+    return yaml.safe_dump(data, sort_keys=False)
 
 
 def from_yaml(text: str) -> DecisionSet:

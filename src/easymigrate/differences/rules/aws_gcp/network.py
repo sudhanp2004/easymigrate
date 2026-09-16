@@ -100,7 +100,13 @@ class NetZoneRegional(DifferenceRule):
             )
         return diffs
 
-    def apply(self, ir: IRDocument, diff: Difference, strategy_id: str) -> IRDocument:
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
         doc = ir.model_copy(deep=True)
         network_id = diff.subjects[0]
         if network_id not in {o.id for o in doc.objects}:
@@ -185,7 +191,13 @@ class NetIsolationVmLevel(DifferenceRule):
                 diffs.append(self.difference([subnet.id], network=subnet.network))
         return diffs
 
-    def apply(self, ir: IRDocument, diff: Difference, strategy_id: str) -> IRDocument:
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
         doc = ir.model_copy(deep=True)
         subnet_id = diff.subjects[0]
         if subnet_id not in {o.id for o in doc.objects}:
@@ -244,7 +256,13 @@ class NetEgressTag(DifferenceRule):
             )
         return diffs
 
-    def apply(self, ir: IRDocument, diff: Difference, strategy_id: str) -> IRDocument:
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
         doc = ir.model_copy(deep=True)
         policy_id = diff.subjects[0]
         if policy_id not in {o.id for o in doc.objects}:
@@ -299,7 +317,13 @@ class NetSgXvpcRef(DifferenceRule):
             diffs.append(self.difference([policy.id], group_ids=group_ids))
         return diffs
 
-    def apply(self, ir: IRDocument, diff: Difference, strategy_id: str) -> IRDocument:
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
         doc = ir.model_copy(deep=True)
         policy_id = diff.subjects[0]
         if policy_id not in {o.id for o in doc.objects}:
@@ -346,7 +370,13 @@ class NetPrefixList(DifferenceRule):
             diffs.append(self.difference([policy.id], prefix_list_ids=prefix_list_ids))
         return diffs
 
-    def apply(self, ir: IRDocument, diff: Difference, strategy_id: str) -> IRDocument:
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
         doc = ir.model_copy(deep=True)
         policy_id = diff.subjects[0]
         if policy_id not in {o.id for o in doc.objects}:
@@ -397,7 +427,13 @@ class NetIcmpType(DifferenceRule):
                 diffs.append(self.difference([policy.id]))
         return diffs
 
-    def apply(self, ir: IRDocument, diff: Difference, strategy_id: str) -> IRDocument:
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
         doc = ir.model_copy(deep=True)
         policy_id = diff.subjects[0]
         if policy_id not in {o.id for o in doc.objects}:
@@ -446,7 +482,13 @@ class NetNacl(DifferenceRule):
             self.difference([acl.id]) for acl in sorted(ir.of_kind(NetworkAcl), key=lambda a: a.id)
         ]
 
-    def apply(self, ir: IRDocument, diff: Difference, strategy_id: str) -> IRDocument:
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
         doc = ir.model_copy(deep=True)
         acl_id = diff.subjects[0]
         if acl_id not in {o.id for o in doc.objects}:
@@ -482,7 +524,13 @@ class NetPeering(DifferenceRule):
             if route.target_type == "peering"
         ]
 
-    def apply(self, ir: IRDocument, diff: Difference, strategy_id: str) -> IRDocument:
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
         doc = ir.model_copy(deep=True)
         route_id = diff.subjects[0]
         if route_id not in {o.id for o in doc.objects}:
@@ -520,7 +568,13 @@ class NetCustomRoute(DifferenceRule):
             if route.target_type != "peering"
         ]
 
-    def apply(self, ir: IRDocument, diff: Difference, strategy_id: str) -> IRDocument:
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
         doc = ir.model_copy(deep=True)
         route_id = diff.subjects[0]
         if route_id not in {o.id for o in doc.objects}:
@@ -578,7 +632,13 @@ class NetIpv6(DifferenceRule):
             )
         return diffs
 
-    def apply(self, ir: IRDocument, diff: Difference, strategy_id: str) -> IRDocument:
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
         doc = ir.model_copy(deep=True)
         network_id = diff.subjects[0]
         if network_id not in {o.id for o in doc.objects}:
@@ -627,7 +687,13 @@ class NetCidrOverlap(DifferenceRule):
         b_nets = [ipaddress.ip_network(c) for c in net_b.cidr_blocks]
         return any(a.overlaps(b) for a in a_nets for b in b_nets)
 
-    def apply(self, ir: IRDocument, diff: Difference, strategy_id: str) -> IRDocument:
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
         doc = ir.model_copy(deep=True)
         if strategy_id != "keep":
             raise ValueError(f"unknown strategy {strategy_id!r}")
