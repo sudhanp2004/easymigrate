@@ -9,7 +9,12 @@
       "DBInstanceClass": "db.t3.micro",
       "DBInstanceIdentifier": "no-backup-db",
       "DBInstanceStatus": "available",
-      "DBParameterGroups": [],
+      "DBParameterGroups": [
+        {
+          "DBParameterGroupName": "default.postgres15",
+          "ParameterApplyStatus": "in-sync"
+        }
+      ],
       "DBSubnetGroup": {
         "DBSubnetGroupName": "no-backups-subgrp"
       },

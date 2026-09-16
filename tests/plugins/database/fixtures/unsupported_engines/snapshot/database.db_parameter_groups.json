@@ -1,3 +1,12 @@
 {
-  "DBParameterGroups": []
+  "DBParameterGroups": [
+    {
+      "DBParameterGroupFamily": "aurora-postgresql15",
+      "DBParameterGroupName": "default.aurora-postgresql15"
+    },
+    {
+      "DBParameterGroupFamily": "oracle-se2-19",
+      "DBParameterGroupName": "default.oracle-se2-19"
+    }
+  ]
 }

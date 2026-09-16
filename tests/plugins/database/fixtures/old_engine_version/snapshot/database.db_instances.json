@@ -9,7 +9,12 @@
       "DBInstanceClass": "db.t3.small",
       "DBInstanceIdentifier": "legacy-db",
       "DBInstanceStatus": "available",
-      "DBParameterGroups": [],
+      "DBParameterGroups": [
+        {
+          "DBParameterGroupName": "default.postgres9.6",
+          "ParameterApplyStatus": "in-sync"
+        }
+      ],
       "DBSubnetGroup": {
         "DBSubnetGroupName": "legacy-subgrp"
       },

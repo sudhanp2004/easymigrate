@@ -270,7 +270,25 @@ def _network(
             )
         )
 
-    port = (inst.get("Endpoint") or {}).get("Port") or DEFAULT_PORT[inst["Engine"]]
+    endpoint_port = (inst.get("Endpoint") or {}).get("Port")
+    if endpoint_port is not None:
+        port = endpoint_port
+    else:
+        # No endpoint yet (typically an instance still `creating`): the IR model requires a
+        # port, but AWS has not reported one. Assume the engine default and say so, rather
+        # than silently inventing a value the scan never saw.
+        port = DEFAULT_PORT[inst["Engine"]]
+        ctx.findings.append(
+            Finding(
+                level="scan_gap",
+                code="SCAN-DB-PORT-UNKNOWN",
+                message=(
+                    f"{identifier}: no endpoint has been assigned yet, so the real port is "
+                    f"unknown; recorded as the engine default {port}, which may be wrong."
+                ),
+                subject=ir_id,
+            )
+        )
 
     return DbNetwork(
         network=network_ir,

@@ -1,3 +1,8 @@
 {
-  "DBParameterGroups": []
+  "DBParameterGroups": [
+    {
+      "DBParameterGroupFamily": "postgres15",
+      "DBParameterGroupName": "default.postgres15"
+    }
+  ]
 }

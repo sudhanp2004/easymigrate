@@ -9,7 +9,12 @@
       "DBInstanceClass": "db.t3.micro",
       "DBInstanceIdentifier": "aurora-instance",
       "DBInstanceStatus": "available",
-      "DBParameterGroups": [],
+      "DBParameterGroups": [
+        {
+          "DBParameterGroupName": "default.aurora-postgresql15",
+          "ParameterApplyStatus": "in-sync"
+        }
+      ],
       "DeletionProtection": false,
       "EnabledCloudwatchLogsExports": [],
       "Endpoint": {
@@ -36,7 +41,12 @@
       "DBInstanceClass": "db.t3.micro",
       "DBInstanceIdentifier": "oracle-instance",
       "DBInstanceStatus": "available",
-      "DBParameterGroups": [],
+      "DBParameterGroups": [
+        {
+          "DBParameterGroupName": "default.oracle-se2-19",
+          "ParameterApplyStatus": "in-sync"
+        }
+      ],
       "DeletionProtection": false,
       "EnabledCloudwatchLogsExports": [],
       "Endpoint": {

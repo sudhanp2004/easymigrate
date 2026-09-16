@@ -57,6 +57,15 @@ def _site(
     }
 
 
+def _default_group(family: str) -> tuple[str, dict[str, Any], dict[str, list]]:
+    """A real RDS instance always has a parameter group attached — even an untouched one gets
+    `default.<family>`. Returns (group name, its db_parameter_groups entry, its db_parameters
+    entry). An unmodified default group has no user-set parameters, so Source=user comes back
+    empty, exactly like the real collector's per-instance query would."""
+    name = f"default.{family}"
+    return name, db.parameter_group(name, family), {name: []}
+
+
 def _db_files(
     *,
     instances: list[dict[str, Any]] = (),
@@ -94,6 +103,7 @@ def public_postgres() -> tuple[Files, Files]:
             )
         ],
     )
+    group_name, group_entry, params_entry = _default_group("postgres15")
     database = _db_files(
         instances=[
             db.db_instance(
@@ -113,11 +123,14 @@ def public_postgres() -> tuple[Files, Files]:
                 maintenance_window="sun:04:00-sun:05:00",
                 db_name="app",
                 log_exports=("postgresql",),
+                parameter_group_names=(group_name,),
             )
         ],
         subnet_groups=[
             db.db_subnet_group("public-postgres-subgrp", "vpc-1", ("subnet-1", "subnet-2"))
         ],
+        parameter_groups=[group_entry],
+        parameters=params_entry,
         instance_types=[db.instance_type("t3.micro", vcpus=2, memory_mib=1024)],
     )
     return network, database
@@ -137,6 +150,7 @@ def private_mysql_multiaz() -> tuple[Files, Files]:
             )
         ],
     )
+    group_name, group_entry, params_entry = _default_group("mysql8.0")
     database = _db_files(
         instances=[
             db.db_instance(
@@ -157,9 +171,12 @@ def private_mysql_multiaz() -> tuple[Files, Files]:
                 multi_az=True,
                 deletion_protection=True,
                 master_username="admin",
+                parameter_group_names=(group_name,),
             )
         ],
         subnet_groups=[db.db_subnet_group("mysql-subgrp", "vpc-1", ("subnet-1", "subnet-2"))],
+        parameter_groups=[group_entry],
+        parameters=params_entry,
         instance_types=[db.instance_type("m5.large", vcpus=2, memory_mib=8192)],
     )
     return network, database
@@ -179,6 +196,7 @@ def read_replica() -> tuple[Files, Files]:
             )
         ],
     )
+    group_name, group_entry, params_entry = _default_group("postgres15")
     database = _db_files(
         instances=[
             db.db_instance(
@@ -190,6 +208,7 @@ def read_replica() -> tuple[Files, Files]:
                 allocated_storage=50,
                 subnet_group_name="orders-subgrp",
                 security_group_ids=("sg-1",),
+                parameter_group_names=(group_name,),
             ),
             db.db_instance(
                 "orders-db-replica",
@@ -201,9 +220,12 @@ def read_replica() -> tuple[Files, Files]:
                 subnet_group_name="orders-subgrp",
                 security_group_ids=("sg-1",),
                 read_replica_source_id="orders-db",
+                parameter_group_names=(group_name,),
             ),
         ],
         subnet_groups=[db.db_subnet_group("orders-subgrp", "vpc-1", ("subnet-1", "subnet-2"))],
+        parameter_groups=[group_entry],
+        parameters=params_entry,
         instance_types=[db.instance_type("t3.medium", vcpus=2, memory_mib=4096)],
     )
     return network, database
@@ -251,11 +273,21 @@ def unsupported_engines() -> tuple[Files, Files]:
     # No network resources: neither instance becomes an IR object, so there is nothing to
     # resolve a VPC/subnet/security group for.
     network: Files = {}
+    aurora_group, aurora_entry, aurora_params = _default_group("aurora-postgresql15")
+    oracle_group, oracle_entry, oracle_params = _default_group("oracle-se2-19")
     database = _db_files(
         instances=[
-            db.db_instance("aurora-instance", engine="aurora-postgresql", engine_version="15.4"),
             db.db_instance(
-                "oracle-instance", engine="oracle-se2", engine_version="19.0.0.0.ru-2023-10"
+                "aurora-instance",
+                engine="aurora-postgresql",
+                engine_version="15.4",
+                parameter_group_names=(aurora_group,),
+            ),
+            db.db_instance(
+                "oracle-instance",
+                engine="oracle-se2",
+                engine_version="19.0.0.0.ru-2023-10",
+                parameter_group_names=(oracle_group,),
             ),
         ],
         clusters=[
@@ -263,6 +295,8 @@ def unsupported_engines() -> tuple[Files, Files]:
                 "aurora-cluster", engine="aurora-postgresql", members=("aurora-instance",)
             )
         ],
+        parameter_groups=[aurora_entry, oracle_entry],
+        parameters={**aurora_params, **oracle_params},
     )
     return network, database
 
@@ -275,6 +309,7 @@ def custom_port() -> tuple[Files, Files]:
         [("subnet-1", "10.4.1.0/24", "a"), ("subnet-2", "10.4.2.0/24", "b")],
         [("sg-1", "custom-port-sg", [net.permission("tcp", 5433, 5433, cidrs=("10.4.0.0/16",))])],
     )
+    group_name, group_entry, params_entry = _default_group("postgres15")
     database = _db_files(
         instances=[
             db.db_instance(
@@ -285,9 +320,12 @@ def custom_port() -> tuple[Files, Files]:
                 subnet_group_name="custom-port-subgrp",
                 security_group_ids=("sg-1",),
                 port=5433,
+                parameter_group_names=(group_name,),
             )
         ],
         subnet_groups=[db.db_subnet_group("custom-port-subgrp", "vpc-1", ("subnet-1", "subnet-2"))],
+        parameter_groups=[group_entry],
+        parameters=params_entry,
         instance_types=[db.instance_type("t3.micro", vcpus=2, memory_mib=1024)],
     )
     return network, database
@@ -301,6 +339,7 @@ def old_engine_version() -> tuple[Files, Files]:
         [("subnet-1", "10.5.1.0/24", "a"), ("subnet-2", "10.5.2.0/24", "b")],
         [("sg-1", "legacy-sg", [net.permission("tcp", 5432, 5432, cidrs=("10.5.0.0/16",))])],
     )
+    group_name, group_entry, params_entry = _default_group("postgres9.6")
     database = _db_files(
         instances=[
             db.db_instance(
@@ -311,9 +350,12 @@ def old_engine_version() -> tuple[Files, Files]:
                 instance_class="db.t3.small",
                 subnet_group_name="legacy-subgrp",
                 security_group_ids=("sg-1",),
+                parameter_group_names=(group_name,),
             )
         ],
         subnet_groups=[db.db_subnet_group("legacy-subgrp", "vpc-1", ("subnet-1", "subnet-2"))],
+        parameter_groups=[group_entry],
+        parameters=params_entry,
         instance_types=[db.instance_type("t3.small", vcpus=2, memory_mib=2048)],
     )
     return network, database
@@ -329,6 +371,7 @@ def psa_range_conflict() -> tuple[Files, Files]:
         [("subnet-1", "10.64.1.0/24", "a"), ("subnet-2", "10.64.2.0/24", "b")],
         [("sg-1", "psa-conflict-sg", [net.permission("tcp", 5432, 5432, cidrs=("10.64.0.0/16",))])],
     )
+    group_name, group_entry, params_entry = _default_group("postgres15")
     database = _db_files(
         instances=[
             db.db_instance(
@@ -339,9 +382,12 @@ def psa_range_conflict() -> tuple[Files, Files]:
                 subnet_group_name="conflict-subgrp",
                 security_group_ids=("sg-1",),
                 publicly_accessible=False,
+                parameter_group_names=(group_name,),
             )
         ],
         subnet_groups=[db.db_subnet_group("conflict-subgrp", "vpc-1", ("subnet-1", "subnet-2"))],
+        parameter_groups=[group_entry],
+        parameters=params_entry,
         instance_types=[db.instance_type("t3.micro", vcpus=2, memory_mib=1024)],
     )
     return network, database
@@ -355,6 +401,7 @@ def no_backups() -> tuple[Files, Files]:
         [("subnet-1", "10.6.1.0/24", "a"), ("subnet-2", "10.6.2.0/24", "b")],
         [("sg-1", "no-backups-sg", [net.permission("tcp", 5432, 5432, cidrs=("10.6.0.0/16",))])],
     )
+    group_name, group_entry, params_entry = _default_group("postgres15")
     database = _db_files(
         instances=[
             db.db_instance(
@@ -366,9 +413,12 @@ def no_backups() -> tuple[Files, Files]:
                 security_group_ids=("sg-1",),
                 publicly_accessible=False,
                 backup_retention=0,
+                parameter_group_names=(group_name,),
             )
         ],
         subnet_groups=[db.db_subnet_group("no-backups-subgrp", "vpc-1", ("subnet-1", "subnet-2"))],
+        parameter_groups=[group_entry],
+        parameters=params_entry,
         instance_types=[db.instance_type("t3.micro", vcpus=2, memory_mib=1024)],
     )
     return network, database

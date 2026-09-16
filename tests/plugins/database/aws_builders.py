@@ -31,6 +31,7 @@ def db_instance(
     security_group_ids: tuple[str, ...] = (),
     publicly_accessible: bool = False,
     port: int = 5432,
+    has_endpoint: bool = True,
     multi_az: bool = False,
     availability_zone: str = "ap-south-1a",
     backup_retention: int = 0,
@@ -76,11 +77,16 @@ def db_instance(
             {"DBParameterGroupName": pg, "ParameterApplyStatus": "in-sync"}
             for pg in parameter_group_names
         ],
-        "Endpoint": {"Address": f"{identifier}.example.ap-south-1.rds.amazonaws.com", "Port": port},
         # Real DescribeDBInstances reports tags under "TagList", not "Tags" (verified against
         # moto/boto3); task 2's original builder used "Tags", which normalize.py cannot read.
         "TagList": _tags(name, tags),
     }
+    if has_endpoint:
+        # A `creating` instance has no Endpoint at all yet; real AWS omits the key entirely.
+        data["Endpoint"] = {
+            "Address": f"{identifier}.example.ap-south-1.rds.amazonaws.com",
+            "Port": port,
+        }
     if max_allocated_storage is not None:
         data["MaxAllocatedStorage"] = max_allocated_storage
     if iops is not None:

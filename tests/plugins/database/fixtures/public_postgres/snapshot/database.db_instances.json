@@ -10,7 +10,12 @@
       "DBInstanceIdentifier": "public-postgres-db",
       "DBInstanceStatus": "available",
       "DBName": "app",
-      "DBParameterGroups": [],
+      "DBParameterGroups": [
+        {
+          "DBParameterGroupName": "default.postgres15",
+          "ParameterApplyStatus": "in-sync"
+        }
+      ],
       "DBSubnetGroup": {
         "DBSubnetGroupName": "public-postgres-subgrp"
       },

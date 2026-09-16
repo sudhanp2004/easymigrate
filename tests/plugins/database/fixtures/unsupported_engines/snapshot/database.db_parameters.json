@@ -1,1 +1,4 @@
-{}
+{
+  "default.aurora-postgresql15": [],
+  "default.oracle-se2-19": []
+}

@@ -1,3 +1,8 @@
 {
-  "DBParameterGroups": []
+  "DBParameterGroups": [
+    {
+      "DBParameterGroupFamily": "postgres9.6",
+      "DBParameterGroupName": "default.postgres9.6"
+    }
+  ]
 }

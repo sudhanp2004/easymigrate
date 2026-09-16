@@ -9,7 +9,12 @@
       "DBInstanceClass": "db.m5.large",
       "DBInstanceIdentifier": "private-mysql-db",
       "DBInstanceStatus": "available",
-      "DBParameterGroups": [],
+      "DBParameterGroups": [
+        {
+          "DBParameterGroupName": "default.mysql8.0",
+          "ParameterApplyStatus": "in-sync"
+        }
+      ],
       "DBSubnetGroup": {
         "DBSubnetGroupName": "mysql-subgrp"
       },

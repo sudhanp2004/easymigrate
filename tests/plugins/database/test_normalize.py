@@ -250,6 +250,35 @@ def test_status_creating_records_status_and_info_finding():
     assert info[0].level == "info"
 
 
+def test_missing_endpoint_falls_back_to_engine_default_port_with_scan_gap_finding():
+    ctx = _ctx()
+    # A custom-port instance scanned before it has an Endpoint (e.g. still "creating"): AWS
+    # never reported a port, so the normalizer must not silently invent the wrong one without
+    # saying so.
+    snap = b.snapshot(
+        db_instances=[
+            b.db_instance(
+                "db1", engine="postgres", port=5433, has_endpoint=False, status="creating"
+            )
+        ]
+    )
+    objs = normalize(snap, ctx)
+    assert objs[0].network.port == 5432  # the engine default, not the real configured 5433
+    codes = [f.code for f in ctx.findings]
+    assert "SCAN-DB-PORT-UNKNOWN" in codes
+    finding = next(f for f in ctx.findings if f.code == "SCAN-DB-PORT-UNKNOWN")
+    assert finding.level == "scan_gap"
+    assert finding.subject == objs[0].id
+
+
+def test_endpoint_present_uses_its_reported_port_no_finding():
+    ctx = _ctx()
+    snap = b.snapshot(db_instances=[b.db_instance("db1", engine="postgres", port=5433)])
+    objs = normalize(snap, ctx)
+    assert objs[0].network.port == 5433
+    assert [f for f in ctx.findings if f.code == "SCAN-DB-PORT-UNKNOWN"] == []
+
+
 def test_subnet_group_spanning_two_vpcs_is_unmodelled_strict_raises():
     ctx = _ctx(strict=True)
     _network_objects(ctx, vpc_id="vpc-1", subnet_ids=("subnet-1",), vpc_name="vpc-one")

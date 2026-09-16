@@ -6,22 +6,36 @@ from typing import Any
 from easymigrate.core.plugin import CollectContext
 from easymigrate.providers.aws.source import AwsConnection, is_access_denied
 
-# (snapshot name, boto3 method, response list key, IAM action)
+# (snapshot name, boto3 method, response list key, id field, IAM action)
 _LISTS = (
-    ("database.db_instances", "describe_db_instances", "DBInstances", "rds:DescribeDBInstances"),
+    (
+        "database.db_instances",
+        "describe_db_instances",
+        "DBInstances",
+        "DBInstanceIdentifier",
+        "rds:DescribeDBInstances",
+    ),
     (
         "database.db_subnet_groups",
         "describe_db_subnet_groups",
         "DBSubnetGroups",
+        "DBSubnetGroupName",
         "rds:DescribeDBSubnetGroups",
     ),
     (
         "database.db_parameter_groups",
         "describe_db_parameter_groups",
         "DBParameterGroups",
+        "DBParameterGroupName",
         "rds:DescribeDBParameterGroups",
     ),
-    ("database.db_clusters", "describe_db_clusters", "DBClusters", "rds:DescribeDBClusters"),
+    (
+        "database.db_clusters",
+        "describe_db_clusters",
+        "DBClusters",
+        "DBClusterIdentifier",
+        "rds:DescribeDBClusters",
+    ),
 )
 
 DATABASE_SNAPSHOT_FILES = (
@@ -36,10 +50,10 @@ _INVALID_TYPES = re.compile(r"\[([^\]]*)\]")
 def collect(connection: AwsConnection, ctx: CollectContext) -> dict[str, Any]:
     rds = connection.client("rds")
     files: dict[str, Any] = {}
-    for name, method, key, action in _LISTS:
+    for name, method, key, id_field, action in _LISTS:
         items = _paginate(rds, method, key, action, ctx)
         if items is not None:
-            files[name] = {key: items}
+            files[name] = {key: sorted(items, key=lambda item: item[id_field])}
 
     instances = files.get("database.db_instances", {}).get("DBInstances", [])
     parameters = _collect_parameters(rds, instances, ctx)
@@ -49,7 +63,9 @@ def collect(connection: AwsConnection, ctx: CollectContext) -> dict[str, Any]:
     ec2 = connection.client("ec2")
     instance_types = _collect_instance_types(ec2, instances, ctx)
     if instance_types is not None:
-        files["database.instance_types"] = {"InstanceTypes": instance_types}
+        files["database.instance_types"] = {
+            "InstanceTypes": sorted(instance_types, key=lambda item: item["InstanceType"])
+        }
 
     return files
 
@@ -93,7 +109,7 @@ def _collect_parameters(
                 ctx.access_denied("DescribeDBParameters", "rds:DescribeDBParameters")
                 return None
             raise
-        result[group_name] = items
+        result[group_name] = sorted(items, key=lambda item: item["ParameterName"])
     return result
 
 

@@ -9,7 +9,12 @@
       "DBInstanceClass": "db.t3.micro",
       "DBInstanceIdentifier": "conflict-db",
       "DBInstanceStatus": "available",
-      "DBParameterGroups": [],
+      "DBParameterGroups": [
+        {
+          "DBParameterGroupName": "default.postgres15",
+          "ParameterApplyStatus": "in-sync"
+        }
+      ],
       "DBSubnetGroup": {
         "DBSubnetGroupName": "conflict-subgrp"
       },

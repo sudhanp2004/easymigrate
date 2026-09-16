@@ -9,7 +9,12 @@
       "DBInstanceClass": "db.t3.medium",
       "DBInstanceIdentifier": "orders-db",
       "DBInstanceStatus": "available",
-      "DBParameterGroups": [],
+      "DBParameterGroups": [
+        {
+          "DBParameterGroupName": "default.postgres15",
+          "ParameterApplyStatus": "in-sync"
+        }
+      ],
       "DBSubnetGroup": {
         "DBSubnetGroupName": "orders-subgrp"
       },
@@ -49,7 +54,12 @@
       "DBInstanceClass": "db.t3.medium",
       "DBInstanceIdentifier": "orders-db-replica",
       "DBInstanceStatus": "available",
-      "DBParameterGroups": [],
+      "DBParameterGroups": [
+        {
+          "DBParameterGroupName": "default.postgres15",
+          "ParameterApplyStatus": "in-sync"
+        }
+      ],
       "DBSubnetGroup": {
         "DBSubnetGroupName": "orders-subgrp"
       },

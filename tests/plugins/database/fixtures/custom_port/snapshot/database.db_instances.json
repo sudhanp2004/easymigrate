@@ -9,7 +9,12 @@
       "DBInstanceClass": "db.t3.micro",
       "DBInstanceIdentifier": "custom-port-db",
       "DBInstanceStatus": "available",
-      "DBParameterGroups": [],
+      "DBParameterGroups": [
+        {
+          "DBParameterGroupName": "default.postgres15",
+          "ParameterApplyStatus": "in-sync"
+        }
+      ],
       "DBSubnetGroup": {
         "DBSubnetGroupName": "custom-port-subgrp"
       },
