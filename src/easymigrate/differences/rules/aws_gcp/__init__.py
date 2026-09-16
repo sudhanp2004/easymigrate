@@ -3,6 +3,18 @@
 from __future__ import annotations
 
 from easymigrate.differences.model import DifferenceRule
+from easymigrate.differences.rules.aws_gcp.database import (
+    DbEngineVersion,
+    DbMultiAz,
+    DbParamFlags,
+    DbPrivateIp,
+    DbPublicAccess,
+    DbSgFirewall,
+    DbStorageAutoresize,
+    DbStorageMinimum,
+    DbStorageType,
+    DbTier,
+)
 from easymigrate.differences.rules.aws_gcp.network import (
     NetCidrOverlap,
     NetCustomRoute,
@@ -29,4 +41,14 @@ AWS_GCP_RULES: tuple[DifferenceRule, ...] = (
     NetCustomRoute(),
     NetIpv6(),
     NetCidrOverlap(),
+    DbEngineVersion(),
+    DbTier(),
+    DbPrivateIp(),
+    DbPublicAccess(),
+    DbSgFirewall(),
+    DbMultiAz(),
+    DbStorageAutoresize(),
+    DbStorageType(),
+    DbStorageMinimum(),
+    DbParamFlags(),
 )

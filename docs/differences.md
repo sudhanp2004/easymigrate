@@ -94,3 +94,97 @@ AWS VPCs with overlapping CIDRs coexist because they are isolated. GCP networks 
 | Strategy | Title | Effect | Risk | Manual | Default |
 |---|---|---|---|---|---|
 | `keep` | Keep both networks as they are | no change | none |  | yes |
+
+## AWS engine versions do not line up with Cloud SQL's supported majors (`DB-ENGINE-VERSION`)
+
+Cloud SQL supports a specific set of major versions per engine. A source major outside that set cannot be created as-is; the engine must be upgraded.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `nearest_major` | Use the nearest Cloud SQL major version | database_version set for the source major; the patch level is Google's to choose | low |  | yes |
+| `upgrade_to_oldest_supported` | Upgrade to Cloud SQL's oldest supported major | database_version set to the oldest supported major; an engine upgrade with application-visible behaviour changes | high |  |  |
+| `manual` | Handle manually | excluded | low | yes |  |
+
+## AWS instance classes do not map onto Cloud SQL machine tiers (`DB-TIER`)
+
+Cloud SQL bills by custom or shared-core tier, not by AWS instance class name; the nearest equivalent must be computed from vCPU and memory.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `nearest_custom_tier` | Use the nearest custom machine tier | db-custom-<vcpus>-<memory_mb>, memory rounded into Cloud SQL's per-vCPU band and to a 256 MB multiple | medium |  | yes |
+| `shared_core` | Use a shared-core tier | db-f1-micro or db-g1-small, chosen from the source burstable class | medium |  |  |
+| `manual` | Handle manually | excluded | low | yes |  |
+
+## A private RDS instance needs Private Services Access on Cloud SQL (`DB-PRIVATE-IP`)
+
+Cloud SQL's private IP is reached through Private Services Access, which needs an allocated IP range peered to the VPC; there is no direct VPC attachment.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `psa_auto_range` | Allocate a Private Services Access range | a private IP only, via an allocated PSA range peered to the network | medium |  | yes |
+| `public_ip_authorized_networks` | Expose a public IP restricted by authorized networks | the instance becomes internet-reachable, restricted to the SG's CIDRs | high |  |  |
+| `manual` | Handle manually | excluded | low | yes |  |
+
+## A publicly accessible RDS instance has no direct Cloud SQL equivalent (`DB-PUBLIC-ACCESS`)
+
+Cloud SQL's public IP has no VPC-native concept of a security group; access is restricted by an authorized-networks CIDR allow list instead.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `public_ip_authorized_networks` | Restrict the public IP with authorized networks | authorized networks derived from the attached policies' ingress CIDRs | medium |  | yes |
+| `private_only` | Move to a private IP only | matches nothing in the source; every client must move inside the VPC | medium |  |  |
+| `manual` | Handle manually | excluded | low | yes |  |
+
+## VPC firewall rules attached only to Cloud SQL instances have no effect there (`DB-SG-FIREWALL`)
+
+A private Cloud SQL instance lives in a Google-managed producer VPC reached over the PSA peering; a firewall policy attached only to database instances would otherwise generate a network-wide rule with an empty applies_to.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `drop_with_note` | Drop with a note | excluded; VPC firewall rules do not govern Cloud SQL | medium |  | yes |
+| `manual` | Handle manually | the same exclusion, acknowledged | medium | yes |  |
+
+## AWS multi-AZ has two shapes; only one maps onto Cloud SQL (`DB-MULTI-AZ`)
+
+A multi-AZ standby instance maps to Cloud SQL's regional availability type. A multi-AZ DB cluster (three instances, readable standbys) has no equivalent.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `regional_ha` | Use regional availability | availability_type = REGIONAL | low |  | yes |
+| `zonal` | Use zonal availability | availability_type = ZONAL; cheaper, no automatic failover | medium |  |  |
+| `manual` | Handle manually | excluded | low | yes |  |
+
+## Cloud SQL enables storage autoresize by default; RDS does not (`DB-STORAGE-AUTORESIZE`)
+
+Cloud SQL defaults storage autoresize on. Leaving it untouched would silently change behaviour for an RDS instance that had autoscaling off.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `match_source` | Match the source autoscaling setting | autoresize on with the source's max size as the limit, or off if RDS storage autoscaling was off | low |  | yes |
+| `enable_with_limit` | Enable autoresize with a limit | autoresize on, limited to the source's max size, or unlimited if none was set | low |  |  |
+
+## Provisioned IOPS/throughput storage has no Cloud SQL equivalent (`DB-STORAGE-TYPE`)
+
+Cloud SQL scales IOPS with disk size rather than letting IOPS/throughput be provisioned directly; those figures are lost and small disks may be slower.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `pd_ssd` | Use PD_SSD | disk_type = PD_SSD; provisioned IOPS/throughput are dropped | medium |  | yes |
+| `manual` | Handle manually | excluded | low | yes |  |
+
+## Cloud SQL's minimum disk size is larger than some RDS instances (`DB-STORAGE-MINIMUM`)
+
+Cloud SQL's minimum disk size is 10 GB.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `grow_to_minimum` | Grow to the minimum | disk_size = 10 | none |  | yes |
+
+## AWS DB parameters translate onto a per-engine Cloud SQL flag allow list (`DB-PARAM-FLAGS`)
+
+Only flags on Cloud SQL's per-engine supported list can be set; the rest, and every AWS formula value, are dropped and reported.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `supported_flags_only` | Translate supported flags, drop the rest | database_flags gets the supported subset; the rest are dropped_parameters | medium |  | yes |
+| `manual` | Handle manually | excluded | low | yes |  |
