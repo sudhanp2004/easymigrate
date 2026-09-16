@@ -8,10 +8,15 @@ from typing import Any, Protocol
 from easymigrate.core.errors import SourceConnectionError
 from easymigrate.core.plugin import Plugin
 from easymigrate.engine import tofu as tofu_engine
+from easymigrate.ir.base import IRDocument
 from easymigrate.plugins.database import DatabasePlugin
+from easymigrate.plugins.database.generate_gcp import (
+    database_password_variables as _database_password_variables,
+)
 from easymigrate.plugins.network import NetworkPlugin
 from easymigrate.providers.aws import source as aws_source
 from easymigrate.providers.gcp import boilerplate, state_bucket
+from easymigrate.providers.gcp import services as gcp_services
 
 PLUGINS: tuple[Plugin, ...] = (NetworkPlugin(), DatabasePlugin())
 
@@ -52,6 +57,12 @@ class GcpTarget(Protocol):
         self, gcp_project: str, name: str, region: str, confirm: Callable[[str], bool]
     ) -> bool: ...
 
+    def services_enabled(self, gcp_project: str, required: set[str]) -> set[str] | None:
+        """Members of `required` not enabled on `gcp_project`, or `None` if the check
+        itself could not be performed (spec §6.4: a missing permission to *check* must
+        not block a user whose APIs are already on)."""
+        ...
+
 
 class _GcpTarget:
     def credentials_ok(self) -> bool:
@@ -61,6 +72,13 @@ class _GcpTarget:
         self, gcp_project: str, name: str, region: str, confirm: Callable[[str], bool]
     ) -> bool:
         return state_bucket.ensure_bucket(gcp_project, name, region, confirm)
+
+    def services_enabled(self, gcp_project: str, required: set[str]) -> set[str] | None:
+        try:
+            enabled = gcp_services.enabled_services(gcp_project)
+        except gcp_services.ServiceUsageCheckFailed:
+            return None
+        return required - enabled
 
 
 def gcp_target() -> GcpTarget:
@@ -85,3 +103,11 @@ def generate_boilerplate_tf(gcp_project: str, gcp_region: str, version: str) -> 
         "variables.tf": boilerplate.render_variables_tf(version),
         "terraform.tfvars": boilerplate.render_tfvars(gcp_project, gcp_region, version),
     }
+
+
+def database_password_variables(resolved: IRDocument) -> dict[str, str]:
+    """IR id -> Terraform variable name for every non-excluded primary
+    `database_instance`, so `pipeline.plan()` can key `secrets.auto.tfvars.json` with
+    exactly the names the database generator gave its `variable` blocks (plan 4:
+    avoids recomputing those names, which is exactly the drift this seam prevents)."""
+    return _database_password_variables(resolved)

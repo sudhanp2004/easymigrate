@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -39,9 +41,12 @@ from easymigrate.differences.model import (
     DifferenceRule,
 )
 from easymigrate.ir.base import Finding, IntentObject, IRDocument
+from easymigrate.ir.database import DatabaseInstance
 
 _SAMPLE_ARNS = 3
 _STATE_BUCKET_SUFFIX = "-easymigrate-tfstate"
+_DB_PASSWORD_ENV_PREFIX = "EASYMIGRATE_DB_PASSWORD_"
+_DB_PASSWORD_MAX_LEN = 100
 
 
 @dataclass(frozen=True)
@@ -373,12 +378,96 @@ def _resource_change_counts(show: dict[str, Any]) -> tuple[int, int, int, list[s
     return add, change, destroy, changed_or_destroyed
 
 
+def _primary_instances(document: IRDocument) -> list[DatabaseInstance]:
+    """Non-excluded primary `database_instance`s: replicas need no password of their
+    own (a Cloud SQL replica inherits its primary's users), and an excluded instance
+    was never going to be generated."""
+    return [
+        instance
+        for instance in document.of_kind(DatabaseInstance)
+        if instance.excluded is None and instance.role == "primary"
+    ]
+
+
+def _db_password_env_var(ir_id: str) -> str:
+    """`EASYMIGRATE_DB_PASSWORD_<SLUG>`, where `<SLUG>` is the id after
+    `database_instance:`, uppercased with every non-alphanumeric character replaced by
+    `_` (spec plan 4, Passwords)."""
+    slug = ir_id.split(":", 1)[1]
+    return _DB_PASSWORD_ENV_PREFIX + re.sub(r"[^A-Za-z0-9]", "_", slug).upper()
+
+
+def _validate_db_password(ir_id: str, value: str) -> None:
+    if not (1 <= len(value) <= _DB_PASSWORD_MAX_LEN):
+        raise EasyMigrateError(
+            f"{ir_id}: password must be between 1 and {_DB_PASSWORD_MAX_LEN} characters"
+        )
+    if value.strip() != value:
+        raise EasyMigrateError(f"{ir_id}: password must not have leading or trailing whitespace")
+    if "\x00" in value:
+        raise EasyMigrateError(f"{ir_id}: password must not contain a NUL character")
+    if "\n" in value or "\r" in value:
+        raise EasyMigrateError(f"{ir_id}: password must not contain a newline")
+
+
+def _resolve_db_passwords(
+    document: IRDocument,
+    db_passwords: dict[str, str] | None,
+    ask_password: Callable[[str], str] | None,
+) -> dict[str, str]:
+    """Resolve one password per primary, non-excluded `database_instance`: an explicit
+    `db_passwords[ir_id]` value, then its env var, then `ask_password(ir_id)` when the
+    CLI supplied one. Raises, naming every instance still missing a password and both
+    non-interactive ways to supply it, when any remain unresolved."""
+    db_passwords = db_passwords or {}
+    resolved: dict[str, str] = {}
+    missing: list[DatabaseInstance] = []
+    for instance in _primary_instances(document):
+        value = db_passwords.get(instance.id)
+        if value is None:
+            value = os.environ.get(_db_password_env_var(instance.id))
+        if value is None and ask_password is not None:
+            value = ask_password(instance.id)
+        if value is None:
+            missing.append(instance)
+            continue
+        _validate_db_password(instance.id, value)
+        resolved[instance.id] = value
+
+    if missing:
+        lines = [f"missing a database password for {len(missing)} instance(s):"]
+        for instance in missing:
+            lines.append(
+                f"  {instance.id}: use --db-password {instance.id}=<value>, or set "
+                f"{_db_password_env_var(instance.id)}"
+            )
+        raise EasyMigrateError("\n".join(lines))
+    return resolved
+
+
+def _required_gcp_services(document: IRDocument) -> set[str]:
+    """`sqladmin.googleapis.com` when any Cloud SQL instance will be generated, plus
+    `servicenetworking.googleapis.com` when any of them uses Private Services Access
+    (spec §6.4)."""
+    instances = [
+        instance for instance in document.of_kind(DatabaseInstance) if instance.excluded is None
+    ]
+    if not instances:
+        return set()
+    services = {"sqladmin.googleapis.com"}
+    if any(instance.target_hints.get("psa") is not None for instance in instances):
+        services.add("servicenetworking.googleapis.com")
+    return services
+
+
 def plan(
     project: Project,
     *,
     gcp_project: str,
     gcp_region: str | None = None,
     confirm_bucket: Callable[[str], bool],
+    db_passwords: dict[str, str] | None = None,
+    ask_password: Callable[[str], str] | None = None,
     tofu: Any = None,
     gcp: Any = None,
 ) -> PlanSummary:
@@ -414,6 +503,39 @@ def plan(
             "no GCP credentials found; run `gcloud auth application-default login`"
         )
 
+    gen_findings: list[Finding] = []
+
+    # API preflight (spec §6.4): a missing API is a hard error naming the exact
+    # `gcloud` command; a failure to *check* (e.g. no permission to read Service
+    # Usage) is only a warning, since it must not block a user whose APIs are already
+    # enabled.
+    required_services = _required_gcp_services(resolved.document)
+    if required_services:
+        missing_services = gcp.services_enabled(gcp_project, required_services)
+        if missing_services is None:
+            gen_findings.append(
+                Finding(
+                    level="info",
+                    code="GCP-SERVICES-CHECK-FAILED",
+                    message=(
+                        "could not verify which GCP APIs are enabled (no permission to read "
+                        "Service Usage); continuing without checking "
+                        f"{', '.join(sorted(required_services))}"
+                    ),
+                )
+            )
+        elif missing_services:
+            raise EasyMigrateError(
+                "required GCP API(s) not enabled on "
+                f"{gcp_project}: {', '.join(sorted(missing_services))}\n"
+                f"Run: gcloud services enable {' '.join(sorted(missing_services))} "
+                f"--project {gcp_project}"
+            )
+
+    # Passwords (spec §2.2, plan 4): resolved before anything touches GCP or OpenTofu,
+    # so a missing/invalid password fails fast without creating a state bucket.
+    resolved_passwords = _resolve_db_passwords(resolved.document, db_passwords, ask_password)
+
     # Local preflight (spec §5.4): resolve OpenTofu before touching GCP, so a run that
     # can't get OpenTofu (e.g. no network) never leaves a real state bucket behind. There
     # is no proactive check here for the `compute.googleapis.com` API being enabled on the
@@ -434,8 +556,13 @@ def plan(
             old.unlink()
     terraform_dir.mkdir(parents=True, exist_ok=True)
 
+    password_variables = registry.database_password_variables(resolved.document)
+    if password_variables:
+        project.write_secrets(
+            {password_variables[ir_id]: value for ir_id, value in resolved_passwords.items()}
+        )
+
     decided_by = {decision.key: decision.decided_by for decision in decisions.decisions}
-    gen_findings: list[Finding] = []
     ctx = GenerateContext(
         project=gcp_project,
         region=region,

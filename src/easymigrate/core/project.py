@@ -104,6 +104,23 @@ class Project:
     def superseded_path(self) -> Path:
         return self.dir / "superseded.json"
 
+    @property
+    def secrets_path(self) -> Path:
+        """`.easymigrate/terraform/secrets.auto.tfvars.json`: OpenTofu auto-loads any
+        `*.auto.tfvars.json` file in the working directory, so this needs no `-var-file`
+        wiring. It lives in `terraform/`, which is hashed wholesale by
+        `pipeline._terraform_hashes`, so editing a password after `plan` makes `apply`
+        correctly refuse as stale without any extra fingerprinting here."""
+        return self.terraform_dir / "secrets.auto.tfvars.json"
+
+    def write_secrets(self, values: dict[str, str]) -> Path:
+        """Write the password tfvars file, keyed by the generator's own variable names
+        (`database_password_variables`), mode 0600, atomically. Never call this with
+        anything but password values: nothing else belongs in this file."""
+        text = json.dumps(values, indent=2, sort_keys=True) + "\n"
+        _atomic_write(self.secrets_path, text, mode=_PRIVATE)
+        return self.secrets_path
+
     def init(self) -> bool:
         """Create the project directory. Returns True on the first run."""
         created = not self.dir.exists()

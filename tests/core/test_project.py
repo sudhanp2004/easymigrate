@@ -210,3 +210,29 @@ def test_write_json_accepts_models(tmp_path):
     p.write_json(p.report_json_path, make_ir())
 
     assert json.loads(p.report_json_path.read_text())["objects"][0]["id"] == "network:main"
+
+
+def test_write_secrets_writes_the_given_values_at_the_expected_path(tmp_path):
+    p = Project(tmp_path)
+
+    result = p.write_secrets({"db_password_a": "hunter2hunter2"})
+
+    assert result == p.secrets_path
+    assert result == p.terraform_dir / "secrets.auto.tfvars.json"
+    assert json.loads(result.read_text()) == {"db_password_a": "hunter2hunter2"}
+
+
+def test_write_secrets_is_mode_0600(tmp_path):
+    p = Project(tmp_path)
+
+    p.write_secrets({"db_password_a": "hunter2hunter2"})
+
+    assert stat.S_IMODE(p.secrets_path.stat().st_mode) == 0o600
+
+
+def test_write_secrets_is_atomic(tmp_path):
+    p = Project(tmp_path)
+
+    p.write_secrets({"db_password_a": "hunter2hunter2"})
+
+    assert not list(p.terraform_dir.glob("*.tmp"))

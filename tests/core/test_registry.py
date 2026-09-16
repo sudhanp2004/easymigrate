@@ -47,3 +47,36 @@ def test_new_tofu_returns_a_real_tofu_instance(tmp_path):
     tofu = registry.new_tofu(Path("/bin/tofu"), tmp_path)
     assert isinstance(tofu, tofu_module.Tofu)
     assert tofu.workdir == tmp_path
+
+
+def test_gcp_target_services_enabled_returns_missing(monkeypatch):
+    monkeypatch.setattr(
+        "easymigrate.providers.gcp.services.enabled_services",
+        lambda project: {"compute.googleapis.com"},
+    )
+
+    missing = registry.gcp_target().services_enabled(
+        "p", {"compute.googleapis.com", "sqladmin.googleapis.com"}
+    )
+
+    assert missing == {"sqladmin.googleapis.com"}
+
+
+def test_gcp_target_services_enabled_returns_none_when_check_fails(monkeypatch):
+    from easymigrate.providers.gcp import services as gcp_services
+
+    def _boom(project):
+        raise gcp_services.ServiceUsageCheckFailed("no permission")
+
+    monkeypatch.setattr("easymigrate.providers.gcp.services.enabled_services", _boom)
+
+    assert registry.gcp_target().services_enabled("p", {"sqladmin.googleapis.com"}) is None
+
+
+def test_database_password_variables_delegates_to_generator(monkeypatch):
+    sentinel = {"database_instance:a": "db_password_a"}
+    monkeypatch.setattr(
+        "easymigrate.core.registry._database_password_variables", lambda resolved: sentinel
+    )
+
+    assert registry.database_password_variables(object()) is sentinel
