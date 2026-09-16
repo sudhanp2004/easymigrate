@@ -73,8 +73,10 @@ class DifferenceRule(ABC):
 - `resolve` fills `params` from `default_params` when a decision is created or when its strategy
   changes, and calls `validate_params` on every decision it loads. A hand-edited invalid value is a
   clear error naming the key, the param and why it was rejected — never a silent fallback.
-- Params take part in the decisions fingerprint, so changing a param and re-running `plan` is
-  correctly seen as a change.
+- The decisions fingerprint stays keys-only: it answers "did the set of differences change since
+  `resolve`?", which a param edit does not. An edited param is instead caught by `plan.lock.json`,
+  which hashes the whole of `decisions.yaml` — so editing a param after `plan` makes `apply`
+  correctly refuse as stale, and re-running `plan` picks the new value up.
 - **Interactive `resolve` does not prompt for params.** It shows the defaults it chose and tells the
   user to edit `decisions.yaml` to change them. Prompting for free-form values per difference is a
   UI problem worth solving later, not now.
