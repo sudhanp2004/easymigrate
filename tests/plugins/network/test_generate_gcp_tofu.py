@@ -12,35 +12,16 @@ from pathlib import Path
 import pytest
 
 from easymigrate.engine.tofu import Tofu, ensure_tofu
+from easymigrate.providers.gcp.boilerplate import (
+    render_providers_tf,
+    render_variables_tf,
+)
 
 FIXTURES = Path(__file__).parent / "fixtures"
 GOLDENS = sorted(p.parent.name for p in FIXTURES.glob("*/expected_network.tf"))
 
-# Minimal scaffolding around each golden network.tf so `tofu validate` can resolve
-# `var.region` and the implied `google` provider. Part B's `plan()` step is
-# responsible for generating the full terraform/*.tf boilerplate (providers.tf,
-# backend.tf, variables.tf, terraform.tfvars) for a real run; this is the smallest
-# valid stand-in so Part A can validate the network.tf golden output in isolation.
-_VARIABLES_TF = """\
-variable "project" {
-  type = string
-}
-
-variable "region" {
-  type = string
-}
-"""
-
-_PROVIDERS_TF = """\
-terraform {
-  required_providers {
-    google = {
-      source  = "hashicorp/google"
-      version = "~> 8.0"
-    }
-  }
-}
-"""
+# The real boilerplate `plan()` generates is used here, so validate exercises the
+# same providers.tf/variables.tf a live run gets.
 
 
 @pytest.mark.tofu
@@ -48,8 +29,8 @@ terraform {
 def test_golden_network_tf_validates(case, tmp_path):
     golden = (FIXTURES / case / "expected_network.tf").read_text()
     (tmp_path / "network.tf").write_text(golden)
-    (tmp_path / "variables.tf").write_text(_VARIABLES_TF)
-    (tmp_path / "providers.tf").write_text(_PROVIDERS_TF)
+    (tmp_path / "variables.tf").write_text(render_variables_tf("0.0.0-test"))
+    (tmp_path / "providers.tf").write_text(render_providers_tf("0.0.0-test"))
 
     binary = ensure_tofu()
     tofu = Tofu(binary, tmp_path)

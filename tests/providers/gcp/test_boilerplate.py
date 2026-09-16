@@ -20,6 +20,16 @@ def test_providers_tf_pins_google_provider():
     assert 'version = "~> 8.0"' in out
 
 
+def test_providers_tf_configures_project_and_region():
+    """Regression: without this block every resource fails at plan time with
+    "project: required field is not set" — found by the first live run."""
+    out = render_providers_tf("1.2.3")
+
+    assert 'provider "google"' in out
+    assert "project = var.project" in out
+    assert "region  = var.region" in out
+
+
 def test_backend_tf_declares_gcs_backend():
     out = render_backend_tf("1.2.3")
     assert _HEADER in out

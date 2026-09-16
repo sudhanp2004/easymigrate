@@ -24,6 +24,11 @@ def render_providers_tf(version: str) -> str:
     tf = file.block("terraform")
     rp = tf.block("required_providers")
     rp.attr("google", {"source": "hashicorp/google", "version": GOOGLE_PROVIDER_VERSION})
+    # Without this block the provider has no project and every resource fails at plan time
+    # with "project: required field is not set" (found by the first live run).
+    google = file.block("provider", "google")
+    google.attr("project", Ref("var.project"))
+    google.attr("region", Ref("var.region"))
     return file.render()
 
 
