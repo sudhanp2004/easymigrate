@@ -1,11 +1,16 @@
-"""Composition root: the only core module allowed to import plugins and providers."""
+"""Composition root: the only core module allowed to import plugins, providers and the
+OpenTofu engine."""
 
-from typing import Any
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any, Protocol
 
 from easymigrate.core.errors import SourceConnectionError
 from easymigrate.core.plugin import Plugin
+from easymigrate.engine import tofu as tofu_engine
 from easymigrate.plugins.network import NetworkPlugin
 from easymigrate.providers.aws import source as aws_source
+from easymigrate.providers.gcp import state_bucket
 
 PLUGINS: tuple[Plugin, ...] = (NetworkPlugin(),)
 
@@ -33,3 +38,39 @@ def source_for(cloud: str) -> AwsSource:
     if cloud != "aws":
         raise ValueError(f"unsupported source cloud {cloud!r}")
     return AwsSource()
+
+
+class GcpTarget(Protocol):
+    """What `core.pipeline.plan()` needs from the GCP target: credentials and the state
+    bucket (spec §5.4 steps 2-3). Core never imports `google` directly; it goes through
+    this seam, which tests fake by monkeypatching `registry.gcp_target`."""
+
+    def credentials_ok(self) -> bool: ...
+
+    def ensure_bucket(
+        self, gcp_project: str, name: str, region: str, confirm: Callable[[str], bool]
+    ) -> bool: ...
+
+
+class _GcpTarget:
+    def credentials_ok(self) -> bool:
+        return state_bucket.credentials_ok()
+
+    def ensure_bucket(
+        self, gcp_project: str, name: str, region: str, confirm: Callable[[str], bool]
+    ) -> bool:
+        return state_bucket.ensure_bucket(gcp_project, name, region, confirm)
+
+
+def gcp_target() -> GcpTarget:
+    return _GcpTarget()
+
+
+def ensure_tofu(cache_dir: Path | None = None) -> Path:
+    """Resolve the `tofu` binary through `easymigrate.engine.tofu`, so tests can fake
+    downloads by monkeypatching `easymigrate.engine.tofu.ensure_tofu`."""
+    return tofu_engine.ensure_tofu(cache_dir)
+
+
+def new_tofu(binary: Path, workdir: Path) -> tofu_engine.Tofu:
+    return tofu_engine.Tofu(binary, workdir)
