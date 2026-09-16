@@ -16,3 +16,10 @@ jobs:
         run: uv run ruff check . && uv run ruff format --check .
       - name: Test
         run: uv run pytest
+      - name: Cache OpenTofu and providers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/easymigrate
+          key: easymigrate-tofu-${{ runner.os }}
+      - name: Test (tofu validate)
+        run: uv run pytest -m tofu

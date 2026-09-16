@@ -17,11 +17,10 @@ resource "google_compute_firewall" "db_in_self" {
   priority    = 1000
   target_tags = ["fw-db"]
   source_tags = ["fw-db"]
-  allow       = [
-    {
-      protocol = "all"
-    },
-  ]
+
+  allow {
+    protocol = "all"
+  }
 }
 
 # from AWS security_group sg-00000000000000002 (db)
@@ -33,12 +32,11 @@ resource "google_compute_firewall" "db_in_tag" {
   priority    = 1000
   target_tags = ["fw-db"]
   source_tags = ["fw-web"]
-  allow       = [
-    {
-      ports    = ["5432"]
-      protocol = "tcp"
-    },
-  ]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["5432"]
+  }
 }
 
 # from AWS security_group sg-00000000000000003 (web)
@@ -51,12 +49,11 @@ resource "google_compute_firewall" "web_eg_tag" {
   priority           = 1000
   target_tags        = ["fw-web"]
   destination_ranges = ["10.20.0.0/16"]
-  allow              = [
-    {
-      ports    = ["5432"]
-      protocol = "tcp"
-    },
-  ]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["5432"]
+  }
 }
 
 # from AWS security_group sg-00000000000000003 (web)
@@ -69,13 +66,12 @@ resource "google_compute_firewall" "web_in_cidr" {
   priority      = 1000
   target_tags   = ["fw-web"]
   source_ranges = ["0.0.0.0/0", "10.20.0.0/16"]
-  allow         = [
-    {
-      protocol = "icmp"
-    },
-    {
-      ports    = ["443"]
-      protocol = "tcp"
-    },
-  ]
+
+  allow {
+    protocol = "icmp"
+  }
+  allow {
+    protocol = "tcp"
+    ports    = ["443"]
+  }
 }

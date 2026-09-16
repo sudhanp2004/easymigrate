@@ -28,9 +28,8 @@ resource "google_compute_firewall" "default_eg_cidr" {
   priority           = 1000
   target_tags        = ["fw-default"]
   destination_ranges = ["::/0"]
-  allow              = [
-    {
-      protocol = "all"
-    },
-  ]
+
+  allow {
+    protocol = "all"
+  }
 }

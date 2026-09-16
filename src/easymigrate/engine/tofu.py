@@ -185,10 +185,15 @@ class Tofu:
             raise TofuError(message)
         return result
 
-    def init(self, backend_config: dict[str, str]) -> None:
+    def init(self, backend_config: dict[str, str] | None = None, *, backend: bool = True) -> None:
         args = ["init"]
-        for key, value in backend_config.items():
-            args.append(f"-backend-config={key}={value}")
+        if backend:
+            for key, value in (backend_config or {}).items():
+                args.append(f"-backend-config={key}={value}")
+        else:
+            # Used to validate generated Terraform (e.g. in the `tofu`-marked golden
+            # test) without a real GCS backend to talk to.
+            args.append("-backend=false")
         args += ["-no-color", "-input=false"]
         self._run(args)
 

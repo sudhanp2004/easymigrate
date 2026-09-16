@@ -163,6 +163,19 @@ def test_init_argument_list(tmp_path):
     assert runner.calls[0]["cwd"] == tmp_path
 
 
+def test_init_backend_false_argument_list(tmp_path):
+    runner = FakeRunner()
+    tofu = Tofu(Path("/opt/tofu"), tmp_path, runner=runner)
+    tofu.init(backend=False)
+    assert runner.calls[0]["args"] == [
+        "/opt/tofu",
+        "init",
+        "-backend=false",
+        "-no-color",
+        "-input=false",
+    ]
+
+
 def test_validate_argument_list(tmp_path):
     runner = FakeRunner()
     tofu = Tofu(Path("/opt/tofu"), tmp_path, runner=runner)

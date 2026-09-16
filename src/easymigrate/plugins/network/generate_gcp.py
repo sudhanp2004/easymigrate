@@ -357,13 +357,13 @@ def _generate_firewall_group(
             combos.append(combo)
     combos.sort()
 
-    allow = []
+    # `allow` is a repeatable block in the google_compute_firewall schema, not a list
+    # attribute (a real `tofu validate` run against the golden fixtures caught this).
     for protocol, ports in combos:
-        entry: dict[str, object] = {"protocol": protocol}
+        allow_block = block.block("allow")
+        allow_block.attr("protocol", protocol)
         if ports:
-            entry["ports"] = list(ports)
-        allow.append(entry)
-    block.attr("allow", allow)
+            allow_block.attr("ports", list(ports))
 
 
 # --- "No silent mapping" field coverage (plan 4 A4) -----------------------------------

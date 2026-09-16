@@ -173,16 +173,15 @@ def test_sg_grouping_by_direction_and_peer_kind():
         "  priority      = 1000\n"
         '  target_tags   = ["fw-web"]\n'
         '  source_ranges = ["0.0.0.0/0"]\n'
-        "  allow         = [\n"
-        "    {\n"
-        '      ports    = ["443"]\n'
-        '      protocol = "tcp"\n'
-        "    },\n"
-        "    {\n"
-        '      ports    = ["80"]\n'
-        '      protocol = "tcp"\n'
-        "    },\n"
-        "  ]\n"
+        "\n"
+        "  allow {\n"
+        '    protocol = "tcp"\n'
+        '    ports    = ["443"]\n'
+        "  }\n"
+        "  allow {\n"
+        '    protocol = "tcp"\n'
+        '    ports    = ["80"]\n'
+        "  }\n"
         "}"
     ) in out
 
