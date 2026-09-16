@@ -270,6 +270,28 @@ def test_default_allow_all_egress_is_skipped_exactly_once():
     assert "google_compute_firewall" not in out
 
 
+def test_default_allow_all_ipv6_egress_is_skipped_too():
+    # AWS's IPv6 all-egress default rule (::/0) must be skipped just like the IPv4
+    # default (0.0.0.0/0): GCP already allows all egress by default, so leaving this
+    # in produces dead, contradictory Terraform once ipv4_only has stripped IPv6
+    # addressing elsewhere.
+    net = _network("my_vpc", "my-vpc")
+    policy = FirewallPolicy(
+        id="firewall_policy:web",
+        name="web",
+        source=_src("security_group", "sg-1"),
+        network="network:my_vpc",
+        rules=[
+            FirewallRule(direction="egress", protocol="all", ports=[], peer=CidrPeer(cidr="::/0")),
+        ],
+    )
+    doc = IRDocument(source={}, objects=[net, policy])
+
+    out = generate(doc, _ctx()).render()
+
+    assert "google_compute_firewall" not in out
+
+
 def test_colliding_policy_names_get_distinct_tags_via_allocator():
     # Two security groups whose slugs collide after gcp_name() cleaning must not get the
     # same network tag: that would let one group's firewall rules match the other

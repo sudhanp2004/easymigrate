@@ -19,17 +19,3 @@ resource "google_compute_subnetwork" "dual" {
   region        = var.region
   network       = google_compute_network.dual_stack.id
 }
-
-# from AWS security_group sg-00000000000000001 (default)
-resource "google_compute_firewall" "default_eg_cidr" {
-  name               = "default-eg-cidr"
-  network            = google_compute_network.dual_stack.id
-  direction          = "EGRESS"
-  priority           = 1000
-  target_tags        = ["fw-default"]
-  destination_ranges = ["::/0"]
-
-  allow {
-    protocol = "all"
-  }
-}
