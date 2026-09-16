@@ -42,6 +42,7 @@ class PlanSummaryView:
     destroy: int
     changed_or_destroyed: list[str]
     plan_text_path: str
+    findings: list[Finding] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -182,6 +183,7 @@ def _load_plan_summary(project: Project) -> PlanSummaryView | None:
         destroy=data["destroy"],
         changed_or_destroyed=data["changed_or_destroyed"],
         plan_text_path=data["plan_text_path"],
+        findings=[Finding.model_validate(f) for f in data.get("findings", [])],
     )
 
 
@@ -206,8 +208,23 @@ def build_report(project: Project) -> Report:
     scan_gaps: list[Finding] = []
     not_supported: list[Finding] = []
     info: list[Finding] = []
-    if ir is not None:
-        for finding in ir.findings:
+    ir_findings = list(ir.findings) if ir is not None else []
+    for finding in ir_findings:
+        if finding.level == "scan_gap":
+            scan_gaps.append(finding)
+        elif finding.level == "unsupported":
+            not_supported.append(finding)
+        elif finding.level == "info":
+            info.append(finding)
+
+    # plan_summary.json's findings are resolved-IR findings (identical to ir.findings;
+    # resolving differences never adds findings) plus generation findings (e.g.
+    # GEN-RENAMED, GEN-NAT-UNUSED) that only plan() produces. Fold whichever of those are
+    # new here so they are not dropped silently (spec D2).
+    if plan_summary is not None:
+        for finding in plan_summary.findings:
+            if finding in ir_findings:
+                continue
             if finding.level == "scan_gap":
                 scan_gaps.append(finding)
             elif finding.level == "unsupported":

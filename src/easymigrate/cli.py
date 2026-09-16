@@ -269,6 +269,7 @@ def _print_plan_summary(summary: PlanSummary) -> None:
     table = Table("Add", "Change", "Destroy", title="Plan")
     table.add_row(str(summary.add), str(summary.change), str(summary.destroy))
     console.print(table)
+    _print_findings(summary.findings)
     if summary.changed_or_destroyed:
         console.print("[bold]Changed or destroyed[/bold]")
         for address in summary.changed_or_destroyed:

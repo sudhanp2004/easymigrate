@@ -19,6 +19,7 @@ from easymigrate.core.pipeline import resolve as run_resolve
 from easymigrate.core.pipeline import scan
 from easymigrate.core.project import Project
 from easymigrate.core.registry import source_for
+from easymigrate.ir.base import Finding
 
 runner = CliRunner()
 
@@ -94,6 +95,30 @@ def test_plan_command_writes_terraform_and_prints_summary(tmp_path, monkeypatch)
     assert "Plan" in result.output
     assert (project.terraform_dir / "network.tf").exists()
     assert "Next: run `easymigrate apply`." in result.output
+
+
+def test_plan_command_prints_non_info_findings(tmp_path, monkeypatch):
+    """A non-info finding reaching PlanSummary.findings (here: an `unsupported` finding
+    carried through from analyze) must be printed by `plan`, not just written to
+    plan_summary.json/report.md (spec D2: nothing is dropped silently)."""
+    monkeypatch.chdir(tmp_path)
+    project = _ready_project(tmp_path)
+    ir_doc = project.read_ir(project.ir_path, produced_by="analyze")
+    extra = Finding(
+        level="unsupported",
+        code="TEST-UNSUPPORTED",
+        message="some-service resource(s) found that EasyMigrate does not migrate yet",
+        subject="test:resource",
+    )
+    project.write_ir(project.ir_path, ir_doc.model_copy(update={"findings": [extra]}))
+    monkeypatch.setattr(registry, "gcp_target", lambda: FakeGcp())
+    _patch_tofu(monkeypatch)
+
+    result = runner.invoke(app, ["plan", "--gcp-project", "my-proj"])
+
+    assert result.exit_code == 0, result.output
+    assert "TEST-UNSUPPORTED" in result.output
+    assert extra.message in result.output
 
 
 def test_plan_command_prompts_for_missing_bucket(tmp_path, monkeypatch):

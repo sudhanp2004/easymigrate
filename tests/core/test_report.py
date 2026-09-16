@@ -2,14 +2,38 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from moto import mock_aws
 
 from easymigrate.core.pipeline import analyze as run_analyze
+from easymigrate.core.pipeline import plan as run_plan
 from easymigrate.core.pipeline import resolve as run_resolve
 from easymigrate.core.pipeline import scan
 from easymigrate.core.project import Project
 from easymigrate.core.registry import source_for
 from easymigrate.core.report import build_report, write_report
+
+
+class _FakeGcp:
+    def credentials_ok(self) -> bool:
+        return True
+
+    def ensure_bucket(self, gcp_project, name, region, confirm) -> bool:
+        return True
+
+
+class _FakeTofu:
+    def init(self, backend_config=None, *, backend=True) -> None:
+        pass
+
+    def plan(self, out: Path) -> str:
+        out.write_bytes(b"fake-plan-bytes")
+        return "Plan: 1 to add, 0 to change, 0 to destroy."
+
+    def show_json(self, plan: Path) -> dict:
+        return {"resource_changes": []}
+
 
 _SECTIONS_IN_ORDER = [
     "Scan gaps",
@@ -114,6 +138,39 @@ def test_json_schema_keys(tmp_path):
         "plan",
     ):
         assert key in data
+
+
+def test_generation_finding_from_plan_summary_appears_in_report(tmp_path):
+    """GEN-RENAMED (and other generation findings) reach plan_summary.json but were never
+    folded into the report; they must show up in report.md's Notes section (info-level,
+    spec §6.1: info findings appear only in the md/json files)."""
+    project = Project(tmp_path)
+    with mock_aws():
+        ec2 = source_for("aws").connect(region="ap-south-1").client("ec2")
+        ec2.create_vpc(
+            CidrBlock="10.0.0.0/16",
+            TagSpecifications=[
+                {"ResourceType": "vpc", "Tags": [{"Key": "Name", "Value": "My_VPC!!"}]}
+            ],
+        )
+        scan(project, region="ap-south-1")
+    run_analyze(project)
+    run_resolve(project, accept_defaults=True)
+    run_plan(
+        project,
+        gcp_project="my-proj",
+        gcp_region=None,
+        confirm_bucket=lambda name: True,
+        gcp=_FakeGcp(),
+        tofu=_FakeTofu(),
+    )
+
+    report = build_report(project)
+
+    renamed = [f for f in report.info if f.code == "GEN-RENAMED"]
+    assert renamed, "expected a GEN-RENAMED finding from the plan summary in report.info"
+    md = report.to_markdown()
+    assert renamed[0].message in md
 
 
 def test_info_findings_only_in_md_and_json_not_terminal(tmp_path):
