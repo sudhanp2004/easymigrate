@@ -63,7 +63,7 @@ def network(name="main"):
 
 
 def test_registry_exposes_network_plugin_and_aws_source():
-    assert [p.name for p in PLUGINS] == ["network"]
+    assert [p.name for p in PLUGINS] == ["network", "database"]
     assert source_for("aws").__class__.__name__ == "AwsSource"
     with pytest.raises(ValueError, match="unsupported source cloud 'azure'"):
         source_for("azure")

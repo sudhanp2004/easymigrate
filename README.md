@@ -31,7 +31,9 @@ Migrates cloud infrastructure from AWS to GCP. It scans the live source cloud, b
 
 These commands work in the current directory and keep their output in `.easymigrate/`. That folder holds account metadata such as account IDs and ARNs; keep it private. It is added to `.gitignore` automatically inside a git repository. After every stage that has enough information, a report is written to `.easymigrate/report.md` and `.easymigrate/report.json`.
 
-Permissions `scan` needs: `ec2:DescribeVpcs`, `ec2:DescribeVpcAttribute`, `ec2:DescribeSubnets`, `ec2:DescribeRouteTables`, `ec2:DescribeInternetGateways`, `ec2:DescribeNatGateways`, `ec2:DescribeSecurityGroups`, `ec2:DescribeNetworkAcls`, `tag:GetResources`, `sts:GetCallerIdentity`. Missing permissions are reported as scan gaps rather than failing the scan.
+Scanned families: networking (VPCs, subnets, route tables, internet/NAT gateways, security groups, network ACLs) and databases (RDS instances and Multi-AZ DB clusters).
+
+Permissions `scan` needs: `ec2:DescribeVpcs`, `ec2:DescribeVpcAttribute`, `ec2:DescribeSubnets`, `ec2:DescribeRouteTables`, `ec2:DescribeInternetGateways`, `ec2:DescribeNatGateways`, `ec2:DescribeSecurityGroups`, `ec2:DescribeNetworkAcls`, `rds:DescribeDBInstances`, `rds:DescribeDBSubnetGroups`, `rds:DescribeDBParameterGroups`, `rds:DescribeDBParameters`, `rds:DescribeDBClusters`, `ec2:DescribeInstanceTypes`, `tag:GetResources`, `sts:GetCallerIdentity`. Missing permissions are reported as scan gaps rather than failing the scan.
 
 `plan` and `apply` need GCP Application Default Credentials (`gcloud auth application-default login`) for a principal with, on the destination project: `roles/compute.networkAdmin` (create the generated networking resources) and `roles/storage.admin` (create and use the `<project>-easymigrate-tfstate` state bucket). EasyMigrate runs OpenTofu inside the application; you never install or invoke `tofu` yourself.
 

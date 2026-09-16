@@ -8,11 +8,12 @@ from typing import Any, Protocol
 from easymigrate.core.errors import SourceConnectionError
 from easymigrate.core.plugin import Plugin
 from easymigrate.engine import tofu as tofu_engine
+from easymigrate.plugins.database import DatabasePlugin
 from easymigrate.plugins.network import NetworkPlugin
 from easymigrate.providers.aws import source as aws_source
 from easymigrate.providers.gcp import boilerplate, state_bucket
 
-PLUGINS: tuple[Plugin, ...] = (NetworkPlugin(),)
+PLUGINS: tuple[Plugin, ...] = (NetworkPlugin(), DatabasePlugin())
 
 
 class AwsSource:
