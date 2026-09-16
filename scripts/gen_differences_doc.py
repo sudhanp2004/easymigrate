@@ -9,6 +9,7 @@ fail if the committed files differ from this output."""
 from __future__ import annotations
 
 import sys
+from itertools import groupby
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -29,21 +30,30 @@ def render() -> str:
         "hand.",
         "",
     ]
-    for rule in catalogue():
-        lines.append(f"## {rule.title} (`{rule.id}`)")
+    for family, rules in groupby(catalogue(), key=lambda r: r.family):
+        lines.append(f"## {family.title()} rules")
         lines.append("")
-        lines.append(rule.impact)
-        lines.append("")
-        lines.append("| Strategy | Title | Effect | Risk | Manual | Default |")
-        lines.append("|---|---|---|---|---|---|")
-        for strategy in rule.strategies:
-            default = "yes" if strategy.id == rule.default else ""
-            manual = "yes" if strategy.manual else ""
-            lines.append(
-                f"| `{strategy.id}` | {strategy.title} | {strategy.effect} | {strategy.risk} "
-                f"| {manual} | {default} |"
-            )
-        lines.append("")
+        for rule in rules:
+            lines.append(f"### {rule.title} (`{rule.id}`)")
+            lines.append("")
+            lines.append(rule.impact)
+            lines.append("")
+            lines.append("| Strategy | Title | Effect | Risk | Manual | Default |")
+            lines.append("|---|---|---|---|---|---|")
+            for strategy in rule.strategies:
+                default = "yes" if strategy.id == rule.default else ""
+                manual = "yes" if strategy.manual else ""
+                lines.append(
+                    f"| `{strategy.id}` | {strategy.title} | {strategy.effect} | {strategy.risk} "
+                    f"| {manual} | {default} |"
+                )
+            lines.append("")
+            if rule.param_docs:
+                lines.append("Params:")
+                lines.append("")
+                for name in sorted(rule.param_docs):
+                    lines.append(f"- `{name}`: {rule.param_docs[name]}")
+                lines.append("")
     return "\n".join(lines).rstrip() + "\n"
 
 

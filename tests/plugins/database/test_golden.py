@@ -13,12 +13,115 @@ from pathlib import Path
 import pytest
 
 from easymigrate.core.plugin import NormalizeContext, Snapshot
+from easymigrate.differences.engine import detect
 from easymigrate.ir import IRDocument
 from easymigrate.plugins.database.normalize import normalize as normalize_database
 from easymigrate.plugins.network.normalize import normalize as normalize_network
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CASES = sorted(p.name for p in FIXTURES.glob("*") if (p / "snapshot").is_dir())
+
+# The exact `DB-*` difference keys detected for each fixture (plan 2 Part C golden
+# assertion): a rule added, removed or mis-scoped for a case changes this list, so
+# drift here cannot pass silently.
+DETECTED_DB_KEYS: dict[str, list[str]] = {
+    "custom_port": [
+        "DB-BACKUP-WINDOW@database_instance:custom-port-db",
+        "DB-ENGINE-VERSION@database_instance:custom-port-db",
+        "DB-NAME-REUSE@database_instance:custom-port-db",
+        "DB-PORT@database_instance:custom-port-db",
+        "DB-PRIVATE-IP@database_instance:custom-port-db",
+        "DB-SG-FIREWALL@firewall_policy:custom-port-sg",
+        "DB-STORAGE-AUTORESIZE@database_instance:custom-port-db",
+        "DB-TIER@database_instance:custom-port-db",
+        "DB-USERS@database_instance:custom-port-db",
+    ],
+    "no_backups": [
+        "DB-BACKUP-WINDOW@database_instance:no-backup-db",
+        "DB-ENGINE-VERSION@database_instance:no-backup-db",
+        "DB-NAME-REUSE@database_instance:no-backup-db",
+        "DB-PRIVATE-IP@database_instance:no-backup-db",
+        "DB-SG-FIREWALL@firewall_policy:no-backups-sg",
+        "DB-STORAGE-AUTORESIZE@database_instance:no-backup-db",
+        "DB-TIER@database_instance:no-backup-db",
+        "DB-USERS@database_instance:no-backup-db",
+    ],
+    "old_engine_version": [
+        "DB-BACKUP-WINDOW@database_instance:legacy-db",
+        "DB-ENGINE-VERSION@database_instance:legacy-db",
+        "DB-NAME-REUSE@database_instance:legacy-db",
+        "DB-PRIVATE-IP@database_instance:legacy-db",
+        "DB-SG-FIREWALL@firewall_policy:legacy-sg",
+        "DB-STORAGE-AUTORESIZE@database_instance:legacy-db",
+        "DB-TIER@database_instance:legacy-db",
+        "DB-USERS@database_instance:legacy-db",
+    ],
+    "param_flags": [
+        "DB-BACKUP-WINDOW@database_instance:flagged-db",
+        "DB-ENGINE-VERSION@database_instance:flagged-db",
+        "DB-NAME-REUSE@database_instance:flagged-db",
+        "DB-PARAM-FLAGS@database_instance:flagged-db",
+        "DB-PRIVATE-IP@database_instance:flagged-db",
+        "DB-SG-FIREWALL@firewall_policy:flags-sg",
+        "DB-STORAGE-AUTORESIZE@database_instance:flagged-db",
+        "DB-TIER@database_instance:flagged-db",
+        "DB-USERS@database_instance:flagged-db",
+    ],
+    "private_mysql_multiaz": [
+        "DB-BACKUP-WINDOW@database_instance:private-mysql-db",
+        "DB-ENGINE-VERSION@database_instance:private-mysql-db",
+        "DB-MULTI-AZ@database_instance:private-mysql-db",
+        "DB-NAME-REUSE@database_instance:private-mysql-db",
+        "DB-PRIVATE-IP@database_instance:private-mysql-db",
+        "DB-SG-FIREWALL@firewall_policy:mysql-sg",
+        "DB-STORAGE-AUTORESIZE@database_instance:private-mysql-db",
+        "DB-STORAGE-TYPE@database_instance:private-mysql-db",
+        "DB-TIER@database_instance:private-mysql-db",
+        "DB-USERS@database_instance:private-mysql-db",
+    ],
+    "psa_range_conflict": [
+        "DB-BACKUP-WINDOW@database_instance:conflict-db",
+        "DB-ENGINE-VERSION@database_instance:conflict-db",
+        "DB-NAME-REUSE@database_instance:conflict-db",
+        "DB-PRIVATE-IP@database_instance:conflict-db",
+        "DB-SG-FIREWALL@firewall_policy:psa-conflict-sg",
+        "DB-STORAGE-AUTORESIZE@database_instance:conflict-db",
+        "DB-TIER@database_instance:conflict-db",
+        "DB-USERS@database_instance:conflict-db",
+    ],
+    "public_postgres": [
+        "DB-BACKUP-WINDOW@database_instance:public-postgres-db",
+        "DB-ENGINE-VERSION@database_instance:public-postgres-db",
+        "DB-LOG-EXPORTS@database_instance:public-postgres-db",
+        "DB-MAINTENANCE-WINDOW@database_instance:public-postgres-db",
+        "DB-NAME-REUSE@database_instance:public-postgres-db",
+        "DB-PITR@database_instance:public-postgres-db",
+        "DB-PUBLIC-ACCESS@database_instance:public-postgres-db",
+        "DB-SG-FIREWALL@firewall_policy:public-db-sg",
+        "DB-STORAGE-AUTORESIZE@database_instance:public-postgres-db",
+        "DB-TIER@database_instance:public-postgres-db",
+        "DB-USERS@database_instance:public-postgres-db",
+    ],
+    "read_replica": [
+        "DB-BACKUP-WINDOW@database_instance:orders-db",
+        "DB-BACKUP-WINDOW@database_instance:orders-db-replica",
+        "DB-ENGINE-VERSION@database_instance:orders-db",
+        "DB-ENGINE-VERSION@database_instance:orders-db-replica",
+        "DB-NAME-REUSE@database_instance:orders-db",
+        "DB-NAME-REUSE@database_instance:orders-db-replica",
+        "DB-PRIVATE-IP@database_instance:orders-db",
+        "DB-PRIVATE-IP@database_instance:orders-db-replica",
+        "DB-REPLICA@database_instance:orders-db-replica",
+        "DB-SG-FIREWALL@firewall_policy:orders-sg",
+        "DB-STORAGE-AUTORESIZE@database_instance:orders-db",
+        "DB-STORAGE-AUTORESIZE@database_instance:orders-db-replica",
+        "DB-TIER@database_instance:orders-db",
+        "DB-TIER@database_instance:orders-db-replica",
+        "DB-USERS@database_instance:orders-db",
+        "DB-USERS@database_instance:orders-db-replica",
+    ],
+    "unsupported_engines": [],
+}
 
 
 def _kinds(doc: IRDocument, kind: str) -> list:
@@ -69,6 +172,7 @@ def _normalize(case: str) -> IRDocument:
 
 def test_every_spec_case_has_a_fixture():
     assert set(CASES) == set(KEY_FACTS)
+    assert set(CASES) == set(DETECTED_DB_KEYS)
     assert CASES == [
         "custom_port",
         "no_backups",
@@ -94,3 +198,6 @@ def test_golden(case, update_golden):
     assert expected_path.exists(), "missing golden file; run pytest --update-golden"
     assert actual == expected_path.read_text()
     assert KEY_FACTS[case](doc), f"key fact for {case} does not hold"
+
+    detected_db_keys = sorted(d.key for d in detect(doc) if d.rule_id.startswith("DB-"))
+    assert detected_db_keys == DETECTED_DB_KEYS[case]

@@ -6,22 +6,37 @@ from __future__ import annotations
 
 import pytest
 
+from easymigrate.differences.decisions import merge_decisions
+from easymigrate.differences.engine import detect, resolve_ir
+from easymigrate.differences.rules.aws_gcp import AWS_GCP_RULES
 from easymigrate.differences.rules.aws_gcp.database import (
+    DbBackupWindow,
     DbEngineVersion,
+    DbIamAuth,
+    DbKmsCmek,
+    DbLogExports,
+    DbMaintenanceWindow,
     DbMultiAz,
+    DbNameReuse,
     DbParamFlags,
+    DbPitr,
+    DbPort,
     DbPrivateIp,
     DbPublicAccess,
+    DbReplica,
     DbSgFirewall,
     DbStorageAutoresize,
     DbStorageMinimum,
     DbStorageType,
     DbTier,
+    DbUsers,
 )
 from easymigrate.ir.base import IRDocument, SourceRef
 from easymigrate.ir.database import (
     DatabaseInstance,
+    DbBackup,
     DbCompute,
+    DbMaintenance,
     DbNetwork,
     DbStorage,
 )
@@ -75,6 +90,16 @@ def _instance(
     high_availability=False,
     multi_az_cluster=False,
     parameters=None,
+    encrypted=False,
+    kms_key=None,
+    backup_retention_days=0,
+    backup_window=None,
+    maintenance_window=None,
+    iam_auth=False,
+    log_exports=None,
+    role="primary",
+    replica_of=None,
+    master_username=None,
 ):
     return DatabaseInstance(
         id=id_,
@@ -82,6 +107,8 @@ def _instance(
         source=_source(),
         engine=engine,
         engine_version=engine_version,
+        role=role,
+        replica_of=replica_of,
         compute=DbCompute(class_name=class_name, vcpus=vcpus, memory_mib=memory_mib),
         storage=DbStorage(
             size_gib=size_gib,
@@ -89,6 +116,8 @@ def _instance(
             type=storage_type,
             iops=iops,
             throughput_mibps=throughput_mibps,
+            encrypted=encrypted,
+            kms_key=kms_key,
         ),
         network=DbNetwork(
             network=network,
@@ -99,6 +128,11 @@ def _instance(
         high_availability=high_availability,
         multi_az_cluster=multi_az_cluster,
         parameters=parameters or {},
+        backup=DbBackup(retention_days=backup_retention_days, window=backup_window),
+        maintenance=DbMaintenance(window=maintenance_window),
+        iam_auth=iam_auth,
+        log_exports=log_exports or [],
+        master_username=master_username,
     )
 
 
@@ -845,3 +879,473 @@ def test_param_flags_manual_excludes():
     assert (
         result.get(instance.id).excluded == "DB-PARAM-FLAGS: parameter group requires manual review"
     )
+
+
+# ---- defect regression: per-difference default (DB-ENGINE-VERSION / DB-TIER) -----
+
+
+def test_postgres_9_6_resolves_end_to_end_with_accept_defaults():
+    """`DifferenceRule.default` used to be a fixed class attribute, so a 9.6 instance
+    (whose only valid strategies are `upgrade_to_oldest_supported`/`manual`) was handed
+    the class default `nearest_major` by `merge_decisions`, and `resolve_ir` then raised.
+    `default_strategy` must be consulted instead so `--accept-defaults` never crashes on
+    a legitimate input."""
+    instance = _instance(engine="postgres", engine_version="9.6.24")
+    doc = _doc(instance)
+
+    differences = detect(doc, AWS_GCP_RULES)
+    decisions, dropped = merge_decisions(None, differences, AWS_GCP_RULES)
+    assert dropped == []
+    engine_decision = next(
+        d for d in decisions.decisions if d.key == f"DB-ENGINE-VERSION@{instance.id}"
+    )
+    assert engine_decision.strategy == "upgrade_to_oldest_supported"
+
+    resolved = resolve_ir(doc, differences, decisions, AWS_GCP_RULES)
+
+    assert resolved.superseded == []
+    assert resolved.document.get(instance.id).target_hints["database_version"] == "POSTGRES_13"
+
+
+def test_tier_unknown_sizing_defaults_to_manual():
+    instance = _instance(class_name="db.unknown.type", vcpus=None, memory_mib=None)
+    doc = _doc(instance)
+    rule = DbTier()
+    diff = rule.detect(doc)[0]
+
+    assert rule.default_strategy(diff) == "manual"
+
+
+def test_tier_burstable_defaults_to_shared_core():
+    instance = _instance(class_name="db.t3.micro", vcpus=2, memory_mib=1024)
+    doc = _doc(instance)
+    rule = DbTier()
+    diff = rule.detect(doc)[0]
+
+    assert rule.default_strategy(diff) == "shared_core"
+
+
+# ---- DB-BACKUP-WINDOW ---------------------------------------------------------
+
+
+def test_backup_window_detects_every_instance():
+    instance = _instance()
+    doc = _doc(instance)
+    diffs = DbBackupWindow().detect(doc)
+    assert len(diffs) == 1
+    assert diffs[0].key == f"DB-BACKUP-WINDOW@{instance.id}"
+
+
+def test_backup_window_nearest_equivalent_maps_start_time_and_retention():
+    instance = _instance(backup_retention_days=35, backup_window="03:00-04:00")
+    doc = _doc(instance)
+    rule = DbBackupWindow()
+    diff = rule.detect(doc)[0]
+    assert diff.context["backups_clamped"] is False
+
+    result = rule.apply(doc, diff, "nearest_equivalent")
+
+    assert result.get(instance.id).target_hints == {
+        "backup": {"enabled": True, "start_time": "03:00", "retained_backups": 35}
+    }
+    assert doc.get(instance.id).target_hints == {}
+
+
+def test_backup_window_retention_above_365_is_clamped():
+    instance = _instance(backup_retention_days=400, backup_window="03:00-04:00")
+    doc = _doc(instance)
+    rule = DbBackupWindow()
+    diff = rule.detect(doc)[0]
+    assert diff.context["backups_clamped"] is True
+
+    result = rule.apply(doc, diff, "nearest_equivalent")
+
+    assert result.get(instance.id).target_hints["backup"]["retained_backups"] == 365
+
+
+def test_backup_window_retention_zero_offers_the_other_two_strategies():
+    instance = _instance(backup_retention_days=0, backup_window="03:00-04:00")
+    doc = _doc(instance)
+    rule = DbBackupWindow()
+    diff = rule.detect(doc)[0]
+    assert rule.default_strategy(diff) == "no_backups"
+
+    no_backups = rule.apply(doc, diff, "no_backups")
+    assert no_backups.get(instance.id).target_hints == {"backup": {"enabled": False}}
+
+    default_backups = rule.apply(doc, diff, "enable_default_backups")
+    assert default_backups.get(instance.id).target_hints == {
+        "backup": {"enabled": True, "start_time": "03:00", "retained_backups": 7}
+    }
+
+    with pytest.raises(ValueError):
+        rule.apply(doc, diff, "nearest_equivalent")
+    with pytest.raises(ValueError):
+        rule.apply(doc, diff, "manual")
+
+
+def test_backup_window_manual_excludes():
+    instance = _instance(backup_retention_days=10, backup_window="03:00-04:00")
+    doc = _doc(instance)
+    rule = DbBackupWindow()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "manual")
+
+    assert (
+        result.get(instance.id).excluded
+        == "DB-BACKUP-WINDOW: backup schedule requires manual review"
+    )
+    with pytest.raises(ValueError):
+        rule.apply(doc, diff, "no_backups")
+
+
+# ---- DB-PITR --------------------------------------------------------------------
+
+
+def test_pitr_detects_positive_retention_only():
+    positive = _instance(id_="database_instance:with-retention", backup_retention_days=10)
+    negative = _instance(id_="database_instance:no-retention", backup_retention_days=0)
+    doc = _doc(positive, negative)
+
+    diffs = DbPitr().detect(doc)
+
+    assert [d.subjects[0] for d in diffs] == [positive.id]
+
+
+def test_pitr_retention_35_clamps_log_retention_to_7():
+    instance = _instance(backup_retention_days=35)
+    doc = _doc(instance)
+    rule = DbPitr()
+    diff = rule.detect(doc)[0]
+    assert diff.context["log_retention_clamped"] is True
+
+    result = rule.apply(doc, diff, "enable")
+
+    assert result.get(instance.id).target_hints == {
+        "pitr": {"enabled": True, "log_retention_days": 7}
+    }
+    assert doc.get(instance.id).target_hints == {}
+
+
+def test_pitr_disable():
+    instance = _instance(backup_retention_days=10)
+    doc = _doc(instance)
+    rule = DbPitr()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "disable")
+
+    assert result.get(instance.id).target_hints == {"pitr": {"enabled": False}}
+
+
+# ---- DB-MAINTENANCE-WINDOW -------------------------------------------------------
+
+
+def test_maintenance_window_detects_positive_and_negative():
+    with_window = _instance(
+        id_="database_instance:with-window", maintenance_window="sun:05:30-sun:06:30"
+    )
+    without_window = _instance(id_="database_instance:no-window", maintenance_window=None)
+    doc = _doc(with_window, without_window)
+
+    diffs = DbMaintenanceWindow().detect(doc)
+
+    assert [d.subjects[0] for d in diffs] == [with_window.id]
+
+
+def test_maintenance_window_sun_0530_maps_to_day_7_hour_5():
+    instance = _instance(maintenance_window="sun:05:30-sun:06:30")
+    doc = _doc(instance)
+    rule = DbMaintenanceWindow()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "nearest_hour")
+
+    assert result.get(instance.id).target_hints == {"maintenance_window": {"day": 7, "hour": 5}}
+    assert doc.get(instance.id).target_hints == {}
+
+
+def test_maintenance_window_manual_makes_no_change():
+    instance = _instance(maintenance_window="mon:00:00-mon:01:00")
+    doc = _doc(instance)
+    rule = DbMaintenanceWindow()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "manual")
+
+    assert result.get(instance.id).target_hints == {}
+    assert result.get(instance.id).excluded is None
+
+
+# ---- DB-PORT --------------------------------------------------------------------
+
+
+def test_port_detects_positive_and_negative():
+    custom = _instance(id_="database_instance:custom-port", port=5433)
+    default = _instance(id_="database_instance:default-port", port=5432)
+    doc = _doc(custom, default)
+
+    diffs = DbPort().detect(doc)
+
+    assert [d.subjects[0] for d in diffs] == [custom.id]
+    assert diffs[0].context == {"source_port": 5433, "default_port": 5432}
+
+
+def test_port_default_port_sets_no_hints_and_leaves_object_otherwise_unchanged():
+    instance = _instance(port=5433)
+    doc = _doc(instance)
+    rule = DbPort()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "default_port")
+
+    assert result.get(instance.id).target_hints == {}
+    assert result.get(instance.id).excluded is None
+
+
+def test_port_manual_excludes():
+    instance = _instance(port=5433)
+    doc = _doc(instance)
+    rule = DbPort()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "manual")
+
+    assert result.get(instance.id).excluded == "DB-PORT: custom port requires manual review"
+    assert doc.get(instance.id).excluded is None
+
+
+# ---- DB-KMS-CMEK ------------------------------------------------------------------
+
+
+def test_kms_cmek_detects_positive_and_negative():
+    encrypted_cmek = _instance(
+        id_="database_instance:cmek", encrypted=True, kms_key="arn:aws:kms:key/1"
+    )
+    encrypted_default = _instance(id_="database_instance:default-key", encrypted=True, kms_key=None)
+    unencrypted = _instance(id_="database_instance:plain", encrypted=False)
+    doc = _doc(encrypted_cmek, encrypted_default, unencrypted)
+
+    diffs = DbKmsCmek().detect(doc)
+
+    assert [d.subjects[0] for d in diffs] == [encrypted_cmek.id]
+    assert diffs[0].context == {"kms_key": "arn:aws:kms:key/1"}
+
+
+def test_kms_cmek_google_managed_makes_no_change():
+    instance = _instance(encrypted=True, kms_key="arn:aws:kms:key/1")
+    doc = _doc(instance)
+    rule = DbKmsCmek()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "google_managed")
+
+    assert result.get(instance.id).target_hints == {}
+    assert result.get(instance.id).excluded is None
+
+
+def test_kms_cmek_manual_excludes():
+    instance = _instance(encrypted=True, kms_key="arn:aws:kms:key/1")
+    doc = _doc(instance)
+    rule = DbKmsCmek()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "manual")
+
+    assert (
+        result.get(instance.id).excluded
+        == "DB-KMS-CMEK: customer-managed key requires manual review"
+    )
+
+
+# ---- DB-IAM-AUTH ------------------------------------------------------------------
+
+
+def test_iam_auth_detects_positive_and_negative():
+    enabled = _instance(id_="database_instance:iam", iam_auth=True)
+    disabled = _instance(id_="database_instance:no-iam", iam_auth=False)
+    doc = _doc(enabled, disabled)
+
+    diffs = DbIamAuth().detect(doc)
+
+    assert [d.subjects[0] for d in diffs] == [enabled.id]
+
+
+def test_iam_auth_manual_makes_no_change():
+    instance = _instance(iam_auth=True)
+    doc = _doc(instance)
+    rule = DbIamAuth()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "manual")
+
+    assert result.get(instance.id).target_hints == {}
+    assert result.get(instance.id).excluded is None
+
+
+def test_iam_auth_merges_into_database_flags_written_before_it():
+    """DB-PARAM-FLAGS (rule 10) runs before DB-IAM-AUTH in the catalogue and writes the
+    same `database_flags` hint; DB-IAM-AUTH must merge into it, not replace it."""
+    instance = _instance(engine="mysql", iam_auth=True)
+    doc = _doc(instance)
+
+    param_flags_first = instance.model_copy(
+        update={"target_hints": {"database_flags": {"max_connections": "50"}}}
+    )
+    seeded_doc = doc.model_copy(update={"objects": [param_flags_first]})
+    diff = DbIamAuth().detect(seeded_doc)[0]
+
+    result = DbIamAuth().apply(seeded_doc, diff, "enable_flag")
+
+    assert result.get(instance.id).target_hints["database_flags"] == {
+        "max_connections": "50",
+        "cloudsql_iam_authentication": "on",
+    }
+
+
+def test_iam_auth_flag_survives_param_flags_running_after_it():
+    """The reverse arrival order: DB-IAM-AUTH writes its flag first, then DB-PARAM-FLAGS
+    (rule 10) merges its own supported flags in; the IAM flag must not be lost."""
+    instance = _instance(engine="mysql", iam_auth=True, parameters={"max_connections": "50"})
+    doc = _doc(instance)
+
+    iam_auth_first = instance.model_copy(
+        update={"target_hints": {"database_flags": {"cloudsql_iam_authentication": "on"}}}
+    )
+    seeded_doc = doc.model_copy(update={"objects": [iam_auth_first]})
+    diff = DbParamFlags().detect(seeded_doc)[0]
+
+    result = DbParamFlags().apply(seeded_doc, diff, "supported_flags_only")
+
+    assert result.get(instance.id).target_hints["database_flags"] == {
+        "cloudsql_iam_authentication": "on",
+        "max_connections": "50",
+    }
+
+
+# ---- DB-LOG-EXPORTS ---------------------------------------------------------------
+
+
+def test_log_exports_detects_positive_and_negative():
+    with_exports = _instance(id_="database_instance:logs", log_exports=["postgresql", "upgrade"])
+    without_exports = _instance(id_="database_instance:no-logs", log_exports=[])
+    doc = _doc(with_exports, without_exports)
+
+    diffs = DbLogExports().detect(doc)
+
+    assert [d.subjects[0] for d in diffs] == [with_exports.id]
+    assert diffs[0].context == {"log_exports": ["postgresql", "upgrade"]}
+
+
+def test_log_exports_note_only_makes_no_change():
+    instance = _instance(log_exports=["postgresql"])
+    doc = _doc(instance)
+    rule = DbLogExports()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "note_only")
+
+    assert result.get(instance.id).target_hints == {}
+    assert result.get(instance.id).excluded is None
+    assert doc.get(instance.id).target_hints == {}
+
+
+# ---- DB-REPLICA -------------------------------------------------------------------
+
+
+def test_replica_ir_id_primary_sets_master_instance_hint():
+    primary = _instance(id_="database_instance:primary")
+    replica = _instance(id_="database_instance:replica", role="read_replica", replica_of=primary.id)
+    doc = _doc(primary, replica)
+    rule = DbReplica()
+    diffs = rule.detect(doc)
+    assert len(diffs) == 1
+    diff = diffs[0]
+    assert diff.subjects == [replica.id, primary.id]
+    assert rule.default_strategy(diff) == "cloud_sql_replica"
+
+    result = rule.apply(doc, diff, "cloud_sql_replica")
+
+    assert result.get(replica.id).target_hints == {"master_instance": primary.id}
+    assert doc.get(replica.id).target_hints == {}
+
+
+def test_replica_external_primary_is_manual_only():
+    replica = _instance(
+        id_="database_instance:replica", role="read_replica", replica_of="external:on-prem-db"
+    )
+    doc = _doc(replica)
+    rule = DbReplica()
+    diff = rule.detect(doc)[0]
+    assert diff.subjects == [replica.id]
+    assert rule.default_strategy(diff) == "manual"
+
+    result = rule.apply(doc, diff, "manual")
+    assert (
+        result.get(replica.id).excluded
+        == "DB-REPLICA: replica of an external primary requires manual review"
+    )
+
+    with pytest.raises(ValueError):
+        rule.apply(doc, diff, "cloud_sql_replica")
+
+
+def test_replica_not_detected_for_a_primary_instance():
+    primary = _instance()
+    doc = _doc(primary)
+    assert DbReplica().detect(doc) == []
+
+
+# ---- DB-USERS ---------------------------------------------------------------------
+
+
+def test_users_detects_every_instance_and_records_master_username():
+    instance = _instance(master_username="admin")
+    doc = _doc(instance)
+
+    diffs = DbUsers().detect(doc)
+
+    assert len(diffs) == 1
+    assert diffs[0].context == {"master_username": "admin"}
+
+
+def test_users_root_user_only_makes_no_change():
+    instance = _instance(master_username="admin")
+    doc = _doc(instance)
+    rule = DbUsers()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "root_user_only")
+
+    assert result.get(instance.id).target_hints == {}
+    assert result.get(instance.id).excluded is None
+    with pytest.raises(ValueError):
+        rule.apply(doc, diff, "manual")
+
+
+# ---- DB-NAME-REUSE ------------------------------------------------------------------
+
+
+def test_name_reuse_detects_every_instance():
+    instance = _instance()
+    doc = _doc(instance)
+
+    diffs = DbNameReuse().detect(doc)
+
+    assert len(diffs) == 1
+    assert diffs[0].context == {"name": instance.name}
+
+
+def test_name_reuse_keep_makes_no_change():
+    instance = _instance()
+    doc = _doc(instance)
+    rule = DbNameReuse()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "keep")
+
+    assert result.get(instance.id).target_hints == {}
+    assert result.get(instance.id).excluded is None
+    with pytest.raises(ValueError):
+        rule.apply(doc, diff, "manual")

@@ -1,11 +1,12 @@
 """AWS→GCP database difference rules, RDS -> Cloud SQL (spec §5, plan 2 Part C).
 
-This module carries rules 1-10 of the `DB-*` catalogue: engine version, tier,
+This module carries all 20 rules of the `DB-*` catalogue: engine version, tier,
 connectivity (private IP / public access), the security-group firewall rule that
-Cloud SQL does not need, multi-AZ, storage autoresize/type/minimum and parameter flags.
-Rules 11-20 (backup, PITR, maintenance, port, KMS, IAM, log exports, replica, users,
-name reuse) live elsewhere. Order here is load-bearing (spec §5): connectivity rules
-run before `DB-SG-FIREWALL`, and `DB-ENGINE-VERSION` runs before `DB-TIER`.
+Cloud SQL does not need, multi-AZ, storage autoresize/type/minimum, parameter flags,
+backup window, point-in-time recovery, maintenance window, port, CMEK, IAM auth, log
+exports, read replicas, users and instance-name reuse. Order here is load-bearing
+(spec §5): connectivity rules run before `DB-SG-FIREWALL`, and `DB-ENGINE-VERSION`
+runs before `DB-TIER`.
 """
 
 from __future__ import annotations
@@ -17,7 +18,11 @@ from typing import Any
 from easymigrate.differences.model import Difference, DifferenceRule, Strategy
 from easymigrate.differences.rules.aws_gcp.cloudsql_facts import (
     DATABASE_VERSION,
+    DAY_NUMBER,
+    DEFAULT_PORT,
     FORMULA,
+    MAX_RETAINED_BACKUPS,
+    MAX_TRANSACTION_LOG_RETENTION_DAYS,
     MEMORY_PER_VCPU_MIB,
     MEMORY_STEP_MIB,
     MIN_DISK_GIB,
@@ -188,6 +193,11 @@ class DbEngineVersion(DifferenceRule):
     )
     default = "nearest_major"
 
+    def default_strategy(self, diff: Difference) -> str:
+        if diff.context["major"] != diff.context["target"]:
+            return "upgrade_to_oldest_supported"
+        return "nearest_major"
+
     def detect(self, ir: IRDocument) -> list[Difference]:
         diffs = []
         for instance in sorted(ir.of_kind(DatabaseInstance), key=lambda i: i.id):
@@ -279,6 +289,13 @@ class DbTier(DifferenceRule):
     )
     default = "nearest_custom_tier"
 
+    def default_strategy(self, diff: Difference) -> str:
+        if not diff.context["sizing_known"]:
+            return "manual"
+        if diff.context["shared_core_tier"] is not None:
+            return "shared_core"
+        return "nearest_custom_tier"
+
     def detect(self, ir: IRDocument) -> list[Difference]:
         diffs = []
         for instance in sorted(ir.of_kind(DatabaseInstance), key=lambda i: i.id):
@@ -358,6 +375,10 @@ class DbPrivateIp(DifferenceRule):
         Strategy(id="manual", title="Handle manually", effect="excluded", risk="low", manual=True),
     )
     default = "psa_auto_range"
+    param_docs = {
+        "range": "Network address of the allocated Private Services Access range.",
+        "prefix_length": "Prefix length of the allocated range (16-24).",
+    }
 
     def detect(self, ir: IRDocument) -> list[Difference]:
         instances = [
@@ -452,6 +473,10 @@ class DbPublicAccess(DifferenceRule):
         Strategy(id="manual", title="Handle manually", effect="excluded", risk="low", manual=True),
     )
     default = "public_ip_authorized_networks"
+    param_docs = {
+        "range": "Network address of the allocated Private Services Access range.",
+        "prefix_length": "Prefix length of the allocated range (16-24).",
+    }
 
     def detect(self, ir: IRDocument) -> list[Difference]:
         instances = [
@@ -884,3 +909,579 @@ class DbParamFlags(DifferenceRule):
                 doc, _exclude(instance, "DB-PARAM-FLAGS: parameter group requires manual review")
             )
         raise ValueError(f"unknown strategy {strategy_id!r}")
+
+
+# ---- shared helpers for rules 11-20 ----------------------------------------
+
+
+def _window_start(window: str) -> str:
+    """`"03:00-04:00"` -> `"03:00"`."""
+    return window.split("-", 1)[0]
+
+
+def _maintenance_day_and_hour(window: str) -> tuple[int, int]:
+    """`"sun:05:30-sun:06:30"` -> `(7, 5)`; minutes are discarded."""
+    day_name, hour, _minute = _window_start(window).split(":")
+    return DAY_NUMBER[day_name], int(hour)
+
+
+# ---- 11. DB-BACKUP-WINDOW ---------------------------------------------------
+
+
+class DbBackupWindow(DifferenceRule):
+    id = "DB-BACKUP-WINDOW"
+    family = "database"
+    title = "RDS backup windows and retention do not map directly onto Cloud SQL"
+    impact = (
+        "Cloud SQL takes a backup start time, not a window, and caps retained backups; "
+        "an RDS instance with backups off has no automatic Cloud SQL equivalent."
+    )
+    strategies = (
+        Strategy(
+            id="nearest_equivalent",
+            title="Use the nearest equivalent backup schedule",
+            effect="backup.start_time from the window start; retained_backups clamped to "
+            "Cloud SQL's limit",
+            risk="low",
+        ),
+        Strategy(id="manual", title="Handle manually", effect="excluded", risk="low", manual=True),
+        Strategy(
+            id="no_backups",
+            title="Match the source and disable backups",
+            effect="backup.enabled = False",
+            risk="high",
+        ),
+        Strategy(
+            id="enable_default_backups",
+            title="Enable Cloud SQL's default backup schedule",
+            effect="backup.enabled = True, 7 retained backups at 03:00",
+            risk="none",
+        ),
+    )
+    default = "nearest_equivalent"
+
+    def default_strategy(self, diff: Difference) -> str:
+        return "nearest_equivalent" if diff.context["retention_days"] > 0 else "no_backups"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        diffs = []
+        for instance in sorted(ir.of_kind(DatabaseInstance), key=lambda i: i.id):
+            diffs.append(
+                self.difference(
+                    [instance.id],
+                    retention_days=instance.backup.retention_days,
+                    window=instance.backup.window,
+                    backups_clamped=instance.backup.retention_days > MAX_RETAINED_BACKUPS,
+                )
+            )
+        return diffs
+
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
+        doc = ir.model_copy(deep=True)
+        instance_id = diff.subjects[0]
+        if instance_id not in {o.id for o in doc.objects}:
+            return doc
+        retention_days = diff.context["retention_days"]
+        allowed = (
+            {"nearest_equivalent", "manual"}
+            if retention_days > 0
+            else {"no_backups", "enable_default_backups"}
+        )
+        if strategy_id not in allowed:
+            raise ValueError(f"unknown strategy {strategy_id!r}")
+        instance = doc.get(instance_id)
+        if strategy_id == "manual":
+            return _replace_object(
+                doc, _exclude(instance, "DB-BACKUP-WINDOW: backup schedule requires manual review")
+            )
+        if strategy_id == "no_backups":
+            return _replace_object(doc, _set_hint(instance, "backup", {"enabled": False}))
+        if strategy_id == "enable_default_backups":
+            backup = {"enabled": True, "start_time": "03:00", "retained_backups": 7}
+            return _replace_object(doc, _set_hint(instance, "backup", backup))
+        # nearest_equivalent
+        window = diff.context["window"] or "00:00-01:00"
+        retained = min(retention_days, MAX_RETAINED_BACKUPS)
+        backup = {
+            "enabled": True,
+            "start_time": _window_start(window),
+            "retained_backups": retained,
+        }
+        return _replace_object(doc, _set_hint(instance, "backup", backup))
+
+
+# ---- 12. DB-PITR -------------------------------------------------------------
+
+
+class DbPitr(DifferenceRule):
+    id = "DB-PITR"
+    family = "database"
+    title = "RDS transaction-log retention exceeds Cloud SQL's point-in-time recovery maximum"
+    impact = (
+        "Cloud SQL's point-in-time recovery keeps transaction logs for at most "
+        f"{MAX_TRANSACTION_LOG_RETENTION_DAYS} days, shorter than RDS's up to 35."
+    )
+    strategies = (
+        Strategy(
+            id="enable",
+            title="Enable point-in-time recovery",
+            effect="pitr.enabled = True, log_retention_days clamped to Cloud SQL's maximum",
+            risk="low",
+        ),
+        Strategy(
+            id="disable",
+            title="Disable point-in-time recovery",
+            effect="pitr.enabled = False",
+            risk="medium",
+        ),
+    )
+    default = "enable"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [
+            self.difference(
+                [instance.id],
+                retention_days=instance.backup.retention_days,
+                log_retention_clamped=(
+                    instance.backup.retention_days > MAX_TRANSACTION_LOG_RETENTION_DAYS
+                ),
+            )
+            for instance in sorted(ir.of_kind(DatabaseInstance), key=lambda i: i.id)
+            if instance.backup.retention_days > 0
+        ]
+
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
+        doc = ir.model_copy(deep=True)
+        instance_id = diff.subjects[0]
+        if instance_id not in {o.id for o in doc.objects}:
+            return doc
+        instance = doc.get(instance_id)
+        if strategy_id == "disable":
+            return _replace_object(doc, _set_hint(instance, "pitr", {"enabled": False}))
+        if strategy_id == "enable":
+            retention_days = diff.context["retention_days"]
+            log_retention_days = min(retention_days, MAX_TRANSACTION_LOG_RETENTION_DAYS)
+            pitr = {"enabled": True, "log_retention_days": log_retention_days}
+            return _replace_object(doc, _set_hint(instance, "pitr", pitr))
+        raise ValueError(f"unknown strategy {strategy_id!r}")
+
+
+# ---- 13. DB-MAINTENANCE-WINDOW -----------------------------------------------
+
+
+class DbMaintenanceWindow(DifferenceRule):
+    id = "DB-MAINTENANCE-WINDOW"
+    family = "database"
+    title = "RDS maintenance windows carry a range and minutes; Cloud SQL takes a day and hour"
+    impact = (
+        "Cloud SQL's maintenance window is a single day and hour with no minutes and no "
+        "end time; the window start is rounded down to the hour."
+    )
+    strategies = (
+        Strategy(
+            id="nearest_hour",
+            title="Use the window start, rounded to the hour",
+            effect="maintenance_window = {day, hour} from the window start; minutes discarded",
+            risk="low",
+        ),
+        Strategy(
+            id="manual",
+            title="Handle manually",
+            effect="no maintenance window is generated",
+            risk="low",
+            manual=True,
+        ),
+    )
+    default = "nearest_hour"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [
+            self.difference([instance.id], window=instance.maintenance.window)
+            for instance in sorted(ir.of_kind(DatabaseInstance), key=lambda i: i.id)
+            if instance.maintenance.window
+        ]
+
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
+        doc = ir.model_copy(deep=True)
+        instance_id = diff.subjects[0]
+        if instance_id not in {o.id for o in doc.objects}:
+            return doc
+        if strategy_id == "manual":
+            return doc
+        if strategy_id != "nearest_hour":
+            raise ValueError(f"unknown strategy {strategy_id!r}")
+        instance = doc.get(instance_id)
+        day, hour = _maintenance_day_and_hour(diff.context["window"])
+        updated = _set_hint(instance, "maintenance_window", {"day": day, "hour": hour})
+        return _replace_object(doc, updated)
+
+
+# ---- 14. DB-PORT --------------------------------------------------------------
+
+
+class DbPort(DifferenceRule):
+    id = "DB-PORT"
+    family = "database"
+    title = "Cloud SQL's engine port is fixed; RDS allows a custom port"
+    impact = (
+        "Cloud SQL always listens on the engine's default port; a custom RDS port means "
+        "every client connection string changes."
+    )
+    strategies = (
+        Strategy(
+            id="default_port",
+            title="Use Cloud SQL's fixed port",
+            effect="no hints; the source port is recorded for the migration note",
+            risk="medium",
+        ),
+        Strategy(id="manual", title="Handle manually", effect="excluded", risk="low", manual=True),
+    )
+    default = "default_port"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        diffs = []
+        for instance in sorted(ir.of_kind(DatabaseInstance), key=lambda i: i.id):
+            default_port = DEFAULT_PORT[instance.engine]
+            if instance.network.port != default_port:
+                diffs.append(
+                    self.difference(
+                        [instance.id], source_port=instance.network.port, default_port=default_port
+                    )
+                )
+        return diffs
+
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
+        doc = ir.model_copy(deep=True)
+        instance_id = diff.subjects[0]
+        if instance_id not in {o.id for o in doc.objects}:
+            return doc
+        instance = doc.get(instance_id)
+        if strategy_id == "default_port":
+            return _replace_object(doc, instance)
+        if strategy_id == "manual":
+            return _replace_object(
+                doc, _exclude(instance, "DB-PORT: custom port requires manual review")
+            )
+        raise ValueError(f"unknown strategy {strategy_id!r}")
+
+
+# ---- 15. DB-KMS-CMEK ----------------------------------------------------------
+
+
+class DbKmsCmek(DifferenceRule):
+    id = "DB-KMS-CMEK"
+    family = "database"
+    title = "A customer-managed AWS KMS key has no Cloud SQL equivalent by default"
+    impact = (
+        "Cloud SQL encrypts at rest with Google-managed keys unless a Cloud KMS key is "
+        "explicitly configured; the AWS key itself cannot be reused."
+    )
+    strategies = (
+        Strategy(
+            id="google_managed",
+            title="Use Google-managed encryption",
+            effect="no hints; still encrypted at rest, by Google-managed keys",
+            risk="low",
+        ),
+        Strategy(id="manual", title="Handle manually", effect="excluded", risk="low", manual=True),
+    )
+    default = "google_managed"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        diffs = []
+        for instance in sorted(ir.of_kind(DatabaseInstance), key=lambda i: i.id):
+            if instance.storage.encrypted and instance.storage.kms_key:
+                diffs.append(self.difference([instance.id], kms_key=instance.storage.kms_key))
+        return diffs
+
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
+        doc = ir.model_copy(deep=True)
+        instance_id = diff.subjects[0]
+        if instance_id not in {o.id for o in doc.objects}:
+            return doc
+        instance = doc.get(instance_id)
+        if strategy_id == "google_managed":
+            return _replace_object(doc, instance)
+        if strategy_id == "manual":
+            return _replace_object(
+                doc, _exclude(instance, "DB-KMS-CMEK: customer-managed key requires manual review")
+            )
+        raise ValueError(f"unknown strategy {strategy_id!r}")
+
+
+# ---- 16. DB-IAM-AUTH ----------------------------------------------------------
+
+
+class DbIamAuth(DifferenceRule):
+    id = "DB-IAM-AUTH"
+    family = "database"
+    title = "AWS IAM database authentication does not translate; Cloud SQL has its own flag"
+    impact = (
+        "Cloud SQL's IAM database authentication is a per-instance flag; enabling it does "
+        "not recreate the AWS-side IAM users or grants, which are invisible to this tool."
+    )
+    strategies = (
+        Strategy(
+            id="enable_flag",
+            title="Enable Cloud SQL IAM authentication",
+            effect="cloudsql_iam_authentication = 'on', merged into database_flags",
+            risk="medium",
+        ),
+        Strategy(
+            id="manual",
+            title="Handle manually",
+            effect="no hints; IAM authentication is not enabled",
+            risk="low",
+            manual=True,
+        ),
+    )
+    default = "enable_flag"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [
+            self.difference([instance.id])
+            for instance in sorted(ir.of_kind(DatabaseInstance), key=lambda i: i.id)
+            if instance.iam_auth
+        ]
+
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
+        doc = ir.model_copy(deep=True)
+        instance_id = diff.subjects[0]
+        if instance_id not in {o.id for o in doc.objects}:
+            return doc
+        instance = doc.get(instance_id)
+        if strategy_id == "manual":
+            return _replace_object(doc, instance)
+        if strategy_id != "enable_flag":
+            raise ValueError(f"unknown strategy {strategy_id!r}")
+        # Merge into whatever DB-PARAM-FLAGS (rule 10) already wrote, regardless of
+        # which of the two rules ran first (spec §5 "rule interactions").
+        merged_flags = {
+            **instance.target_hints.get("database_flags", {}),
+            "cloudsql_iam_authentication": "on",
+        }
+        return _replace_object(doc, _set_hint(instance, "database_flags", merged_flags))
+
+
+# ---- 17. DB-LOG-EXPORTS -------------------------------------------------------
+
+
+class DbLogExports(DifferenceRule):
+    id = "DB-LOG-EXPORTS"
+    family = "database"
+    title = "RDS's per-log-type export selection has no Cloud SQL equivalent"
+    impact = (
+        "Cloud SQL sends logs to Cloud Logging by default; there is no per-log-type "
+        "selection to translate, so this is informational only."
+    )
+    strategies = (
+        Strategy(
+            id="note_only",
+            title="No change",
+            effect="informational only; Cloud SQL logs to Cloud Logging by default",
+            risk="none",
+        ),
+    )
+    default = "note_only"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [
+            self.difference([instance.id], log_exports=list(instance.log_exports))
+            for instance in sorted(ir.of_kind(DatabaseInstance), key=lambda i: i.id)
+            if instance.log_exports
+        ]
+
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
+        doc = ir.model_copy(deep=True)
+        instance_id = diff.subjects[0]
+        if instance_id not in {o.id for o in doc.objects}:
+            return doc
+        if strategy_id != "note_only":
+            raise ValueError(f"unknown strategy {strategy_id!r}")
+        return _replace_object(doc, doc.get(instance_id))
+
+
+# ---- 18. DB-REPLICA -----------------------------------------------------------
+
+
+class DbReplica(DifferenceRule):
+    id = "DB-REPLICA"
+    family = "database"
+    title = "A read replica needs its Cloud SQL primary named explicitly"
+    impact = (
+        "Cloud SQL replicas reference their primary by name; a replica of an "
+        "unmigrated (external) primary has nothing to reference and cannot be created "
+        "as a Cloud SQL replica."
+    )
+    strategies = (
+        Strategy(
+            id="cloud_sql_replica",
+            title="Create as a Cloud SQL read replica",
+            effect="master_instance set to the primary's IR id",
+            risk="low",
+        ),
+        Strategy(id="manual", title="Handle manually", effect="excluded", risk="low", manual=True),
+    )
+    default = "cloud_sql_replica"
+
+    def default_strategy(self, diff: Difference) -> str:
+        return "manual" if diff.context["primary_id"] is None else "cloud_sql_replica"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        diffs = []
+        for instance in sorted(ir.of_kind(DatabaseInstance), key=lambda i: i.id):
+            if instance.role != "read_replica":
+                continue
+            replica_of = instance.replica_of
+            is_external = replica_of.startswith("external:")
+            primary_id = None if is_external else replica_of
+            subjects = [instance.id] if is_external else [instance.id, primary_id]
+            diffs.append(self.difference(subjects, replica_of=replica_of, primary_id=primary_id))
+        return diffs
+
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
+        doc = ir.model_copy(deep=True)
+        instance_id = diff.subjects[0]
+        if instance_id not in {o.id for o in doc.objects}:
+            return doc
+        primary_id = diff.context["primary_id"]
+        allowed = {"manual"} if primary_id is None else {"cloud_sql_replica", "manual"}
+        if strategy_id not in allowed:
+            raise ValueError(f"unknown strategy {strategy_id!r}")
+        instance = doc.get(instance_id)
+        if strategy_id == "manual":
+            return _replace_object(
+                doc,
+                _exclude(
+                    instance, "DB-REPLICA: replica of an external primary requires manual review"
+                ),
+            )
+        return _replace_object(doc, _set_hint(instance, "master_instance", primary_id))
+
+
+# ---- 19. DB-USERS --------------------------------------------------------------
+
+
+class DbUsers(DifferenceRule):
+    id = "DB-USERS"
+    family = "database"
+    title = "Only the master user is visible to Cloud SQL; every other user must be recreated"
+    impact = (
+        "Cloud SQL's control plane only sees the master user. Every other user, grant, "
+        "schema and extension must be recreated after cutover; this rule exists so the "
+        "user sees and approves that fact for every instance."
+    )
+    strategies = (
+        Strategy(
+            id="root_user_only",
+            title="Acknowledge root-user-only visibility",
+            effect="no change; recorded for review",
+            risk="medium",
+        ),
+    )
+    default = "root_user_only"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [
+            self.difference([instance.id], master_username=instance.master_username)
+            for instance in sorted(ir.of_kind(DatabaseInstance), key=lambda i: i.id)
+        ]
+
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
+        doc = ir.model_copy(deep=True)
+        instance_id = diff.subjects[0]
+        if instance_id not in {o.id for o in doc.objects}:
+            return doc
+        if strategy_id != "root_user_only":
+            raise ValueError(f"unknown strategy {strategy_id!r}")
+        return _replace_object(doc, doc.get(instance_id))
+
+
+# ---- 20. DB-NAME-REUSE ---------------------------------------------------------
+
+
+class DbNameReuse(DifferenceRule):
+    id = "DB-NAME-REUSE"
+    family = "database"
+    title = "A deleted Cloud SQL instance name cannot be reused for about a week"
+    impact = (
+        "Deleting and recreating a Cloud SQL instance under the same name fails for "
+        "about a week after deletion; this matters when re-running a migration."
+    )
+    strategies = (Strategy(id="keep", title="No change", effect="informational only", risk="none"),)
+    default = "keep"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [
+            self.difference([instance.id], name=instance.name)
+            for instance in sorted(ir.of_kind(DatabaseInstance), key=lambda i: i.id)
+        ]
+
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
+        doc = ir.model_copy(deep=True)
+        instance_id = diff.subjects[0]
+        if instance_id not in {o.id for o in doc.objects}:
+            return doc
+        if strategy_id != "keep":
+            raise ValueError(f"unknown strategy {strategy_id!r}")
+        return _replace_object(doc, doc.get(instance_id))

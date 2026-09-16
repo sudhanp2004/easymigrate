@@ -83,3 +83,20 @@ SUPPORTED_FLAGS: dict[str, frozenset[str]] = {
 # AWS parameter-group "formula" values (e.g. "{DBInstanceClassMemory*3/4}") are computed
 # from instance shape at attach time and never translate to a Cloud SQL flag value.
 FORMULA = re.compile(r"\{.*\}")
+
+# RDS/Cloud SQL default engine port. Checked 2026-09-16.
+DEFAULT_PORT: dict[str, int] = {
+    "postgres": 5432,
+    "mysql": 3306,
+}
+
+# Cloud SQL maintenance-window day names, 1 (Monday) - 7 (Sunday). Checked 2026-09-16.
+DAY_NUMBER: dict[str, int] = {
+    "mon": 1,
+    "tue": 2,
+    "wed": 3,
+    "thu": 4,
+    "fri": 5,
+    "sat": 6,
+    "sun": 7,
+}
