@@ -398,6 +398,45 @@ def test_nonempty_parameters_with_dropped_parameters_hint_only_is_ok():
     generate(doc, _ctx())
 
 
+# ---- naming (98-character Cloud SQL instance names) --------------------------------
+
+
+def test_long_instance_name_truncated_to_98_and_renamed():
+    long_id = "x" * 120
+    instance = _instance(long_id, publicly_accessible=True, hints=_BASE_HINTS | {"public_ip": True})
+    doc = IRDocument(source={}, objects=[instance])
+    ctx = _ctx()
+
+    out = generate(doc, ctx).render()
+
+    assert 'name                = "' in out
+    name_line = next(line for line in out.splitlines() if "name                = " in line)
+    generated_name = name_line.split('"')[1]
+    assert len(generated_name) <= 98
+    assert generated_name[0].isalpha()
+    assert all(c.isalnum() or c == "-" for c in generated_name)
+    assert [f for f in ctx.findings if f.code == "GEN-RENAMED"], "expected a GEN-RENAMED finding"
+
+
+def test_long_instance_name_collision_stays_unique_and_renames_both():
+    long_id = "x" * 120
+    colliding_id = "x" * 120 + "zzzzzzzzzzzz"  # shares the first 98 truncated characters
+    first = _instance(long_id, publicly_accessible=True, hints=_BASE_HINTS | {"public_ip": True})
+    second = _instance(
+        colliding_id, publicly_accessible=True, hints=_BASE_HINTS | {"public_ip": True}
+    )
+    doc = IRDocument(source={}, objects=[first, second])
+    ctx = _ctx()
+
+    out = generate(doc, ctx).render()
+
+    names = [line.split('"')[1] for line in out.splitlines() if "name                = " in line]
+    assert len(names) == len(set(names)) == 2
+    renamed_subjects = {f.subject for f in ctx.findings if f.code == "GEN-RENAMED"}
+    assert first.id in renamed_subjects
+    assert second.id in renamed_subjects
+
+
 # ---- comment headers ------------------------------------------------------------------
 
 

@@ -4,6 +4,7 @@ from easymigrate.providers.gcp.naming import (
     GCP_NAME_PATTERN,
     GcpNameAllocator,
     TfLabelAllocator,
+    cloudsql_name,
     gcp_name,
     tf_label,
 )
@@ -51,6 +52,35 @@ def test_gcp_name_allocator_suffix_respects_length_limit():
     assert first != second
     assert len(second) <= 63 and second.endswith("-2")
     assert GCP_NAME_PATTERN.match(second)
+
+
+def test_cloudsql_name_allows_up_to_98_characters():
+    name = cloudsql_name("a" * 100)
+
+    assert len(name) == 98
+    assert GCP_NAME_PATTERN.match(name) is None  # pattern caps at 63; check the rule by hand
+    assert name[0].isalpha()
+    assert all(c.isalnum() or c == "-" for c in name)
+
+
+def test_cloudsql_name_keeps_short_names_unchanged_and_slugs_like_gcp_name():
+    assert cloudsql_name("orders-db") == "orders-db"
+    assert cloudsql_name("Prod_DB") == "prod-db"
+    assert cloudsql_name("123") == "r-123"
+
+
+def test_gcp_name_allocator_supports_a_wider_max_length():
+    names = GcpNameAllocator(max_length=98)
+    long = "x" * 100
+
+    first, renamed_first = names.allocate("google_sql_database_instance", long)
+    second, renamed_second = names.allocate("google_sql_database_instance", long)
+
+    assert len(first) == 98
+    assert renamed_first is True
+    assert renamed_second is True
+    assert first != second
+    assert len(second) <= 98 and second.endswith("-2")
 
 
 @pytest.mark.parametrize(
