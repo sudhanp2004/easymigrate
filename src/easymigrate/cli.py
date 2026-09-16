@@ -13,11 +13,15 @@ from rich.console import Console
 from rich.table import Table
 
 from easymigrate import __version__
-from easymigrate.core.errors import EasyMigrateError
+from easymigrate.core.errors import EasyMigrateError, ExitTwoError
+from easymigrate.core.pipeline import PlanSummary
 from easymigrate.core.pipeline import analyze as run_analyze
+from easymigrate.core.pipeline import apply as run_apply
+from easymigrate.core.pipeline import plan as run_plan
 from easymigrate.core.pipeline import resolve as run_resolve
 from easymigrate.core.pipeline import scan as run_scan
 from easymigrate.core.project import Project, StageInputMissing
+from easymigrate.core.regions import gcp_region_for
 from easymigrate.core.report import Report, build_report, write_report
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
@@ -54,6 +58,10 @@ def _fail(message: str) -> NoReturn:
 def _user_errors() -> Iterator[None]:
     try:
         yield
+    except ExitTwoError as exc:
+        for line in str(exc).splitlines() or [str(exc)]:
+            error_console.print(f"[red]{line}[/red]")
+        raise typer.Exit(code=2) from None
     except (EasyMigrateError, StageInputMissing) as exc:
         _fail(str(exc))
     except ValidationError as exc:
@@ -255,3 +263,75 @@ def resolve(
             error_console.print(f"[red]{problem}[/red]")
         raise typer.Exit(code=2)
     console.print("Next: run `easymigrate plan`.", markup=False)
+
+
+def _print_plan_summary(summary: PlanSummary) -> None:
+    table = Table("Add", "Change", "Destroy", title="Plan")
+    table.add_row(str(summary.add), str(summary.change), str(summary.destroy))
+    console.print(table)
+    if summary.changed_or_destroyed:
+        console.print("[bold]Changed or destroyed[/bold]")
+        for address in summary.changed_or_destroyed:
+            console.print(f"  [red]{address}[/red]")
+    if summary.superseded:
+        console.print(
+            f"[yellow]Decisions that no longer apply ({len(summary.superseded)})[/yellow]"
+        )
+        for entry in summary.superseded:
+            console.print(f"  {entry.message}", markup=False)
+
+
+@app.command()
+def plan(
+    gcp_project: str = typer.Option(..., "--gcp-project", help="Destination GCP project id."),
+    gcp_region: str | None = typer.Option(
+        None, "--gcp-region", help="GCP region; inferred from the scanned AWS region if omitted."
+    ),
+) -> None:
+    """Generate GCP Terraform from the resolved decisions and run `tofu plan`."""
+    project = Project(Path.cwd())
+    with _user_errors():
+        config = project.load_config()
+        if config.source is None:
+            _fail("no scan found; run `easymigrate scan` first")
+        region = gcp_region_for(config.source.region, override=gcp_region)
+
+        def confirm_bucket(name: str) -> bool:
+            return typer.confirm(
+                f"State bucket {name} does not exist. Create it in {region}? [y/N]",
+                default=False,
+            )
+
+        summary = run_plan(
+            project, gcp_project=gcp_project, gcp_region=gcp_region, confirm_bucket=confirm_bucket
+        )
+    _print_plan_summary(summary)
+    console.print(f"Plan: {summary.plan_text_path.relative_to(project.root)}", markup=False)
+    console.print("Next: run `easymigrate apply`.", markup=False)
+
+
+@app.command()
+def apply() -> None:
+    """Apply exactly the plan `easymigrate plan` produced, after confirmation."""
+    project = Project(Path.cwd())
+    with _user_errors():
+        config = project.load_config()
+        target_project = config.target.project if config.target else "?"
+
+        def confirm(summary: PlanSummary) -> bool:
+            _print_plan_summary(summary)
+            return typer.confirm(
+                f"Apply these changes to project {target_project}? [y/N]", default=False
+            )
+
+        def stream(line: str) -> None:
+            console.print(line, markup=False)
+
+        result = run_apply(project, confirm=confirm, stream=stream)
+    console.print("Apply complete.", markup=False)
+    _write_and_note_report(project)
+    if result.summary.superseded:
+        console.print(
+            f"[yellow]Decisions that no longer applied this run "
+            f"({len(result.summary.superseded)})[/yellow]"
+        )
