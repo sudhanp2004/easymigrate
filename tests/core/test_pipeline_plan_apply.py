@@ -242,10 +242,13 @@ def test_apply_confirmed_calls_tofu_apply_with_tfplan_and_streams_output(tmp_pat
 
 def test_apply_tofu_error_exits_one_with_recovery_message(tmp_path):
     from easymigrate.core.errors import EasyMigrateError
+    from easymigrate.engine.tofu import TofuError
 
     project = _project_ready_to_plan(tmp_path)
     plan(**_plan_kwargs(project=project))
-    tofu = FakeTofu(raise_on_apply=EasyMigrateError("boom"))
+    tofu = FakeTofu(raise_on_apply=TofuError("boom: real tofu stderr"))
 
-    with pytest.raises(EasyMigrateError, match="state is safe"):
+    with pytest.raises(EasyMigrateError, match="state is safe") as exc_info:
         apply(project, confirm=lambda s: True, stream=lambda line: None, tofu=tofu)
+
+    assert "boom: real tofu stderr" in str(exc_info.value)
