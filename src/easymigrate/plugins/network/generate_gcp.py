@@ -500,3 +500,5 @@ FIELD_COVERAGE: dict[str, dict[str, str]] = {
 
 # firewall_policy.target_hints["egress_ranges"] feeds egress PolicyPeer destination_ranges.
 FIELD_COVERAGE["firewall_policy"]["target_hints"] = "hint:egress_ranges"
+# subnet.target_hints["no_external_ip"] is consumed as a comment-only note (no VMs yet).
+FIELD_COVERAGE["subnet"]["target_hints"] = "hint:no_external_ip"

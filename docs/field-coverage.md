@@ -163,5 +163,5 @@ Every IR field the network generator could touch is declared here, so an IR fiel
 | `network` | exact |
 | `resolution` | metadata |
 | `source` | metadata |
-| `target_hints` | metadata |
+| `target_hints` | hint:no_external_ip |
 | `zone` | derived:GCP subnets are regional; the zone only feeds NET-ZONE-REGIONAL |
