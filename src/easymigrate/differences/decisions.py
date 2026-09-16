@@ -41,11 +41,12 @@ def merge_decisions(
         if kept is not None and diff.key not in dropped_set:
             decision = kept
         else:
+            default_strategy = rule.default_strategy(diff)
             decision = Decision(
                 key=diff.key,
-                strategy=rule.default,
+                strategy=default_strategy,
                 decided_by="default",
-                params=rule.default_params(diff, rule.default),
+                params=rule.default_params(diff, default_strategy),
             )
 
         try:

@@ -47,6 +47,7 @@ class DifferenceRule(ABC):
     default: ClassVar[str]
     source: ClassVar[str] = "aws"
     target: ClassVar[str] = "gcp"
+    param_docs: ClassVar[dict[str, str]] = {}
 
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
@@ -68,6 +69,13 @@ class DifferenceRule(ABC):
         return Difference(
             key=f"{self.id}@{subjects[0]}", rule_id=self.id, subjects=subjects, context=context
         )
+
+    def default_strategy(self, diff: Difference) -> str:
+        """The strategy `merge_decisions` picks for a freshly-seen difference. Defaults to
+        the class-level `default`; a rule whose strategy set varies per difference (e.g. an
+        engine-version rule choosing between an upgrade pair and a same-major pair) overrides
+        this instead of relying on the fixed class attribute."""
+        return self.default
 
     def default_params(self, diff: Difference, strategy_id: str) -> dict[str, Any]:
         return {}
