@@ -184,6 +184,25 @@ def test_plan_superseded_carried_into_summary(tmp_path):
     assert summary.superseded == []  # nothing superseded in this small fixture
 
 
+def test_plan_preflight_before_bucket_creation(tmp_path, monkeypatch):
+    """OpenTofu preflight (spec §5.4) must run before the state bucket is created, so a
+    run that can't get OpenTofu never leaves a real bucket behind."""
+    from easymigrate.core import registry
+
+    project = _project_ready_to_plan(tmp_path)
+    gcp = FakeGcp()
+
+    def _boom(cache_dir=None):
+        raise RuntimeError("could not download OpenTofu")
+
+    monkeypatch.setattr(registry, "ensure_tofu", _boom)
+
+    with pytest.raises(RuntimeError, match="could not download OpenTofu"):
+        plan(**_plan_kwargs(project=project, gcp=gcp, tofu=None))
+
+    assert gcp.ensure_bucket_calls == []
+
+
 def test_plan_records_init_backend_config_and_plan_path(tmp_path):
     project = _project_ready_to_plan(tmp_path)
     tofu = FakeTofu(show_json=_ADD_ONE)

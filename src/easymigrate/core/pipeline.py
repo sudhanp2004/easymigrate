@@ -407,12 +407,21 @@ def plan(
             "no GCP credentials found; run `gcloud auth application-default login`"
         )
 
+    # Local preflight (spec §5.4): resolve OpenTofu before touching GCP, so a run that
+    # can't get OpenTofu (e.g. no network) never leaves a real state bucket behind. There
+    # is no proactive check here for the `compute.googleapis.com` API being enabled on the
+    # project; that's handled reactively via the stderr hint in engine/tofu.py instead.
+    terraform_dir = project.terraform_dir
+    tofu_obj = tofu
+    if tofu_obj is None:
+        binary = registry.ensure_tofu()
+        tofu_obj = registry.new_tofu(binary, terraform_dir)
+
     bucket = f"{gcp_project}{_STATE_BUCKET_SUFFIX}"
     ok = gcp.ensure_bucket(gcp_project, bucket, region, confirm_bucket)
     if not ok:
         raise Declined(f"declined creating the state bucket {bucket!r}")
 
-    terraform_dir = project.terraform_dir
     if terraform_dir.is_dir():
         for old in terraform_dir.glob("*.tf"):
             old.unlink()
@@ -433,10 +442,6 @@ def plan(
     for name, content in registry.generate_boilerplate_tf(gcp_project, region, __version__).items():
         project.write_text(terraform_dir / name, content)
 
-    tofu_obj = tofu
-    if tofu_obj is None:
-        binary = registry.ensure_tofu()
-        tofu_obj = registry.new_tofu(binary, terraform_dir)
     tofu_obj.init(backend_config={"bucket": bucket, "prefix": "easymigrate"})
     plan_text = tofu_obj.plan(out=project.tfplan_path)
     project.write_text(project.plan_txt_path, plan_text)
