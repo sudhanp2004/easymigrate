@@ -48,6 +48,7 @@ resource "google_compute_router_nat" "egress_nat_nat" {
   name                               = "egress-nat"
   router                             = google_compute_router.egress_nat.name
   region                             = var.region
+  nat_ip_allocate_option             = "AUTO_ONLY"
   source_subnetwork_ip_ranges_to_nat = "LIST_OF_SUBNETWORKS"
 
   subnetwork {

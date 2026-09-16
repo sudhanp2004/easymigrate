@@ -225,11 +225,20 @@ def _generate_nats(file, names, nats, subnets, findings, decided_by, ctx) -> Non
                 f"{nat.id} was renamed to {nat_gcp!r} to satisfy GCP naming rules",
                 subject=nat.id,
             )
+        ctx.info(
+            "GEN-NAT-AUTO-IP",
+            f"{nat.id} used a fixed AWS Elastic IP; GCP Cloud NAT allocates its outbound "
+            "addresses automatically, so the public IP your traffic leaves from will change.",
+            subject=nat.id,
+        )
         block = file.block("resource", "google_compute_router_nat", nat_label)
         block.comment("\n".join(_header_lines(nat, findings, decided_by)))
         block.attr("name", nat_gcp)
         block.attr("router", Ref(f"google_compute_router.{router_label}.name"))
         block.attr("region", Ref("var.region"))
+        # GCP rejects a Cloud NAT without this field ("Required field
+        # 'resource.nats[0].natIpAllocateOption' not specified") — found by the first live apply.
+        block.attr("nat_ip_allocate_option", "AUTO_ONLY")
         block.attr("source_subnetwork_ip_ranges_to_nat", "LIST_OF_SUBNETWORKS")
         for sid in served:
             sub_block = block.block("subnetwork")
