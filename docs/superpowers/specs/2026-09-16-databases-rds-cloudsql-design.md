@@ -340,9 +340,12 @@ Two things the run exposed that the test suite could not:
 - **A security group whose ingress references another security group yields no authorized
   networks**, so a `publicly_accessible` RDS instance migrates to a Cloud SQL instance with
   a public IP and an empty allow-list — reachable by nobody. Confirmed by connecting to the
-  real IP and being refused. The report states this honestly but as a neutral line; it
-  belongs under "Needs your action", and `DB-PUBLIC-ACCESS` should treat "public with zero
-  derivable authorized networks" as its own high-risk difference. **Open.**
+  real IP and being refused. **Fixed 2026-09-17:** when no authorized network can be
+  derived, `DB-PUBLIC-ACCESS` now offers a different strategy set — `public_ip_allow_cidrs`
+  (params: `cidrs`, high risk), `private_only`, `manual` — and defaults to `manual`, so the
+  case lands under "Needs your action" instead of silently generating an empty allow list.
+  EasyMigrate will not guess who may reach a database over the internet, and will not
+  quietly change a database's exposure model either; the user chooses.
 
 ## 9. Done when
 

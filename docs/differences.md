@@ -142,10 +142,12 @@ Cloud SQL's public IP has no VPC-native concept of a security group; access is r
 |---|---|---|---|---|---|
 | `public_ip_authorized_networks` | Restrict the public IP with authorized networks | authorized networks derived from the attached policies' ingress CIDRs | medium |  | yes |
 | `private_only` | Move to a private IP only | matches nothing in the source; every client must move inside the VPC | medium |  |  |
+| `public_ip_allow_cidrs` | Keep the public IP and allow CIDRs you supply | authorized networks come from the `cidrs` param, since none could be derived | high |  |  |
 | `manual` | Handle manually | excluded | low | yes |  |
 
 Params:
 
+- `cidrs`: CIDRs allowed to reach the public IP, e.g. ['203.0.113.4/32'].
 - `prefix_length`: Prefix length of the allocated range (16-24).
 - `range`: Network address of the allocated Private Services Access range.
 

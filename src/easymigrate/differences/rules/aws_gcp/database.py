@@ -529,13 +529,44 @@ class DbPublicAccess(DifferenceRule):
             effect="matches nothing in the source; every client must move inside the VPC",
             risk="medium",
         ),
+        Strategy(
+            id="public_ip_allow_cidrs",
+            title="Keep the public IP and allow CIDRs you supply",
+            effect="authorized networks come from the `cidrs` param, since none could be derived",
+            risk="high",
+            risk_note=(
+                "You are choosing who can reach this database over the internet; nothing in "
+                "the source tells EasyMigrate what that should be."
+            ),
+        ),
         Strategy(id="manual", title="Handle manually", effect="excluded", risk="low", manual=True),
     )
     default = "public_ip_authorized_networks"
     param_docs = {
         "range": "Network address of the allocated Private Services Access range.",
         "prefix_length": "Prefix length of the allocated range (16-24).",
+        "cidrs": "CIDRs allowed to reach the public IP, e.g. ['203.0.113.4/32'].",
     }
+
+    @staticmethod
+    def _no_derivable_networks(diff: Difference) -> bool:
+        """The source is publicly accessible but nothing says who may reach it — its
+        security groups reference other security groups rather than CIDRs, which is the
+        usual way RDS rules are written. Generating `authorized_networks = []` would
+        produce a public Cloud SQL instance that nobody can connect to."""
+        return not diff.context["authorized_networks"]
+
+    def default_strategy(self, diff: Difference) -> str:
+        if self._no_derivable_networks(diff):
+            return "manual"
+        return self.default
+
+    def allowed_strategies(self, diff: Difference) -> tuple[Strategy, ...]:
+        if self._no_derivable_networks(diff):
+            ids = {"public_ip_allow_cidrs", "private_only", "manual"}
+        else:
+            ids = {"public_ip_authorized_networks", "private_only", "manual"}
+        return tuple(s for s in self.strategies if s.id in ids)
 
     def detect(self, ir: IRDocument) -> list[Difference]:
         instances = [
@@ -568,11 +599,26 @@ class DbPublicAccess(DifferenceRule):
     def default_params(self, diff: Difference, strategy_id: str) -> dict[str, Any]:
         if strategy_id == "private_only":
             return _psa_default_params(diff)
+        if strategy_id == "public_ip_allow_cidrs":
+            return {"cidrs": []}
         return {}
 
     def validate_params(self, diff: Difference, strategy_id: str, params: dict[str, Any]) -> None:
         if strategy_id == "private_only":
             _validate_psa_params(diff, params)
+        if strategy_id == "public_ip_allow_cidrs":
+            cidrs = params.get("cidrs")
+            if not isinstance(cidrs, list) or not cidrs:
+                raise ValueError(
+                    "cidrs must list at least one CIDR allowed to reach the public IP, "
+                    "for example ['203.0.113.4/32']; nothing in the source says who may "
+                    "connect, so EasyMigrate will not guess"
+                )
+            for cidr in cidrs:
+                try:
+                    ipaddress.ip_network(str(cidr), strict=True)
+                except ValueError as exc:
+                    raise ValueError(f"cidrs entry {cidr!r} is not a valid CIDR: {exc}") from None
 
     def risk_for(self, diff: Difference, strategy_id: str) -> Risk:
         if strategy_id == "public_ip_authorized_networks" and diff.context["open_to_world"]:
@@ -602,6 +648,10 @@ class DbPublicAccess(DifferenceRule):
             prefix_length = params.get("prefix_length", diff.context["psa_prefix_length"])
             updated = _set_hint(instance, "private_network", diff.context["network"])
             updated = _set_hint(updated, "psa", {"range": range_, "prefix_length": prefix_length})
+            return _replace_object(doc, updated)
+        if strategy_id == "public_ip_allow_cidrs":
+            updated = _set_hint(instance, "public_ip", True)
+            updated = _set_hint(updated, "authorized_networks", [str(c) for c in params["cidrs"]])
             return _replace_object(doc, updated)
         if strategy_id == "manual":
             return _replace_object(

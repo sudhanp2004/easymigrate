@@ -40,7 +40,7 @@ from easymigrate.ir.database import (
     DbNetwork,
     DbStorage,
 )
-from easymigrate.ir.network import CidrPeer, FirewallPolicy, FirewallRule, Network
+from easymigrate.ir.network import CidrPeer, FirewallPolicy, FirewallRule, Network, PolicyPeer
 
 # ---- builders ---------------------------------------------------------------
 
@@ -1541,3 +1541,96 @@ def test_name_reuse_keep_makes_no_change():
     assert result.get(instance.id).excluded is None
     with pytest.raises(ValueError):
         rule.apply(doc, diff, "manual")
+
+
+# --- DB-PUBLIC-ACCESS with no derivable authorized networks (live-run finding) --------
+
+
+def _public_instance_with_policy_peer_only():
+    """A publicly accessible instance whose security group allows another security group
+    rather than a CIDR — the normal way RDS rules are written, and the shape that made a
+    live migration produce a public Cloud SQL instance nobody could reach."""
+    policy = FirewallPolicy(
+        id="firewall_policy:db-sg",
+        name="db-sg",
+        network="network:main",
+        applies_to=["database_instance:db1"],
+        rules=[
+            FirewallRule(
+                direction="ingress",
+                protocol="tcp",
+                ports=["5432"],
+                peer=PolicyPeer(policy="firewall_policy:app-sg"),
+            )
+        ],
+        source=_source("security-group", "sg-1"),
+    )
+    app = FirewallPolicy(
+        id="firewall_policy:app-sg",
+        name="app-sg",
+        network="network:main",
+        source=_source("security-group", "sg-2"),
+    )
+    instance = _instance(
+        publicly_accessible=True,
+        firewall_policies=["firewall_policy:db-sg"],
+    )
+    return IRDocument(source={"cloud": "aws"}, objects=[_network(), policy, app, instance])
+
+
+def test_public_instance_with_no_derivable_cidrs_defaults_to_manual():
+    doc = _public_instance_with_policy_peer_only()
+    rule = DbPublicAccess()
+    [diff] = rule.detect(doc)
+    assert diff.context["authorized_networks"] == []
+    assert rule.default_strategy(diff) == "manual"
+
+
+def test_public_instance_with_no_derivable_cidrs_is_not_offered_the_derived_strategy():
+    """Offering public_ip_authorized_networks here would generate an empty allow list,
+    i.e. a public database nobody can connect to."""
+    doc = _public_instance_with_policy_peer_only()
+    rule = DbPublicAccess()
+    [diff] = rule.detect(doc)
+    offered = {s.id for s in rule.allowed_strategies(diff)}
+    assert offered == {"public_ip_allow_cidrs", "private_only", "manual"}
+
+
+def test_allow_cidrs_requires_at_least_one_cidr():
+    doc = _public_instance_with_policy_peer_only()
+    rule = DbPublicAccess()
+    [diff] = rule.detect(doc)
+    with pytest.raises(ValueError, match="at least one CIDR"):
+        rule.validate_params(diff, "public_ip_allow_cidrs", {"cidrs": []})
+    with pytest.raises(ValueError, match="not a valid CIDR"):
+        rule.validate_params(diff, "public_ip_allow_cidrs", {"cidrs": ["not-a-cidr"]})
+    rule.validate_params(diff, "public_ip_allow_cidrs", {"cidrs": ["203.0.113.4/32"]})
+
+
+def test_allow_cidrs_puts_the_supplied_cidrs_on_the_instance():
+    doc = _public_instance_with_policy_peer_only()
+    rule = DbPublicAccess()
+    [diff] = rule.detect(doc)
+    out = rule.apply(doc, diff, "public_ip_allow_cidrs", {"cidrs": ["203.0.113.4/32"]})
+    instance = out.get("database_instance:db1")
+    assert instance.target_hints["public_ip"] is True
+    assert instance.target_hints["authorized_networks"] == ["203.0.113.4/32"]
+
+
+def test_allow_cidrs_is_high_risk():
+    doc = _public_instance_with_policy_peer_only()
+    rule = DbPublicAccess()
+    [diff] = rule.detect(doc)
+    assert rule.risk_for(diff, "public_ip_allow_cidrs") == "high"
+
+
+def test_derivable_cidrs_still_default_to_the_derived_strategy():
+    """The normal path must be unchanged: a CIDR-based ingress rule still defaults to
+    deriving authorized networks, with no manual acknowledgement demanded."""
+    doc = _public_instance_with_policy_peer_only()
+    policy = doc.get("firewall_policy:db-sg")
+    policy.rules[0].peer = CidrPeer(cidr="203.0.113.0/24")
+    rule = DbPublicAccess()
+    [diff] = rule.detect(doc)
+    assert diff.context["authorized_networks"] == ["203.0.113.0/24"]
+    assert rule.default_strategy(diff) == "public_ip_authorized_networks"
