@@ -107,6 +107,20 @@ requires an internet gateway attached to its VPC, so add
 (which pulls in the gateway) and expect the first apply to race: RDS validates the
 gateway before the attachment propagates, so re-run the apply once.
 
+**Verifying the private path without internet access:** a VM in a migrated subnet has no
+egress unless the source subnets had an internet gateway, so `apt install mysql-client`
+will fail. Probe with bash instead, which needs no packages — MySQL sends its version
+handshake on connect, so readable bytes prove the database answered:
+
+    exec 3<>/dev/tcp/<private-ip>/3306 && head -c 60 <&3 | tr -cd '[:print:]'
+
+Write the result to `/dev/console` from the startup script and read it back with the
+serial-port API; guest attributes proved unreliable.
+
+**If a destroy fails partway, finish it before re-running.** A stranded firewall rule or
+subnet is left in GCP but dropped from state, and the next `apply` fails with
+`409 already exists` on each one in turn until they are deleted by hand.
+
 **A name you delete is not free again immediately:** a deleted Cloud SQL instance name
 cannot be reused for about a week, so a second run needs different IR ids (rename the
 testbed instances) or a wait.

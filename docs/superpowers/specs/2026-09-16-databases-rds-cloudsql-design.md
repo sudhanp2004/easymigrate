@@ -347,6 +347,31 @@ Two things the run exposed that the test suite could not:
   EasyMigrate will not guess who may reach a database over the internet, and will not
   quietly change a database's exposure model either; the user chooses.
 
+### Second live run (2026-09-17): private connectivity proven
+
+The first run created the infrastructure but never proved a client could reach it. A
+second run migrated a private MySQL instance and stood up a Compute Engine VM inside the
+migrated subnet, which read the server's handshake straight off the private IP:
+
+    PSACHECK-RESULT REACHABLE handshake=[Q8.0.45-google...]
+
+`8.0.45-google` is Cloud SQL's own version string, so the database answered over the
+Private Services Access peering — not merely an open port. The §9 criterion "accepts a
+connection" is met for the private path.
+
+What that run additionally exposed, none of it a spec-2 code defect:
+
+- **A deleted Cloud SQL instance name cannot be reused for about a week**, exactly as
+  `DB-NAME-REUSE` warns. Re-running the same migration needs renamed sources.
+- **A partially-failed `tofu destroy` strands resources that block the next `apply`.**
+  Run 1's teardown stopped on the service networking connection, leaving firewall rules
+  and subnets in GCP but not in state; the next apply hit `409 already exists` on each in
+  turn. Worth a future `easymigrate doctor` that reconciles orphans, and a reason the
+  teardown step in `tests/live/README.md` must be run to completion.
+- **A migrated VPC has no internet egress unless the source subnets had an internet
+  gateway.** Correct behaviour, but it means a verification VM in an isolated migrated
+  subnet cannot install packages — probe with bash's `/dev/tcp` instead.
+
 ## 9. Done when
 
 - `scan → analyze → resolve → plan → apply` migrates the testbed's Postgres and MySQL instances into
