@@ -107,6 +107,18 @@ def test_no_origin_with_correct_host_is_allowed(client: TestClient):
     assert resp.status_code == 200
 
 
+def test_security_honours_the_given_host_rather_than_a_hardcoded_one():
+    """`host` used to be accepted and silently discarded (the allowlist was built from a
+    hardcoded "127.0.0.1"). It must actually shape the allowlist."""
+    from fastapi import HTTPException
+
+    security = Security(token=TOKEN, host="10.0.0.5", port=PORT)
+    security.check_origin(None, f"10.0.0.5:{PORT}")  # does not raise
+
+    with pytest.raises(HTTPException):
+        security.check_origin(None, f"127.0.0.1:{PORT}")
+
+
 def test_localhost_origin_and_host_are_also_accepted(client: TestClient):
     resp = client.get(
         "/api/project",

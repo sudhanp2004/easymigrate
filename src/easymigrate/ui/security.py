@@ -26,7 +26,7 @@ def new_token() -> str:
 class Security:
     def __init__(self, token: str, host: str, port: int) -> None:
         self._token = token
-        self._allowed_hosts = {f"127.0.0.1:{port}", f"localhost:{port}"}
+        self._allowed_hosts = {f"{host}:{port}", f"localhost:{port}"}
         self._allowed_origins = {f"http://{authority}" for authority in self._allowed_hosts}
 
     def check_origin(self, origin: str | None, host_header: str | None) -> None:
