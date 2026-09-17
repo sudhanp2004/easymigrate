@@ -624,6 +624,31 @@ def test_public_access_risk_escalates_to_high_when_open_to_world():
     assert rule.risk_for(diff, "manual") == "low"
 
 
+def test_public_access_ipv6_world_cidr_also_sets_open_to_world_and_high_risk():
+    """I4: AWS's Ipv6Ranges normalize into an ordinary CidrPeer, so `::/0` reaches
+    `authorized_networks` exactly like `0.0.0.0/0` and must be flagged the same way. An
+    exact string match on `"0.0.0.0/0"` alone would miss this and understate the risk."""
+    net = _network()
+    policy = _policy(
+        "firewall_policy:sg1",
+        network=net.id,
+        rules=[
+            FirewallRule(
+                direction="ingress", protocol="tcp", ports=["5432"], peer=CidrPeer(cidr="::/0")
+            ),
+        ],
+    )
+    instance = _instance(
+        network=net.id, publicly_accessible=True, port=5432, firewall_policies=[policy.id]
+    )
+    doc = _doc(net, policy, instance)
+    rule = DbPublicAccess()
+    diff = rule.detect(doc)[0]
+
+    assert diff.context["open_to_world"] is True
+    assert rule.risk_for(diff, "public_ip_authorized_networks") == "high"
+
+
 def test_public_access_risk_stays_at_declared_risk_when_not_open_to_world():
     net = _network()
     policy = _policy(

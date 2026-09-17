@@ -38,6 +38,18 @@ from easymigrate.ir.network import CidrPeer, FirewallPolicy, Network
 # ---- shared helpers (mirrors network.py's idiom) --------------------------
 
 
+def _is_world_cidr(cidr: str) -> bool:
+    """True for a CIDR that covers the whole IPv4 or IPv6 address space. An AWS security
+    group's `Ipv6Ranges` normalize into ordinary `CidrPeer`s (spec's network normalizer),
+    so `::/0` reaches `authorized_networks` exactly like `0.0.0.0/0` and must be treated
+    as equally open to the world (I4) — an exact string match on `"0.0.0.0/0"` misses it."""
+    try:
+        network = ipaddress.ip_network(cidr, strict=False)
+    except ValueError:
+        return False
+    return network.prefixlen == 0
+
+
 def _exclude(obj: IntentObject, reason: str) -> IntentObject:
     return obj.model_copy(update={"excluded": reason})
 
@@ -544,7 +556,7 @@ class DbPublicAccess(DifferenceRule):
                     [instance.id],
                     network=network_id,
                     authorized_networks=networks,
-                    open_to_world="0.0.0.0/0" in networks,
+                    open_to_world=any(_is_world_cidr(cidr) for cidr in networks),
                     psa_range=allocations[network_id],
                     psa_prefix_length=_PSA_PREFIX_LENGTH,
                     vpc_cidrs=vpc_cidrs,
