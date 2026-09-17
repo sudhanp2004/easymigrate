@@ -20,11 +20,23 @@ from easymigrate.core.report import build_report
 
 
 class FakeGcp:
-    def __init__(self, *, creds_ok: bool = True, bucket_exists: bool = False, confirm_result=None):
+    def __init__(
+        self,
+        *,
+        creds_ok: bool = True,
+        bucket_exists: bool = False,
+        confirm_result=None,
+        services_result: object = "unused",
+    ):
         self.creds_ok = creds_ok
         self.bucket_exists = bucket_exists
         self.confirm_result = confirm_result
         self.ensure_bucket_calls: list[tuple] = []
+        # `services_result` is only consulted if `services_enabled` is actually called
+        # (i.e. `_required_gcp_services` returned something); the sentinel default
+        # makes a stray call in a test that doesn't expect one fail loudly.
+        self.services_result = services_result
+        self.services_enabled_calls: list[tuple] = []
 
     def credentials_ok(self) -> bool:
         return self.creds_ok
@@ -35,6 +47,12 @@ class FakeGcp:
             return True
         result = confirm(name) if self.confirm_result is None else self.confirm_result
         return bool(result)
+
+    def services_enabled(self, gcp_project, required):
+        self.services_enabled_calls.append((gcp_project, frozenset(required)))
+        if self.services_result == "unused":
+            raise AssertionError("services_enabled called without a configured result")
+        return self.services_result
 
 
 class FakeTofu:
@@ -242,6 +260,48 @@ def test_plan_preflight_before_bucket_creation(tmp_path, monkeypatch):
         plan(**_plan_kwargs(project=project, gcp=gcp, tofu=None))
 
     assert gcp.ensure_bucket_calls == []
+
+
+def test_plan_missing_gcp_service_raises_with_gcloud_command(tmp_path, monkeypatch):
+    """spec §6.4: a required API that isn't enabled is a hard error naming the exact
+    `gcloud services enable` command, not a warning (I2: this branch had no test, so
+    reverting the raise to a warning broke nothing)."""
+    from easymigrate.core import pipeline
+
+    project = _project_ready_to_plan(tmp_path)
+    monkeypatch.setattr(
+        pipeline, "_required_gcp_services", lambda document: {"sqladmin.googleapis.com"}
+    )
+    gcp = FakeGcp(services_result={"sqladmin.googleapis.com"})
+
+    with pytest.raises(Exception, match="gcloud services enable sqladmin.googleapis.com") as exc:
+        plan(**_plan_kwargs(project=project, gcp=gcp))
+
+    assert "my-proj" in str(exc.value)
+    assert gcp.services_enabled_calls == [("my-proj", frozenset({"sqladmin.googleapis.com"}))]
+    # the hard error must land before any state bucket is created
+    assert gcp.ensure_bucket_calls == []
+
+
+def test_plan_service_check_failure_is_a_warning_and_run_continues(tmp_path, monkeypatch):
+    """A failure to *check* (no permission to read Service Usage) must not block a run
+    whose APIs are already enabled: it is a GCP-SERVICES-CHECK-FAILED info finding, and
+    `plan()` proceeds to create the bucket and run tofu plan."""
+    from easymigrate.core import pipeline
+
+    project = _project_ready_to_plan(tmp_path)
+    monkeypatch.setattr(
+        pipeline, "_required_gcp_services", lambda document: {"sqladmin.googleapis.com"}
+    )
+    gcp = FakeGcp(services_result=None)
+
+    summary = plan(**_plan_kwargs(project=project, gcp=gcp))
+
+    assert gcp.services_enabled_calls == [("my-proj", frozenset({"sqladmin.googleapis.com"}))]
+    assert gcp.ensure_bucket_calls, "run must continue past a check failure"
+    assert any(
+        f.code == "GCP-SERVICES-CHECK-FAILED" and f.level == "info" for f in summary.findings
+    )
 
 
 def test_plan_records_init_backend_config_and_plan_path(tmp_path):
