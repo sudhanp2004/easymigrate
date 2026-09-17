@@ -1,0 +1,140 @@
+:root {
+  color-scheme: light;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  line-height: 1.5;
+}
+
+body {
+  margin: 0;
+  background: #fafafa;
+  color: #1a1a1a;
+}
+
+.app {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+.stage-nav {
+  display: flex;
+  gap: 1rem;
+  border-bottom: 1px solid #ddd;
+  padding-bottom: 0.75rem;
+  margin-bottom: 1.5rem;
+  text-transform: capitalize;
+}
+
+.stage-nav a {
+  color: #444;
+  text-decoration: none;
+  padding: 0.25rem 0.5rem;
+}
+
+.stage-nav a.active {
+  color: #111;
+  font-weight: 600;
+  border-bottom: 2px solid #111;
+}
+
+.page h1 {
+  margin-top: 0;
+}
+
+.form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  max-width: 420px;
+}
+
+.form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-weight: 600;
+}
+
+.form input {
+  font-size: 1rem;
+  padding: 0.5rem;
+  border: 1px solid #bbb;
+  border-radius: 4px;
+}
+
+button {
+  font-size: 1rem;
+  padding: 0.5rem 1rem;
+  border: 1px solid #111;
+  background: #111;
+  color: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+  width: fit-content;
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.error {
+  color: #b00020;
+  font-weight: 600;
+}
+
+.job-log pre {
+  background: #111;
+  color: #eee;
+  padding: 1rem;
+  border-radius: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+}
+
+.status-succeeded {
+  color: #146c2e;
+  font-weight: 600;
+}
+
+.status-failed {
+  color: #b00020;
+  font-weight: 600;
+}
+
+.status-running {
+  color: #555;
+  font-weight: 600;
+}
+
+table {
+  border-collapse: collapse;
+}
+
+td {
+  padding: 0.25rem 1rem 0.25rem 0;
+}
+
+.findings {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.findings li {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+}
+
+.suggestion {
+  color: #555;
+  margin: 0.25rem 0 0;
+}
+
+.stage-blocked ul {
+  padding-left: 1.25rem;
+}

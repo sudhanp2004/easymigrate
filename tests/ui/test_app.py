@@ -200,16 +200,61 @@ def test_method_not_allowed_keeps_the_allow_header(client: TestClient):
     assert "GET" in resp.headers["Allow"]
 
 
-def test_unknown_path_with_no_built_assets_is_not_a_bare_404(client: TestClient):
+def test_unknown_path_with_no_built_assets_is_not_a_bare_404(
+    project: Project, security: Security, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import easymigrate.ui.app as app_module
+
+    monkeypatch.setattr(app_module, "_STATIC_DIR", tmp_path / "static-not-built")
+    client = TestClient(app_module.create_app(project, security))
+
     resp = client.get("/", headers=HEADERS)
     assert resp.status_code != 404
     assert "npm --prefix frontend run build" in resp.text
 
 
-def test_unknown_non_api_path_is_also_not_a_bare_404(client: TestClient):
+def test_unknown_non_api_path_is_also_not_a_bare_404(
+    project: Project, security: Security, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    import easymigrate.ui.app as app_module
+
+    monkeypatch.setattr(app_module, "_STATIC_DIR", tmp_path / "static-not-built")
+    client = TestClient(app_module.create_app(project, security))
+
     resp = client.get("/some/client/route", headers=HEADERS)
     assert resp.status_code != 404
     assert "npm --prefix frontend run build" in resp.text
+
+
+def test_easymigrate_ui_starts_and_shows_not_built_page_when_static_is_empty(
+    project: Project, security: Security, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """`easymigrate ui` on a plain install where `frontend/` was never built must still
+    start and show the "assets not built" page, not crash (plan 4 requirement)."""
+    import easymigrate.ui.app as app_module
+
+    empty_static = tmp_path / "static-empty"
+    empty_static.mkdir()
+    monkeypatch.setattr(app_module, "_STATIC_DIR", empty_static)
+
+    app = app_module.create_app(project, security)
+    client = TestClient(app)
+
+    resp = client.get("/", headers=HEADERS)
+    assert resp.status_code == 200
+    assert "UI assets were not built" in resp.text
+
+
+def test_static_index_html_is_committed_and_served(client: TestClient):
+    """Catches a release built without the frontend: the real, committed
+    `src/easymigrate/ui/static/index.html` must exist and be what `/` serves."""
+    static_dir = Path(__file__).resolve().parents[2] / "src" / "easymigrate" / "ui" / "static"
+    index_html = static_dir / "index.html"
+    assert index_html.exists(), "run `npm --prefix frontend run build` and commit the output"
+
+    resp = client.get("/", headers=HEADERS)
+    assert resp.status_code == 200
+    assert resp.text == index_html.read_text(encoding="utf-8")
 
 
 def test_cli_does_not_import_ui_at_module_scope():

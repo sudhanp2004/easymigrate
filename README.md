@@ -62,5 +62,23 @@ works without it.
     uv run pytest
     uv run ruff check . && uv run ruff format --check .
 
+### Frontend
+
+The local UI's frontend is a small Vite/React/TypeScript app in `frontend/`. Its build
+output is committed to `src/easymigrate/ui/static/` and shipped in the wheel, so
+`easymigrate ui` works from a plain `pip`/`uv` install with no node toolchain on the
+user's machine — node is only needed to change the UI itself.
+
+    cd frontend
+    npm install
+    npm run dev      # local dev server against a running `easymigrate ui` backend
+    npm run build     # outputs into ../src/easymigrate/ui/static/ — commit the result
+    npm run lint
+    npm test
+
+CI fails if the committed `static/` output has drifted from a fresh `npm run build`
+(the `frontend` job in `.github/workflows/ci.yml`), so always rebuild and commit after
+changing anything under `frontend/src/`.
+
 Design: `docs/superpowers/specs/2026-09-15-core-pipeline-networking-design.md`,
 `docs/superpowers/specs/2026-09-17-local-ui-design.md` for the local UI.

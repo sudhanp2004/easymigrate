@@ -29,6 +29,11 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/easymigrate"]
+# The built frontend (src/easymigrate/ui/static/) is committed but, being build output,
+# would otherwise be an easy thing for a future .gitignore or a build-artifact filter
+# to exclude; `artifacts` guarantees it ships even though hatch treats it like
+# generated output (spec §6/§7, plan 4).
+artifacts = ["src/easymigrate/ui/static/**"]
 
 [dependency-groups]
 dev = [

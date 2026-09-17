@@ -52,6 +52,22 @@ def create_app(project: Project, security: Security) -> FastAPI:
     # can reach 127.0.0.1, foreign Host included.
     app = FastAPI(title="EasyMigrate", docs_url=None, redoc_url=None, openapi_url=None)
 
+    # A `StaticFiles(html=True)` mount at "/" (plan 4) fully matches every path for
+    # every method before Starlette's router ever gets to weigh method mismatches on a
+    # real route (breaking the /api 405 Allow header) or reaches the 404 handler below
+    # that does the origin/Host check — for the exact "/" path (a real file,
+    # `index.html`) the mount serves it directly and that check never runs at all. A
+    # request-level check here closes that regardless of how routing resolves.
+    @app.middleware("http")
+    async def _check_origin_first(request: Request, call_next):
+        try:
+            security.check_origin(request.headers.get("origin"), request.headers.get("host"))
+        except HTTPException as forbidden:
+            return JSONResponse(
+                status_code=forbidden.status_code, content={"detail": forbidden.detail}
+            )
+        return await call_next(request)
+
     # Job state lives on disk (spec §4): reap_stale runs once here, at app-factory
     # startup, so a record left "running" by a server that died mid-job is never shown
     # as live.
@@ -111,7 +127,21 @@ def create_app(project: Project, security: Security) -> FastAPI:
     job_routes.register(app, project, jobs, security)
     review_routes.register(app, project, security)
 
-    if index_html.exists():
-        app.mount("/", StaticFiles(directory=_STATIC_DIR, html=True), name="static")
+    # Scoped to "/assets" (Vite's hashed JS/CSS output directory), never "/": a mount at
+    # "/" would fully match every /api path too (Starlette's Mount.matches ignores
+    # method), silently swallowing both the origin check above the router and the
+    # router's own 405-with-Allow-header logic for a wrong-method request to a real
+    # route. `index.html` itself, and anything else at the static root (e.g.
+    # favicon.svg), are served through the 404 handler above instead.
+    assets_dir = _STATIC_DIR / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="static-assets")
+
+    @app.get("/favicon.svg", dependencies=[Depends(security.require_origin)])
+    def favicon():
+        favicon_path = _STATIC_DIR / "favicon.svg"
+        if not favicon_path.exists():
+            raise HTTPException(status_code=404, detail="not found")
+        return FileResponse(favicon_path)
 
     return app
