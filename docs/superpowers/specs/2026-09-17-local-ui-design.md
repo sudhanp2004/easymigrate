@@ -117,7 +117,8 @@ the log from the beginning, then tails it, then sends a terminal event carrying 
 status. Replaying from the start is deliberate: a user who opens the page late still sees
 the whole story.
 
-`.easymigrate/jobs/` is added to the gitignore rules the project already writes.
+`.easymigrate/jobs/` needs no new gitignore rule: `Project.ensure_gitignored` already
+ignores `.easymigrate/` wholesale.
 
 ## 5. HTTP surface
 

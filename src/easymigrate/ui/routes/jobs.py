@@ -42,26 +42,29 @@ def register(app: FastAPI, project: Project, jobs: JobStore, security: Security)
 
         return EventSourceResponse(_events(jobs, job_id))
 
-    async def _events(store: JobStore, job_id: str) -> AsyncIterator[dict]:
-        log_path = store.log_path(job_id)
-        position = 0
-        while True:
+
+async def _events(store: JobStore, job_id: str) -> AsyncIterator[dict]:
+    """The generator behind `GET /api/jobs/{id}/stream`, kept at module scope so it can
+    be driven directly in tests without going through a real HTTP connection."""
+    log_path = store.log_path(job_id)
+    position = 0
+    while True:
+        position, lines = _read_new_lines(log_path, position)
+        for line in lines:
+            yield {"event": "log", "data": line}
+
+        record = store.get(job_id)
+        if record.status != "running":
+            # The writer only flips the record to a terminal status after every log
+            # line has been written, but a line written between our read above and
+            # this check would otherwise be lost — read once more before closing.
             position, lines = _read_new_lines(log_path, position)
             for line in lines:
                 yield {"event": "log", "data": line}
+            yield {"event": "terminal", "data": record.model_dump_json()}
+            return
 
-            record = store.get(job_id)
-            if record.status != "running":
-                # The writer only flips the record to a terminal status after every log
-                # line has been written, but a line written between our read above and
-                # this check would otherwise be lost — read once more before closing.
-                position, lines = _read_new_lines(log_path, position)
-                for line in lines:
-                    yield {"event": "log", "data": line}
-                yield {"event": "terminal", "data": record.model_dump_json()}
-                return
-
-            await asyncio.sleep(_POLL_INTERVAL)
+        await asyncio.sleep(_POLL_INTERVAL)
 
 
 def _read_new_lines(log_path, position: int) -> tuple[int, list[str]]:
