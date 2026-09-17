@@ -17,6 +17,7 @@ from easymigrate.core.errors import EasyMigrateError
 from easymigrate.core.project import Project, StageInputMissing
 from easymigrate.ui.jobs import JobStore
 from easymigrate.ui.routes import jobs as job_routes
+from easymigrate.ui.routes import review as review_routes
 from easymigrate.ui.routes import stages as stage_routes
 from easymigrate.ui.security import Security
 from easymigrate.ui.state import project_state
@@ -108,6 +109,7 @@ def create_app(project: Project, security: Security) -> FastAPI:
 
     stage_routes.register(app, project, jobs, security)
     job_routes.register(app, project, jobs, security)
+    review_routes.register(app, project, security)
 
     if index_html.exists():
         app.mount("/", StaticFiles(directory=_STATIC_DIR, html=True), name="static")
