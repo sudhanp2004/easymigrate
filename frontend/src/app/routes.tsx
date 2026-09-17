@@ -1,7 +1,9 @@
 import { NavLink, Navigate, Route, Routes } from 'react-router-dom'
 import { AnalyzePage } from '../pages/AnalyzePage'
+import { ApplyPage } from '../pages/ApplyPage'
+import { PlanPage } from '../pages/PlanPage'
+import { ResolvePage } from '../pages/ResolvePage'
 import { ScanPage } from '../pages/ScanPage'
-import { StagePlaceholder } from '../pages/StagePlaceholder'
 import { StageGate } from './StageGate'
 import { STAGE_ORDER, firstIncompleteStage } from './stageGating'
 import { useProject } from './useProject'
@@ -44,7 +46,7 @@ export function AppRoutes() {
           path="/resolve"
           element={
             <StageGate stage="resolve" state={project.state}>
-              <StagePlaceholder title="Resolve" />
+              <ResolvePage project={project} />
             </StageGate>
           }
         />
@@ -52,7 +54,7 @@ export function AppRoutes() {
           path="/plan"
           element={
             <StageGate stage="plan" state={project.state}>
-              <StagePlaceholder title="Plan" />
+              <PlanPage project={project} />
             </StageGate>
           }
         />
@@ -60,7 +62,7 @@ export function AppRoutes() {
           path="/apply"
           element={
             <StageGate stage="apply" state={project.state}>
-              <StagePlaceholder title="Apply" />
+              <ApplyPage project={project} />
             </StageGate>
           }
         />

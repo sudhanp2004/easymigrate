@@ -138,3 +138,214 @@ td {
 .stage-blocked ul {
   padding-left: 1.25rem;
 }
+
+.blocked-banner {
+  border: 2px solid #b00020;
+  background: #fdecea;
+  border-radius: 4px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.blocked-banner h2,
+.blocked-banner h3 {
+  margin-top: 0;
+  color: #b00020;
+}
+
+.family-group {
+  margin-bottom: 2rem;
+}
+
+.family-group h2 {
+  text-transform: capitalize;
+  border-bottom: 1px solid #ddd;
+  padding-bottom: 0.25rem;
+}
+
+.difference {
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  padding: 1rem;
+  margin-bottom: 1rem;
+}
+
+.difference.needs-attention {
+  border-color: #b00020;
+  border-width: 2px;
+  background: #fffaf9;
+}
+
+.difference header {
+  display: flex;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.difference header h3 {
+  margin: 0;
+}
+
+.difference-key {
+  color: #777;
+  font-size: 0.85rem;
+}
+
+.difference .impact {
+  color: #333;
+}
+
+.difference .subjects {
+  color: #555;
+  font-size: 0.9rem;
+}
+
+.strategies {
+  border: none;
+  padding: 0;
+  margin: 0.75rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.strategies legend {
+  font-weight: 600;
+  padding: 0;
+}
+
+.strategy-option {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 0.25rem 0.75rem;
+  align-items: baseline;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  font-weight: normal;
+  cursor: pointer;
+}
+
+.strategy-option .strategy-effect,
+.strategy-option .risk-note {
+  grid-column: 2 / span 2;
+  margin: 0;
+  color: #444;
+  font-size: 0.9rem;
+}
+
+.strategy-option .risk-note {
+  color: #7a4b00;
+}
+
+.manual-tag {
+  color: #7a4b00;
+  font-style: normal;
+  font-weight: 600;
+}
+
+.risk-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.risk-badge-none {
+  background: #eee;
+  color: #555;
+}
+
+.risk-badge-low {
+  background: #e3f3e6;
+  color: #146c2e;
+}
+
+.risk-badge-medium {
+  background: #fff3cd;
+  color: #7a4b00;
+}
+
+.risk-badge-high {
+  background: #b00020;
+  color: #fff;
+}
+
+.strategy-option.risk-high {
+  border-color: #b00020;
+  border-width: 2px;
+  background: #fdecea;
+}
+
+.params {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed #ddd;
+}
+
+.params h4 {
+  margin: 0 0 0.5rem;
+}
+
+.param-field {
+  margin-bottom: 0.5rem;
+}
+
+.param-field label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-weight: 600;
+  max-width: 420px;
+}
+
+.param-field input {
+  font-size: 1rem;
+  padding: 0.4rem;
+  border: 1px solid #bbb;
+  border-radius: 4px;
+}
+
+.acknowledge {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-weight: 600;
+  margin-top: 0.75rem;
+}
+
+.checkbox-field {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 0.5rem !important;
+}
+
+.warning {
+  color: #7a4b00;
+  font-weight: 600;
+}
+
+.report .databases,
+.report .plan-summary {
+  margin: 1rem 0;
+}
+
+.database-row {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.5rem;
+}
+
+.database-row.world-open {
+  border-color: #b00020;
+  border-width: 2px;
+  background: #fdecea;
+}
+
+.database-row p {
+  margin: 0.15rem 0;
+}

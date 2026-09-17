@@ -8,6 +8,7 @@ than failing.
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
 from dataclasses import dataclass, field
@@ -71,6 +72,11 @@ class PlanSummaryView:
     changed_or_destroyed: list[str]
     plan_text_path: str
     findings: list[Finding] = field(default_factory=list)
+    # sha256 of plan.lock.json (spec §5): the UI's Apply page must send this back
+    # verbatim as `plan_fingerprint`, so a page that reviewed one plan cannot approve a
+    # different one that was regenerated since. Computed here, not read from a separate
+    # endpoint, because the report is already "what the user reads to decide".
+    fingerprint: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -79,6 +85,7 @@ class PlanSummaryView:
             "destroy": self.destroy,
             "changed_or_destroyed": self.changed_or_destroyed,
             "plan_text_path": self.plan_text_path,
+            "fingerprint": self.fingerprint,
         }
 
 
@@ -244,7 +251,14 @@ def _load_plan_summary(project: Project) -> PlanSummaryView | None:
         changed_or_destroyed=data["changed_or_destroyed"],
         plan_text_path=data["plan_text_path"],
         findings=[Finding.model_validate(f) for f in data.get("findings", [])],
+        fingerprint=_plan_fingerprint(project),
     )
+
+
+def _plan_fingerprint(project: Project) -> str | None:
+    if not project.plan_lock_path.exists():
+        return None
+    return hashlib.sha256(project.plan_lock_path.read_bytes()).hexdigest()
 
 
 def _load_superseded(project: Project) -> list[dict[str, Any]]:

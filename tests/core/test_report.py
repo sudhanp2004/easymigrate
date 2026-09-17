@@ -181,6 +181,41 @@ def test_generation_finding_from_plan_summary_appears_in_report(tmp_path):
     assert renamed[0].message in md
 
 
+def test_plan_fingerprint_matches_plan_lock_hash(tmp_path):
+    """The UI's Apply page reads `report.plan.fingerprint` and sends it back as
+    `plan_fingerprint` on `POST /api/apply`; it must match the server's own hash of
+    `plan.lock.json` (`easymigrate.ui.routes.stages.plan_fingerprint`) exactly."""
+    import hashlib
+
+    project = Project(tmp_path)
+    with mock_aws():
+        ec2 = source_for("aws").connect(region="ap-south-1").client("ec2")
+        ec2.create_vpc(CidrBlock="10.0.0.0/16")
+        scan(project, region="ap-south-1")
+    run_analyze(project)
+    run_resolve(project, accept_defaults=True)
+    run_plan(
+        project,
+        gcp_project="my-proj",
+        gcp_region=None,
+        confirm_bucket=lambda name: True,
+        gcp=_FakeGcp(),
+        tofu=_FakeTofu(),
+    )
+
+    report = build_report(project)
+
+    expected = hashlib.sha256(project.plan_lock_path.read_bytes()).hexdigest()
+    assert report.plan.fingerprint == expected
+    assert report.to_dict()["plan"]["fingerprint"] == expected
+
+
+def test_plan_fingerprint_is_none_before_plan(tmp_path):
+    project = _small_project(tmp_path)
+    report = build_report(project)
+    assert report.plan is None
+
+
 def test_info_findings_only_in_md_and_json_not_terminal(tmp_path):
     project = _small_project(tmp_path)
     report = build_report(project)
