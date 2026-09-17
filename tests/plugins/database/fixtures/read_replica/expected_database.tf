@@ -20,7 +20,8 @@ resource "google_service_networking_connection" "orders_vpc_psa" {
 # decision DB-TIER@database_instance:orders-db → nearest_custom_tier (default)
 # decision DB-PRIVATE-IP@database_instance:orders-db → psa_auto_range (default)
 # decision DB-STORAGE-AUTORESIZE@database_instance:orders-db → match_source (default)
-# decision DB-BACKUP-WINDOW@database_instance:orders-db → no_backups (default)
+# decision DB-BACKUP-WINDOW@database_instance:orders-db → nearest_equivalent (default)
+# decision DB-PITR@database_instance:orders-db → enable (default)
 # decision DB-REPLICA@database_instance:orders-db-replica → cloud_sql_replica (default)
 # decision DB-USERS@database_instance:orders-db → root_user_only (default)
 # decision DB-NAME-REUSE@database_instance:orders-db → keep (default)
@@ -43,8 +44,14 @@ resource "google_sql_database_instance" "orders_db" {
     }
 
     backup_configuration {
-      enabled                        = false
-      point_in_time_recovery_enabled = false
+      enabled                        = true
+      start_time                     = "02:00"
+      point_in_time_recovery_enabled = true
+      transaction_log_retention_days = 5
+
+      backup_retention_settings {
+        retained_backups = 5
+      }
     }
     ip_configuration {
       ipv4_enabled    = false

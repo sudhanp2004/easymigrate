@@ -245,6 +245,14 @@ depends on which of them was chosen — `public_ip_authorized_networks` consumes
 peers, and `drop_with_note` then removes the policy from generation. `DB-TIER` runs after
 `DB-ENGINE-VERSION`, because shared-core tiers are not available for every engine version.
 
+Cloud SQL also imposes two API-level prerequisites that no `DB-*` rule enforces on its own:
+`availability_type = REGIONAL` (from `DB-MULTI-AZ`) requires automated backups (`DB-BACKUP-WINDOW`),
+and a read replica (`DB-REPLICA`) requires its primary to have both automated backups
+(`DB-BACKUP-WINDOW`) and point-in-time recovery or binary logging (`DB-PITR`) enabled. Nothing in
+this spec forces one rule's default to satisfy another's, so the generator (§6) refuses to emit HCL
+for either invalid combination with `GenerationError`, rather than silently turning backups on and
+inventing a difference decision that was never presented to the user.
+
 ## 6. Generation
 
 `plugins/database/generate_gcp.py` reads only the resolved IR and its target hints, and declares

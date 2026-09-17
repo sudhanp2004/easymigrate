@@ -175,8 +175,8 @@
       "multi_az_cluster": false,
       "zone": "ap-south-1a",
       "backup": {
-        "retention_days": 0,
-        "window": null,
+        "retention_days": 5,
+        "window": "02:00-03:00",
         "copy_tags_to_snapshot": false
       },
       "maintenance": {

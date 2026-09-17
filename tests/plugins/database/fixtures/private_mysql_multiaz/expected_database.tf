@@ -22,7 +22,8 @@ resource "google_service_networking_connection" "app_vpc_psa" {
 # decision DB-MULTI-AZ@database_instance:private-mysql-db → regional_ha (default)
 # decision DB-STORAGE-AUTORESIZE@database_instance:private-mysql-db → match_source (default)
 # decision DB-STORAGE-TYPE@database_instance:private-mysql-db → pd_ssd (default)
-# decision DB-BACKUP-WINDOW@database_instance:private-mysql-db → no_backups (default)
+# decision DB-BACKUP-WINDOW@database_instance:private-mysql-db → nearest_equivalent (default)
+# decision DB-PITR@database_instance:private-mysql-db → enable (default)
 # decision DB-USERS@database_instance:private-mysql-db → root_user_only (default)
 # decision DB-NAME-REUSE@database_instance:private-mysql-db → keep (default)
 # instance class: db.m5.large
@@ -44,8 +45,14 @@ resource "google_sql_database_instance" "private_mysql_db" {
     }
 
     backup_configuration {
-      enabled            = false
-      binary_log_enabled = false
+      enabled                        = true
+      start_time                     = "02:00"
+      binary_log_enabled             = true
+      transaction_log_retention_days = 3
+
+      backup_retention_settings {
+        retained_backups = 3
+      }
     }
     ip_configuration {
       ipv4_enabled    = false
