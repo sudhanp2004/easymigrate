@@ -105,6 +105,13 @@ class Project:
         return self.dir / "superseded.json"
 
     @property
+    def jobs_dir(self) -> Path:
+        """`.easymigrate/jobs/`: one `<job-id>.json` record and `<job-id>.log` file per
+        background job (spec §4). Created on demand by whichever write touches it first,
+        matching every other path property here."""
+        return self.dir / "jobs"
+
+    @property
     def secrets_path(self) -> Path:
         """`.easymigrate/terraform/secrets.auto.tfvars.json`: OpenTofu auto-loads any
         `*.auto.tfvars.json` file in the working directory, so this needs no `-var-file`
