@@ -120,6 +120,14 @@ the whole story.
 `.easymigrate/jobs/` needs no new gitignore rule: `Project.ensure_gitignored` already
 ignores `.easymigrate/` wholesale.
 
+**Known limitation — PID reuse.** Reaping asks the OS whether the recorded pid is alive
+(`os.kill(pid, 0)`), which cannot distinguish "that process" from "an unrelated process the
+OS later gave the same pid". After a crash, a stale `running` record whose pid has been
+reused is never reaped, and the one-job rule then blocks every future job until the file is
+removed by hand. This is accepted deliberately: the failure mode is a stuck lock on a
+single-user local tool, which is far less severe than the double-`apply` hazard the liveness
+check exists to prevent. Comparing the process start time as well would close it.
+
 ## 5. HTTP surface
 
 All endpoints are under `/api`. Every mutating request requires the launch token (§6).
