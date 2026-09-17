@@ -196,7 +196,15 @@ def test_conflicting_psa_ranges_in_one_network_raises_naming_both():
 
 
 def test_replica_has_master_instance_no_backup_no_user_no_variable():
-    primary = _instance("primary", hints=_BASE_HINTS | {"public_ip": True})
+    primary = _instance(
+        "primary",
+        hints=_BASE_HINTS
+        | {
+            "public_ip": True,
+            "backup": {"enabled": True, "start_time": "03:00", "retained_backups": 7},
+            "pitr": {"enabled": True, "log_retention_days": 7},
+        },
+    )
     replica = _instance(
         "replica",
         role="read_replica",
@@ -220,6 +228,53 @@ def test_replica_has_master_instance_no_backup_no_user_no_variable():
     replica_block = out.split('resource "google_sql_database_instance" "replica"')[1]
     replica_block = replica_block.split("\n\nresource ")[0]
     assert "backup_configuration" not in replica_block
+
+
+# ---- I1: Cloud SQL API prerequisites for REGIONAL / read replicas -------------------
+
+
+def test_regional_availability_without_backups_raises_generation_error():
+    instance = _instance(
+        "ha",
+        publicly_accessible=True,
+        hints=_BASE_HINTS | {"public_ip": True, "availability_type": "REGIONAL"},
+    )
+    doc = IRDocument(source={}, objects=[instance])
+
+    with pytest.raises(GenerationError, match="database_instance:ha"):
+        generate(doc, _ctx())
+
+
+def test_regional_availability_with_backups_enabled_is_ok():
+    instance = _instance(
+        "ha_ok",
+        publicly_accessible=True,
+        hints=_BASE_HINTS
+        | {
+            "public_ip": True,
+            "availability_type": "REGIONAL",
+            "backup": {"enabled": True, "start_time": "03:00", "retained_backups": 7},
+        },
+    )
+    doc = IRDocument(source={}, objects=[instance])
+
+    # should not raise
+    generate(doc, _ctx())
+
+
+def test_replica_of_primary_without_backups_and_pitr_raises_generation_error():
+    primary = _instance("primary_nb", hints=_BASE_HINTS | {"public_ip": True})
+    replica = _instance(
+        "replica_nb",
+        role="read_replica",
+        replica_of="database_instance:primary_nb",
+        publicly_accessible=True,
+        hints=_BASE_HINTS | {"public_ip": True, "master_instance": "database_instance:primary_nb"},
+    )
+    doc = IRDocument(source={}, objects=[primary, replica])
+
+    with pytest.raises(GenerationError, match="database_instance:replica_nb"):
+        generate(doc, _ctx())
 
 
 def test_replica_of_external_primary_raises_generation_error():
@@ -485,3 +540,68 @@ def test_generator_variable_names_match_database_password_variables():
     for var_name in variables.values():
         assert f'variable "{var_name}"' in out
         assert f"var.{var_name}" in out
+
+
+# ---- C1: colliding ids must not miswire database/user to the wrong instance ---------
+
+
+def test_colliding_instance_ids_database_points_at_its_own_instance():
+    # "app-db" and "app.db" fold to the same Terraform label/slug ("app_db"). Only the
+    # second instance carries an `initial_database`, matching the review's
+    # reproduction: this is the shape that actually exposes C1, because
+    # `_generate_database`'s single `allocate()` call is what overwrites the shared
+    # label map — with both instances generating a database, the overwrite happens to
+    # land back on the correct value by coincidence.
+    first = _instance("app-db", publicly_accessible=True, hints=_BASE_HINTS | {"public_ip": True})
+    second = _instance(
+        "app.db",
+        publicly_accessible=True,
+        hints=_BASE_HINTS | {"public_ip": True},
+        initial_database="second_db",
+    )
+    doc = IRDocument(source={}, objects=[first, second])
+
+    out = generate(doc, _ctx()).render()
+
+    # Identify each instance's own Terraform label by its comment header (which quotes
+    # the source id), and its GCP name.
+    label_to_source = dict(
+        (label, src)
+        for src, label in re.findall(
+            r"# from AWS db (db-\S+) \(.*?\)\n.*?\n"
+            r'resource "google_sql_database_instance" "(\w+)"',
+            out,
+        )
+    )
+    assert len(label_to_source) == 2
+    second_label = next(label for label, src in label_to_source.items() if src == "db-app.db")
+
+    db_match = re.search(
+        r'resource "google_sql_database" "\w+" \{.*?instance\s*=\s*'
+        r"google_sql_database_instance\.(\w+)\.name",
+        out,
+        re.S,
+    )
+    assert db_match, "expected a google_sql_database for second_db"
+    referenced_label = db_match.group(1)
+
+    assert referenced_label == second_label, (
+        "google_sql_database for the second instance's initial_database must reference "
+        "the second instance, not whichever instance the colliding label allocation "
+        "happens to land on"
+    )
+
+
+def test_colliding_instance_ids_get_unique_password_variables():
+    first = _instance("app-db", publicly_accessible=True, hints=_BASE_HINTS | {"public_ip": True})
+    second = _instance("app.db", publicly_accessible=True, hints=_BASE_HINTS | {"public_ip": True})
+    doc = IRDocument(source={}, objects=[first, second])
+
+    variables = database_password_variables(doc)
+
+    assert len(variables) == 2
+    assert len(set(variables.values())) == 2, "colliding ids must not collapse to one variable"
+
+    out = _norm(generate(doc, _ctx()).render())
+    for var_name in variables.values():
+        assert out.count(f'variable "{var_name}"') == 1

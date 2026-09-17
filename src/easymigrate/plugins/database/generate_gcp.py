@@ -103,11 +103,18 @@ def database_password_variables(resolved: IRDocument) -> dict[str, str]:
     write secrets.auto.tfvars.json), so the two can never drift: both derive the name
     from the same pure function of the instance id alone."""
     variables: dict[str, str] = {}
+    taken: set[str] = set()
     for instance in _non_excluded_instances(resolved):
         if instance.role != "primary":
             continue
-        label = re.sub(r"[^a-z0-9_]+", "_", _slug(instance.id).lower()).strip("_")
-        variables[instance.id] = f"db_password_{label}"
+        base = re.sub(r"[^a-z0-9_]+", "_", _slug(instance.id).lower()).strip("_")
+        candidate = f"db_password_{base}"
+        n = 2
+        while candidate in taken:
+            candidate = f"db_password_{base}_{n}"
+            n += 1
+        taken.add(candidate)
+        variables[instance.id] = candidate
     return variables
 
 
@@ -127,6 +134,7 @@ def generate(resolved: IRDocument, ctx: GenerateContext) -> HclFile:
     decided_by = ctx.decided_by
 
     _check_replica_and_param_contracts(instances)
+    _check_ha_and_replica_backup_prerequisites(instances)
     psa_ranges = _psa_ranges_by_network(instances)
     _generate_psa(file, net_names, psa_ranges)
 
@@ -243,6 +251,54 @@ def _check_replica_and_param_contracts(instances: list[DatabaseInstance]) -> Non
             raise GenerationError(
                 f"{instance.id} has non-empty parameters but no target_hints['database_flags'] "
                 "or target_hints['dropped_parameters']; DB-PARAM-FLAGS should have run"
+            )
+
+
+def _check_ha_and_replica_backup_prerequisites(instances: list[DatabaseInstance]) -> None:
+    """Cloud SQL API prerequisites that `tofu validate` never checks (schema-only), so a
+    difference-rule combination that violates them would otherwise only fail at `apply`,
+    after the user has approved (I1). This is a guard on the generator's own contract,
+    not a difference decision: it never invents a choice (e.g. silently turning backups
+    on) — it refuses to generate HCL for a combination the rules should never have
+    produced together.
+
+    - `availability_type = REGIONAL` requires automated backups (DB-MULTI-AZ vs
+      DB-BACKUP-WINDOW).
+    - A read replica's primary requires automated backups plus point-in-time recovery
+      (Postgres) or binary logging (MySQL) (DB-REPLICA vs DB-BACKUP-WINDOW/DB-PITR).
+    """
+    by_id = {instance.id: instance for instance in instances}
+
+    for instance in instances:
+        if instance.role != "primary":
+            continue
+        availability = instance.target_hints.get("availability_type", "ZONAL")
+        backup = instance.target_hints.get("backup", {"enabled": False})
+        if availability == "REGIONAL" and not backup.get("enabled"):
+            raise GenerationError(
+                f"{instance.id} has target_hints['availability_type'] == 'REGIONAL' but "
+                "target_hints['backup']['enabled'] is not True; Cloud SQL rejects a "
+                "regional (HA) instance without automated backups. DB-MULTI-AZ and "
+                "DB-BACKUP-WINDOW resolved to an invalid combination for this instance."
+            )
+
+    for instance in instances:
+        if instance.role != "read_replica":
+            continue
+        primary_id = instance.target_hints.get("master_instance")
+        primary = by_id.get(primary_id)
+        if primary is None:
+            continue  # _generate_instance raises its own GenerationError for this
+        backup = primary.target_hints.get("backup", {"enabled": False})
+        pitr = primary.target_hints.get("pitr", {"enabled": False})
+        if not backup.get("enabled") or not pitr.get("enabled"):
+            raise GenerationError(
+                f"{instance.id} is a read replica of {primary_id}, but the primary's "
+                "target_hints['backup']['enabled'] and target_hints['pitr']['enabled'] "
+                "are not both True; Cloud SQL requires automated backups plus "
+                "point-in-time recovery (Postgres) or binary logging (MySQL) on a "
+                "primary before it can have a read replica. DB-REPLICA and "
+                "DB-BACKUP-WINDOW/DB-PITR resolved to an invalid combination."
             )
 
 
@@ -376,7 +432,12 @@ def _generate_backup_configuration(settings, instance) -> None:
 
 
 def _generate_database(file: HclFile, names: _Names, instance: DatabaseInstance) -> None:
-    label, _, _ = names.allocate("google_sql_database", instance.id)
+    # Use the label allocator directly, not `_Names.allocate`: that method writes into
+    # the shared `names.label`/`names.name` maps keyed only by ir_id, so a second call
+    # for the same instance id (this is a different resource type, `google_sql_database`,
+    # not `google_sql_database_instance`) would silently overwrite the instance's own
+    # allocated label — corrupting every reference to it made after this point (C1).
+    label = names.tf.allocate("google_sql_database", instance.id)
     block = file.block("resource", "google_sql_database", label)
     block.attr("name", instance.initial_database)
     block.attr("instance", Ref(f"google_sql_database_instance.{names.label[instance.id]}.name"))
@@ -385,7 +446,9 @@ def _generate_database(file: HclFile, names: _Names, instance: DatabaseInstance)
 def _generate_user(
     file: HclFile, names: _Names, instance: DatabaseInstance, password_vars: dict[str, str]
 ) -> None:
-    label, _, _ = names.allocate("google_sql_user", instance.id)
+    # See _generate_database: allocate the google_sql_user label directly, never via
+    # `_Names.allocate`, so the instance's own label/name entries are never overwritten.
+    label = names.tf.allocate("google_sql_user", instance.id)
     username = instance.master_username or _DEFAULT_USERNAME[instance.engine]
     block = file.block("resource", "google_sql_user", label)
     block.attr("name", username)
