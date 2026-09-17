@@ -9,7 +9,7 @@ describe('bootstrapToken', () => {
   })
 
   it('stores the token and strips it from the URL', () => {
-    window.history.replaceState(null, '', '/?t=abc123&foo=bar')
+    window.history.replaceState(null, '', '/?token=abc123&foo=bar')
 
     const result = bootstrapToken()
 
