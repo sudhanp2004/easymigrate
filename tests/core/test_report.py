@@ -12,7 +12,15 @@ from easymigrate.core.pipeline import resolve as run_resolve
 from easymigrate.core.pipeline import scan
 from easymigrate.core.project import Project
 from easymigrate.core.registry import source_for
-from easymigrate.core.report import build_report, write_report
+from easymigrate.core.report import Report, _database_rows, build_report, write_report
+from easymigrate.ir.base import IRDocument, SourceRef
+from easymigrate.ir.database import (
+    DatabaseInstance,
+    DbBackup,
+    DbCompute,
+    DbNetwork,
+    DbStorage,
+)
 
 
 class _FakeGcp:
@@ -184,3 +192,161 @@ def test_info_findings_only_in_md_and_json_not_terminal(tmp_path):
     md = report.to_markdown()
     for finding in report.info:
         assert finding.message in md
+
+
+# --- Databases section (spec 2 §7) --------------------------------------------------
+
+
+def _instance(name: str = "db", **overrides) -> DatabaseInstance:
+    defaults = dict(
+        id=f"database_instance:{name}",
+        name=name,
+        engine="postgres",
+        engine_version="15.5",
+        compute=DbCompute(class_name="db.t3.micro", vcpus=2, memory_mib=1024),
+        storage=DbStorage(size_gib=20, type="gp2"),
+        network=DbNetwork(port=5432),
+        source=SourceRef(cloud="aws", type="rds:db", id=name, region="ap-south-1"),
+    )
+    defaults.update(overrides)
+    return DatabaseInstance(**defaults)
+
+
+def _doc(*instances: DatabaseInstance) -> IRDocument:
+    return IRDocument(source={"cloud": "aws"}, objects=list(instances))
+
+
+def test_database_row_reports_tier_and_its_source():
+    row = _database_rows(_doc(_instance(target_hints={"tier": "db-f1-micro"})))[0]
+    assert row.tier == "db-f1-micro"
+    assert row.tier_source == "db.t3.micro, 2 vCPU, 1024 MiB"
+
+
+def test_database_row_reports_unknown_sizing_rather_than_inventing_it():
+    unsized = DbCompute(class_name="db.serverless")
+    row = _database_rows(_doc(_instance(compute=unsized)))[0]
+    assert row.tier_source == "db.serverless, size unknown"
+    assert row.tier == "not decided"
+
+
+def test_private_connectivity_names_the_psa_range_and_network():
+    row = _database_rows(
+        _doc(
+            _instance(
+                target_hints={
+                    "private_network": "network:prod-vpc",
+                    "psa": {"range": "10.64.0.0", "prefix_length": 24},
+                }
+            )
+        )
+    )[0]
+    assert "private IP only" in row.connectivity
+    assert "10.64.0.0/24" in row.connectivity
+    assert "prod-vpc" in row.connectivity
+    assert row.open_to_world is False
+
+
+def test_public_connectivity_lists_the_authorized_networks():
+    row = _database_rows(
+        _doc(_instance(target_hints={"public_ip": True, "authorized_networks": ["10.0.0.0/16"]}))
+    )[0]
+    assert row.connectivity == "public IP, reachable from 10.0.0.0/16"
+    assert row.open_to_world is False
+
+
+def test_world_open_database_is_flagged_and_shouted_about_in_markdown():
+    report = Report(
+        source="aws",
+        target="gcp",
+        coverage={},
+        databases=_database_rows(
+            _doc(_instance(target_hints={"public_ip": True, "authorized_networks": ["0.0.0.0/0"]}))
+        ),
+    )
+    assert report.databases[0].open_to_world is True
+    markdown = report.to_markdown()
+    assert "reachable from the whole internet" in markdown
+
+
+def test_excluded_instance_says_it_is_not_migrated_and_why():
+    row = _database_rows(_doc(_instance(excluded="DB-TIER: sizing unknown")))[0]
+    assert row.connectivity == "not migrated — DB-TIER: sizing unknown"
+
+
+def test_backup_clamp_is_stated_not_hidden():
+    row = _database_rows(
+        _doc(
+            _instance(
+                backup=DbBackup(retention_days=400, window="03:00-04:00"),
+                target_hints={
+                    "backup": {"enabled": True, "retained_backups": 365, "start_time": "03:00"}
+                },
+            )
+        )
+    )[0]
+    assert "365 backups retained" in row.backups
+    assert "clamped from the source's 400 days" in row.backups
+
+
+def test_backups_off_matches_the_source_wording():
+    row = _database_rows(_doc(_instance(target_hints={"backup": {"enabled": False}})))[0]
+    assert row.backups == "no automated backups, matching the source"
+
+
+def test_pitr_reports_the_shorter_cloud_sql_log_retention():
+    row = _database_rows(
+        _doc(
+            _instance(
+                backup=DbBackup(retention_days=35),
+                target_hints={"pitr": {"enabled": True, "log_retention_days": 7}},
+            )
+        )
+    )[0]
+    assert "keeping 7 days" in row.pitr
+    assert "the source kept 35 days" in row.pitr
+
+
+def test_dropped_parameters_are_listed_with_their_values_in_markdown():
+    report = Report(
+        source="aws",
+        target="gcp",
+        coverage={},
+        databases=_database_rows(
+            _doc(
+                _instance(
+                    target_hints={
+                        "dropped_parameters": {"shared_buffers": "{DBInstanceClassMemory/32768}"}
+                    }
+                )
+            )
+        ),
+    )
+    markdown = report.to_markdown()
+    assert "shared_buffers = {DBInstanceClassMemory/32768}" in markdown
+
+
+def test_databases_section_carries_the_password_and_users_warnings():
+    report = Report(
+        source="aws", target="gcp", coverage={}, databases=_database_rows(_doc(_instance()))
+    )
+    markdown = report.to_markdown()
+    assert "Rotate it after cutover" in markdown
+    assert "Only the master user was migrated" in markdown
+
+
+def test_no_databases_means_no_databases_section():
+    report = Report(source="aws", target="gcp", coverage={})
+    assert "## Databases" not in report.to_markdown()
+
+
+def test_report_json_carries_the_database_facts():
+    report = Report(
+        source="aws",
+        target="gcp",
+        coverage={},
+        databases=_database_rows(_doc(_instance(target_hints={"tier": "db-f1-micro"}))),
+    )
+    data = report.to_dict()["databases"][0]
+    assert data["id"] == "database_instance:db"
+    assert data["tier"] == "db-f1-micro"
+    assert data["open_to_world"] is False

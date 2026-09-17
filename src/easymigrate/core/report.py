@@ -17,6 +17,7 @@ from easymigrate.differences.decisions import from_yaml
 from easymigrate.differences.engine import catalogue
 from easymigrate.differences.model import DifferenceRule
 from easymigrate.ir.base import Finding, IRDocument
+from easymigrate.ir.database import DatabaseInstance
 
 _SECTION_ORDER = [
     "Scan gaps",
@@ -33,6 +34,32 @@ class DecisionRow:
     strategy: str
     decided_by: str
     risk: str
+
+
+@dataclass(frozen=True)
+class DatabaseRow:
+    """What `plan` decided for one Cloud SQL instance, in the user's terms (spec §7)."""
+
+    id: str
+    tier: str
+    tier_source: str
+    connectivity: str
+    open_to_world: bool
+    backups: str
+    pitr: str
+    dropped_parameters: dict[str, str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "tier": self.tier,
+            "tier_source": self.tier_source,
+            "connectivity": self.connectivity,
+            "open_to_world": self.open_to_world,
+            "backups": self.backups,
+            "pitr": self.pitr,
+            "dropped_parameters": dict(self.dropped_parameters),
+        }
 
 
 @dataclass(frozen=True)
@@ -65,6 +92,7 @@ class Report:
     not_supported: list[Finding] = field(default_factory=list)
     translated: dict[str, int] = field(default_factory=dict)
     info: list[Finding] = field(default_factory=list)
+    databases: list[DatabaseRow] = field(default_factory=list)
     plan: PlanSummaryView | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -81,6 +109,7 @@ class Report:
             "not_supported": [f.model_dump(mode="json") for f in self.not_supported],
             "translated": self.translated,
             "info": [f.model_dump(mode="json") for f in self.info],
+            "databases": [d.to_dict() for d in self.databases],
             "plan": self.plan.to_dict() if self.plan else None,
         }
 
@@ -140,6 +169,36 @@ class Report:
             lines.append("Nothing translated yet.")
         lines.append("")
 
+        if self.databases:
+            lines.append("## Databases")
+            for db in self.databases:
+                lines.append(f"### {db.id}")
+                lines.append(f"- Tier: {db.tier} (from {db.tier_source})")
+                lines.append(f"- Connectivity: {db.connectivity}")
+                if db.open_to_world:
+                    lines.append(
+                        "- **This database is reachable from the whole internet "
+                        "(0.0.0.0/0), as it was on AWS.**"
+                    )
+                lines.append(f"- Backups: {db.backups}")
+                lines.append(f"- Point-in-time recovery: {db.pitr}")
+                if db.dropped_parameters:
+                    lines.append("- Parameters with no Cloud SQL equivalent, dropped:")
+                    for name in sorted(db.dropped_parameters):
+                        lines.append(f"  - {name} = {db.dropped_parameters[name]}")
+            lines.append("")
+            lines.append(
+                "The database password you supplied is stored in the Terraform state in your "
+                "GCS bucket and in .easymigrate/terraform/secrets.auto.tfvars.json. Rotate it "
+                "after cutover if that is not acceptable."
+            )
+            lines.append(
+                "Only the master user was migrated. Other database users, their grants, "
+                "schemas and extensions live inside the database itself, which a read-only "
+                "AWS scan cannot see \u2014 recreate them after cutover."
+            )
+            lines.append("")
+
         if self.plan is not None:
             lines.append("## Plan summary")
             lines.append(
@@ -193,6 +252,87 @@ def _load_superseded(project: Project) -> list[dict[str, Any]]:
     return json.loads(project.superseded_path.read_text(encoding="utf-8"))
 
 
+def _load_resolved_ir(project: Project) -> IRDocument | None:
+    if not project.resolved_ir_path.exists():
+        return None
+    return project.read_ir(project.resolved_ir_path, produced_by="plan")
+
+
+def _connectivity(instance: DatabaseInstance) -> tuple[str, bool]:
+    """How the migrated instance will be reachable, and whether that is from anywhere."""
+    if instance.excluded is not None:
+        return f"not migrated \u2014 {instance.excluded}", False
+    hints = instance.target_hints
+    psa = hints.get("psa")
+    if hints.get("private_network") and psa:
+        network = str(hints["private_network"]).split(":", 1)[-1]
+        return (
+            f"private IP only, over the {psa['range']}/{psa['prefix_length']} private "
+            f"services access range on {network}",
+            False,
+        )
+    if hints.get("public_ip"):
+        networks = list(hints.get("authorized_networks") or [])
+        open_to_world = "0.0.0.0/0" in networks
+        listed = ", ".join(networks) if networks else "no authorized networks, so unreachable"
+        return f"public IP, reachable from {listed}", open_to_world
+    return "not generated: no connectivity decision was applied", False
+
+
+def _backups(instance: DatabaseInstance) -> str:
+    backup = instance.target_hints.get("backup")
+    if not backup or not backup.get("enabled"):
+        return "no automated backups, matching the source"
+    retained = backup.get("retained_backups")
+    text = f"{retained} backups retained, taken daily at {backup.get('start_time')} UTC"
+    if instance.backup.retention_days and retained != instance.backup.retention_days:
+        text += (
+            f" (clamped from the source's {instance.backup.retention_days} days to what "
+            "Cloud SQL allows)"
+        )
+    return text
+
+
+def _pitr(instance: DatabaseInstance) -> str:
+    pitr = instance.target_hints.get("pitr")
+    if not pitr or not pitr.get("enabled"):
+        return "off"
+    days = pitr.get("log_retention_days")
+    text = f"on, keeping {days} days of transaction logs"
+    if instance.backup.retention_days and days != instance.backup.retention_days:
+        text += (
+            f" (the source kept {instance.backup.retention_days} days; Cloud SQL's maximum "
+            "is shorter)"
+        )
+    return text
+
+
+def _database_rows(resolved: IRDocument | None) -> list[DatabaseRow]:
+    if resolved is None:
+        return []
+    rows: list[DatabaseRow] = []
+    for instance in resolved.of_kind(DatabaseInstance):
+        compute = instance.compute
+        if compute.vcpus is not None and compute.memory_mib is not None:
+            source = f"{compute.class_name}, {compute.vcpus} vCPU, {compute.memory_mib} MiB"
+        else:
+            source = f"{compute.class_name}, size unknown"
+        connectivity, open_to_world = _connectivity(instance)
+        rows.append(
+            DatabaseRow(
+                id=instance.id,
+                tier=str(instance.target_hints.get("tier", "not decided")),
+                tier_source=source,
+                connectivity=connectivity,
+                open_to_world=open_to_world,
+                backups=_backups(instance),
+                pitr=_pitr(instance),
+                dropped_parameters=dict(instance.target_hints.get("dropped_parameters") or {}),
+            )
+        )
+    return rows
+
+
 def build_report(project: Project) -> Report:
     config = project.load_config() if project.config_path.exists() else None
     source = config.source.cloud if config and config.source else None
@@ -201,6 +341,7 @@ def build_report(project: Project) -> Report:
     ir = _load_ir(project)
     decisions = _load_decisions(project)
     plan_summary = _load_plan_summary(project)
+    databases = _database_rows(_load_resolved_ir(project))
     superseded = _load_superseded(project)
 
     rules_by_id: dict[str, DifferenceRule] = {rule.id: rule for rule in catalogue()}
@@ -298,6 +439,7 @@ def build_report(project: Project) -> Report:
         not_supported=not_supported,
         translated=translated,
         info=info,
+        databases=databases,
         plan=plan_summary,
     )
 
