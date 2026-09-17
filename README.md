@@ -41,10 +41,26 @@ Permissions `scan` needs: `ec2:DescribeVpcs`, `ec2:DescribeVpcAttribute`, `ec2:D
 
 `plan` and `apply` need GCP Application Default Credentials (`gcloud auth application-default login`) for a principal with, on the destination project: `roles/compute.networkAdmin` (create the generated networking resources) and `roles/storage.admin` (create and use the `<project>-easymigrate-tfstate` state bucket), plus `roles/cloudsql.admin` and `roles/servicenetworking.networksAdmin` when the scan found RDS instances. EasyMigrate runs OpenTofu inside the application; you never install or invoke `tofu` yourself.
 
+## Local UI (preview)
+
+    uv sync --extra ui
+    easymigrate ui
+
+Starts a local web server that drives the same five stages as the CLI, in a browser,
+against the `.easymigrate/` folder in the current directory — the CLI and UI can be used
+interchangeably on one project. It binds `127.0.0.1` only (there is no flag to change
+this: exposing it on a network would let anyone on it apply infrastructure), opens the
+browser at a URL carrying a per-run token, and requires that token on every mutating
+request so a page from another site can never drive it. Use `--port` to pick a fixed
+port instead of an ephemeral one, and `--no-browser` to print the URL without opening it.
+`easymigrate ui` requires the optional `ui` extra (FastAPI, uvicorn); every other command
+works without it.
+
 ## Development
 
     uv sync
     uv run pytest
     uv run ruff check . && uv run ruff format --check .
 
-Design: `docs/superpowers/specs/2026-09-15-core-pipeline-networking-design.md`
+Design: `docs/superpowers/specs/2026-09-15-core-pipeline-networking-design.md`,
+`docs/superpowers/specs/2026-09-17-local-ui-design.md` for the local UI.

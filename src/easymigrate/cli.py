@@ -1,7 +1,9 @@
 """Command-line entry point. Commands only call `easymigrate.core`."""
 
 import json
+import socket
 import sys
+import webbrowser
 from collections import Counter
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
@@ -396,3 +398,52 @@ def apply() -> None:
             f"[yellow]Decisions that no longer applied this run "
             f"({len(result.summary.superseded)})[/yellow]"
         )
+
+
+def _serve(fastapi_app: Any, sock: socket.socket) -> None:  # pragma: no cover - real server loop
+    import uvicorn
+
+    config = uvicorn.Config(fastapi_app, log_level="warning")
+    uvicorn.Server(config).run(sockets=[sock])
+
+
+def _bind_loopback_socket(port: int) -> socket.socket:
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        sock.bind(("127.0.0.1", port))
+    except OSError:
+        sock.close()
+        _fail(f"port {port} is already in use" if port else "could not bind a free port")
+    sock.listen()
+    return sock
+
+
+@app.command()
+def ui(
+    port: int = typer.Option(0, "--port", help="Port to bind; 0 (default) picks a free port."),
+    no_browser: bool = typer.Option(
+        False, "--no-browser", help="Don't open the browser automatically."
+    ),
+) -> None:
+    """Start the local review UI on 127.0.0.1 (never a network-exposed host)."""
+    try:
+        from easymigrate.ui import create_app
+        from easymigrate.ui.security import Security, new_token
+    except ImportError:
+        _fail(r'the ui extra is not installed; run `uv tool install "easymigrate\[ui]"`')
+
+    project = Project(Path.cwd())
+    sock = _bind_loopback_socket(port)
+    bound_port = sock.getsockname()[1]
+
+    token = new_token()
+    security = Security(token=token, host="127.0.0.1", port=bound_port)
+    fastapi_app = create_app(project, security)
+
+    url = f"http://127.0.0.1:{bound_port}/?token={token}"
+    console.print(f"EasyMigrate UI: {url}", markup=False)
+    if not no_browser:
+        webbrowser.open(url)
+
+    _serve(fastapi_app, sock)

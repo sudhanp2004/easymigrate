@@ -40,10 +40,15 @@ def violations(module: str, imports: set[str]) -> list[str]:
 
     if module == "easymigrate.cli":
         for name in internal:
-            if name not in ("easymigrate", "easymigrate.__version__") and not _within(
-                name, "easymigrate.core"
+            # `ui` is allowed here only because the CLI imports it lazily, inside the `ui`
+            # command function, never at module scope; test_app.py's
+            # test_cli_does_not_import_ui_at_module_scope enforces that separately.
+            if (
+                name not in ("easymigrate", "easymigrate.__version__")
+                and not _within(name, "easymigrate.core")
+                and not _within(name, "easymigrate.ui")
             ):
-                bad(name, "cli may only import easymigrate.core")
+                bad(name, "cli may only import easymigrate.core (or easymigrate.ui, lazily)")
     if _within(module, "easymigrate.core"):
         for name in imports:
             if any(_within(name, sdk) for sdk in CLOUD_SDKS):
@@ -64,6 +69,17 @@ def violations(module: str, imports: set[str]) -> list[str]:
         for name in internal:
             if not any(_within(name, prefix) for prefix in (*allowed, "easymigrate.plugins")):
                 bad(name, "plugins may import only ir, providers and core.plugin")
+    if _within(module, "easymigrate.ui"):
+        for name in imports:
+            if any(_within(name, sdk) for sdk in CLOUD_SDKS):
+                bad(name, "ui must not import cloud SDKs")
+        for name in internal:
+            if (
+                _within(name, "easymigrate.plugins")
+                or _within(name, "easymigrate.providers")
+                or _within(name, "easymigrate.engine")
+            ):
+                bad(name, "ui must not import plugin internals")
     if _within(module, "easymigrate.differences"):
         for name in internal:
             if not (_within(name, "easymigrate.ir") or _within(name, "easymigrate.differences")):
@@ -107,6 +123,8 @@ def test_source_tree_follows_dependency_rules():
         ("easymigrate.cli", "from easymigrate.core.pipeline import scan", True),
         ("easymigrate.cli", "from easymigrate import __version__", True),
         ("easymigrate.cli", "from easymigrate.ir import IRDocument", False),
+        ("easymigrate.cli", "from easymigrate.ui import create_app", True),
+        ("easymigrate.cli", "from easymigrate.plugins.network import NetworkPlugin", False),
         (
             "easymigrate.plugins.network.normalize",
             "from easymigrate.core.plugin import Snapshot",
@@ -142,6 +160,16 @@ def test_source_tree_follows_dependency_rules():
             "from easymigrate.engine.tofu import ensure_tofu",
             False,
         ),
+        ("easymigrate.ui.app", "import boto3", False),
+        ("easymigrate.ui.app", "from google.cloud import storage", False),
+        (
+            "easymigrate.ui.app",
+            "from easymigrate.plugins.network import NetworkPlugin",
+            False,
+        ),
+        ("easymigrate.ui.app", "from easymigrate.providers.aws import source", False),
+        ("easymigrate.ui.app", "from easymigrate.engine.tofu import ensure_tofu", False),
+        ("easymigrate.ui.app", "from easymigrate.core.project import Project", True),
     ],
 )
 def test_rule_checker(module, source, allowed):
