@@ -268,6 +268,23 @@ def test_world_open_database_is_flagged_and_shouted_about_in_markdown():
     assert "reachable from the whole internet" in markdown
 
 
+def test_ipv6_world_open_database_is_flagged_and_shouted_about_in_markdown():
+    """I4: `::/0` in authorized_networks is exactly as open to the world as
+    `0.0.0.0/0`; an exact string match on the IPv4 form alone would silently under-flag
+    it (open_to_world False, no bold warning) instead of raising the alarm."""
+    report = Report(
+        source="aws",
+        target="gcp",
+        coverage={},
+        databases=_database_rows(
+            _doc(_instance(target_hints={"public_ip": True, "authorized_networks": ["::/0"]}))
+        ),
+    )
+    assert report.databases[0].open_to_world is True
+    markdown = report.to_markdown()
+    assert "reachable from the whole internet" in markdown
+
+
 def test_excluded_instance_says_it_is_not_migrated_and_why():
     row = _database_rows(_doc(_instance(excluded="DB-TIER: sizing unknown")))[0]
     assert row.connectivity == "not migrated — DB-TIER: sizing unknown"
@@ -304,6 +321,47 @@ def test_pitr_reports_the_shorter_cloud_sql_log_retention():
     )[0]
     assert "keeping 7 days" in row.pitr
     assert "the source kept 35 days" in row.pitr
+
+
+def test_replica_backups_do_not_overstate_protection_it_does_not_have():
+    # DB-BACKUP-WINDOW/DB-PITR detect replicas too (I3), but generate_gcp never emits a
+    # backup_configuration block for a replica: the report must not claim retained
+    # backups a replica's generated HCL will not have.
+    rows = _database_rows(
+        _doc(
+            _instance("primary"),
+            _instance(
+                "replica",
+                role="read_replica",
+                replica_of="database_instance:primary",
+                backup=DbBackup(retention_days=7),
+                target_hints={
+                    "backup": {"enabled": True, "retained_backups": 7, "start_time": "03:00"}
+                },
+            ),
+        )
+    )
+    row = next(r for r in rows if r.id == "database_instance:replica")
+    assert "backups retained" not in row.backups
+    assert "inherited from the primary" in row.backups
+
+
+def test_replica_pitr_does_not_overstate_protection_it_does_not_have():
+    rows = _database_rows(
+        _doc(
+            _instance("primary"),
+            _instance(
+                "replica",
+                role="read_replica",
+                replica_of="database_instance:primary",
+                backup=DbBackup(retention_days=7),
+                target_hints={"pitr": {"enabled": True, "log_retention_days": 7}},
+            ),
+        )
+    )
+    row = next(r for r in rows if r.id == "database_instance:replica")
+    assert "keeping 7 days" not in row.pitr
+    assert "inherited from the primary" in row.pitr
 
 
 def test_dropped_parameters_are_listed_with_their_values_in_markdown():

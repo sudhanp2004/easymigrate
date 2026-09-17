@@ -8,6 +8,7 @@ than failing.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 from dataclasses import dataclass, field
 from typing import Any
@@ -258,6 +259,17 @@ def _load_resolved_ir(project: Project) -> IRDocument | None:
     return project.read_ir(project.resolved_ir_path, produced_by="plan")
 
 
+def _is_world_cidr(cidr: str) -> bool:
+    """True for a CIDR that covers the whole IPv4 or IPv6 address space (I4). An exact
+    match on `"0.0.0.0/0"` misses `::/0`, which AWS's normalized `Ipv6Ranges` produce
+    just as readily and which is exactly as open to the world."""
+    try:
+        network = ipaddress.ip_network(cidr, strict=False)
+    except ValueError:
+        return False
+    return network.prefixlen == 0
+
+
 def _connectivity(instance: DatabaseInstance) -> tuple[str, bool]:
     """How the migrated instance will be reachable, and whether that is from anywhere."""
     if instance.excluded is not None:
@@ -273,13 +285,17 @@ def _connectivity(instance: DatabaseInstance) -> tuple[str, bool]:
         )
     if hints.get("public_ip"):
         networks = list(hints.get("authorized_networks") or [])
-        open_to_world = "0.0.0.0/0" in networks
+        open_to_world = any(_is_world_cidr(cidr) for cidr in networks)
         listed = ", ".join(networks) if networks else "no authorized networks, so unreachable"
         return f"public IP, reachable from {listed}", open_to_world
     return "not generated: no connectivity decision was applied", False
 
 
 def _backups(instance: DatabaseInstance) -> str:
+    if instance.role == "read_replica":
+        return (
+            "inherited from the primary; a Cloud SQL replica has no backup configuration of its own"
+        )
     backup = instance.target_hints.get("backup")
     if not backup or not backup.get("enabled"):
         return "no automated backups, matching the source"
@@ -294,6 +310,10 @@ def _backups(instance: DatabaseInstance) -> str:
 
 
 def _pitr(instance: DatabaseInstance) -> str:
+    if instance.role == "read_replica":
+        return (
+            "inherited from the primary; a Cloud SQL replica has no PITR configuration of its own"
+        )
     pitr = instance.target_hints.get("pitr")
     if not pitr or not pitr.get("enabled"):
         return "off"
