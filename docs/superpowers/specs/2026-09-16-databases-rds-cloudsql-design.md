@@ -323,6 +323,27 @@ Mirrors spec 1 §7.
   alongside the existing public Postgres, so both connectivity paths are exercised, then everything
   is destroyed. Cloud SQL is billed per hour, so this runs once, deliberately.
 
+## 8b. Proven live (2026-09-17)
+
+A full `scan → analyze → resolve → plan → apply` ran against a real AWS account and
+`easymigrate-test-30319`: 20 GCP resources created, both engines RUNNABLE, private IP
+`10.64.0.3` inside the allocated `10.64.0.0/24` PSA range with an ACTIVE
+`servicenetworking` peering, MySQL `max_connections` translated and
+`max_heap_table_size` dropped as unsupported. Both clouds torn down afterwards.
+
+Two things the run exposed that the test suite could not:
+
+- **Real RDS reports `StorageThroughput: 0` on `gp2`** rather than omitting it, which the
+  IR rejects (§4.2 allows provisioned values only on gp3/io1/io2). `analyze` failed
+  outright. Fixed by treating 0 as absent. Every hand-built fixture had omitted the field,
+  so no test caught it — a reminder that fixtures encode our idea of an API response.
+- **A security group whose ingress references another security group yields no authorized
+  networks**, so a `publicly_accessible` RDS instance migrates to a Cloud SQL instance with
+  a public IP and an empty allow-list — reachable by nobody. Confirmed by connecting to the
+  real IP and being refused. The report states this honestly but as a neutral line; it
+  belongs under "Needs your action", and `DB-PUBLIC-ACCESS` should treat "public with zero
+  derivable authorized networks" as its own high-risk difference. **Open.**
+
 ## 9. Done when
 
 - `scan → analyze → resolve → plan → apply` migrates the testbed's Postgres and MySQL instances into

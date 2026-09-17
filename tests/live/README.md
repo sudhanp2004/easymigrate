@@ -82,13 +82,30 @@ Private Services Access connection.
 ### Teardown — part of the procedure, not an afterthought
 
 1. Delete the verification VM, if you made one.
-2. `tofu destroy` in `.easymigrate/terraform`. **Expect this to be slow:** removing a
-   service networking connection can take several minutes, and Cloud SQL instances with
+2. `tofu destroy` in `.easymigrate/terraform`. **Expect this to be slow, and to need a
+   retry.** Observed on the 2026-09-17 run: the Cloud SQL instances delete fine, then the
+   service networking connection fails with *"Producer services (e.g. CloudSQL, Cloud
+   Memstore, etc.) are still using this connection"* — the producer side has not released
+   the peering yet. It is not a real failure; wait a few minutes and run `tofu destroy`
+   again until it reports `Destroy complete`. Cloud SQL instances with
    `deletion_protection` set must have it cleared first.
 3. `terraform -chdir=testbed/aws destroy`.
 
+**Timing, measured on the 2026-09-17 run:** a Cloud SQL instance takes 10-17 minutes to
+create (the MySQL one took 16m44s), so budget ~25 minutes for `apply` and another 10-15
+for teardown including the retry above.
+
 **Cost:** two `db.t3.micro` RDS instances and two Cloud SQL instances bill per hour on
 both sides simultaneously. Run this once, deliberately, and tear it down the same day.
+
+**Targeting a cheaper subset:** the testbed's EKS cluster and NAT gateway dominate its
+cost and add ~25 minutes, and spec 2 touches neither. `terraform apply
+-target=aws_db_instance.postgres -target=aws_db_instance.mysql` pulls in only the VPC,
+subnets and groups the databases need. Note that a `publicly_accessible` RDS instance
+requires an internet gateway attached to its VPC, so add
+`-target=aws_route_table_association.sub1 -target=aws_route_table_association.sub2`
+(which pulls in the gateway) and expect the first apply to race: RDS validates the
+gateway before the attachment propagates, so re-run the apply once.
 
 **A name you delete is not free again immediately:** a deleted Cloud SQL instance name
 cannot be reused for about a week, so a second run needs different IR ids (rename the
