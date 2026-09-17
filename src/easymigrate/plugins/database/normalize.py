@@ -198,8 +198,11 @@ def _storage(inst: dict[str, Any]) -> DbStorage:
         size_gib=inst["AllocatedStorage"],
         max_size_gib=inst.get("MaxAllocatedStorage"),
         type=inst.get("StorageType", "standard"),
-        iops=inst.get("Iops"),
-        throughput_mibps=inst.get("StorageThroughput"),
+        # Real RDS reports Iops/StorageThroughput as 0 on storage types that have no
+        # provisioned value (gp2, standard), rather than omitting them. 0 means "not
+        # applicable", so record it as absent — the IR only allows these on gp3/io1/io2.
+        iops=inst.get("Iops") or None,
+        throughput_mibps=inst.get("StorageThroughput") or None,
         encrypted=bool(inst.get("StorageEncrypted")),
         kms_key=inst.get("KmsKeyId"),
     )

@@ -315,3 +315,16 @@ def test_normalizing_same_snapshot_twice_is_deterministic():
     dump2 = [o.model_dump(mode="json") for o in objs2]
     assert dump1 == dump2
     assert [o.id for o in objs1] == sorted(o.id for o in objs1)
+
+
+def test_zero_iops_and_throughput_on_gp2_are_recorded_as_absent():
+    """Real RDS reports Iops/StorageThroughput as 0 (not omitted) for gp2, which the IR
+    forbids on that storage type. Found by a live scan against a real account; every
+    hand-built fixture had omitted them instead."""
+    snapshot = b.snapshot(
+        db_instances=[b.db_instance("gp2-db", storage_type="gp2", iops=0, storage_throughput=0)]
+    )
+    [instance] = normalize(snapshot, _ctx())
+    assert instance.storage.type == "gp2"
+    assert instance.storage.iops is None
+    assert instance.storage.throughput_mibps is None
