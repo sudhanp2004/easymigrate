@@ -15,6 +15,9 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from easymigrate.core.errors import EasyMigrateError
 from easymigrate.core.project import Project, StageInputMissing
+from easymigrate.ui.jobs import JobStore
+from easymigrate.ui.routes import jobs as job_routes
+from easymigrate.ui.routes import stages as stage_routes
 from easymigrate.ui.security import Security
 from easymigrate.ui.state import project_state
 
@@ -47,6 +50,12 @@ def create_app(project: Project, security: Security) -> FastAPI:
     # route and field inventory (and, for /docs, an interactive console) to any page that
     # can reach 127.0.0.1, foreign Host included.
     app = FastAPI(title="EasyMigrate", docs_url=None, redoc_url=None, openapi_url=None)
+
+    # Job state lives on disk (spec §4): reap_stale runs once here, at app-factory
+    # startup, so a record left "running" by a server that died mid-job is never shown
+    # as live.
+    jobs = JobStore(project)
+    jobs.reap_stale()
 
     @app.exception_handler(EasyMigrateError)
     async def _easymigrate_error_handler(_request: Request, exc: EasyMigrateError):
@@ -96,6 +105,9 @@ def create_app(project: Project, security: Security) -> FastAPI:
     @app.get("/api/project", dependencies=[Depends(security.require_origin)])
     def get_project():
         return project_state(project)
+
+    stage_routes.register(app, project, jobs, security)
+    job_routes.register(app, project, jobs, security)
 
     if index_html.exists():
         app.mount("/", StaticFiles(directory=_STATIC_DIR, html=True), name="static")
