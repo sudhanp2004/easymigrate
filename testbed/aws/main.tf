@@ -208,6 +208,64 @@ resource "aws_db_instance" "postgres" {
   db_subnet_group_name = aws_db_subnet_group.default.name
 }
 
+# 7b. A private MySQL instance, so a live run exercises the Cloud SQL private-IP path
+# (Private Services Access) alongside the public Postgres one above, and DB-PARAM-FLAGS
+# has a real parameter group to translate. Single-AZ deliberately: Multi-AZ doubles the
+# hourly cost and DB-MULTI-AZ is covered by unit tests.
+resource "aws_security_group" "mysql" {
+  name        = "migration-test-mysql-sg"
+  description = "Private MySQL tier"
+  vpc_id      = aws_vpc.main.id
+
+  tags = {
+    Name = "migration-test-mysql-sg"
+  }
+}
+
+resource "aws_security_group_rule" "vpc_to_mysql" {
+  type              = "ingress"
+  security_group_id = aws_security_group.mysql.id
+  from_port         = 3306
+  to_port           = 3306
+  protocol          = "tcp"
+  cidr_blocks       = [aws_vpc.main.cidr_block]
+}
+
+resource "aws_db_parameter_group" "mysql" {
+  name   = "migration-test-mysql-params"
+  family = "mysql8.0"
+
+  # One flag Cloud SQL supports, and one it does not, so DB-PARAM-FLAGS is exercised
+  # in both directions on a real scan.
+  parameter {
+    name  = "max_connections"
+    value = "150"
+  }
+
+  parameter {
+    name  = "max_heap_table_size"
+    value = "33554432"
+  }
+}
+
+resource "aws_db_instance" "mysql" {
+  identifier              = "test-mysql-db"
+  engine                  = "mysql"
+  engine_version          = "8.0"
+  instance_class          = "db.t3.micro"
+  allocated_storage       = 20
+  db_name                 = "testdb"
+  username                = "dbadmin"
+  password                = var.db_password
+  skip_final_snapshot     = true
+  publicly_accessible     = false
+  multi_az                = false
+  backup_retention_period = 1
+  db_subnet_group_name    = aws_db_subnet_group.default.name
+  parameter_group_name    = aws_db_parameter_group.mysql.name
+  vpc_security_group_ids  = [aws_security_group.mysql.id]
+}
+
 # 8. IAM Role for EKS Cluster
 resource "aws_iam_role" "eks_cluster" {
   name = "migration-test-eks-cluster-role"

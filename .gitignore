@@ -35,3 +35,6 @@ build/
 
 # Agent workflow scratch
 .superpowers/
+
+# graphify knowledge graph output (rebuilt locally with `graphify update .`)
+graphify-out/

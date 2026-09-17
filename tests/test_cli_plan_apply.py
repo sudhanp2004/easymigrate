@@ -12,8 +12,9 @@ from moto import mock_aws
 from typer.testing import CliRunner
 
 import easymigrate.engine.tofu as tofu_module
-from easymigrate.cli import app
+from easymigrate.cli import _parse_db_passwords, app
 from easymigrate.core import registry
+from easymigrate.core.errors import EasyMigrateError
 from easymigrate.core.pipeline import analyze as run_analyze
 from easymigrate.core.pipeline import resolve as run_resolve
 from easymigrate.core.pipeline import scan
@@ -179,3 +180,64 @@ def test_apply_command_without_plan_exits_two(tmp_path, monkeypatch):
     result = runner.invoke(app, ["apply"], input="y\n")
 
     assert result.exit_code == 2
+
+
+# --- `plan --db-password` (spec 2 §2.2) ---------------------------------------------
+
+
+def test_db_password_option_parses_id_and_value():
+    assert _parse_db_passwords(["database_instance:prod=s3cret"]) == {
+        "database_instance:prod": "s3cret"
+    }
+
+
+def test_db_password_value_may_contain_equals_signs():
+    assert _parse_db_passwords(["database_instance:prod=a=b=c"]) == {
+        "database_instance:prod": "a=b=c"
+    }
+
+
+def test_db_password_without_equals_is_rejected_with_an_example(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    Project(tmp_path).init()
+    result = runner.invoke(app, ["plan", "--gcp-project", "p", "--db-password", "oops"])
+    assert result.exit_code == 1
+    assert "--db-password takes <ir-id>=<value>" in result.output
+    assert "database_instance:prod-db=s3cret" in result.output
+
+
+def test_plan_passes_no_prompt_when_stdin_is_not_a_tty(tmp_path, monkeypatch):
+    """A non-interactive run must fail with instructions rather than block on a prompt,
+    so the CLI only supplies `ask_password` on a TTY."""
+    captured: dict[str, object] = {}
+
+    def fake_plan(project, **kwargs):
+        captured.update(kwargs)
+        raise EasyMigrateError("stop here")
+
+    monkeypatch.chdir(tmp_path)
+    _ready_project(tmp_path)
+    monkeypatch.setattr("easymigrate.cli.run_plan", fake_plan)
+    monkeypatch.setattr("easymigrate.cli._stdin_is_tty", lambda: False)
+    result = runner.invoke(
+        app, ["plan", "--gcp-project", "p", "--db-password", "database_instance:x=pw"]
+    )
+    assert result.exit_code == 1
+    assert captured["ask_password"] is None
+    assert captured["db_passwords"] == {"database_instance:x": "pw"}
+
+
+def test_plan_supplies_a_prompt_when_stdin_is_a_tty(tmp_path, monkeypatch):
+    captured: dict[str, object] = {}
+
+    def fake_plan(project, **kwargs):
+        captured.update(kwargs)
+        raise EasyMigrateError("stop here")
+
+    monkeypatch.chdir(tmp_path)
+    _ready_project(tmp_path)
+    monkeypatch.setattr("easymigrate.cli.run_plan", fake_plan)
+    monkeypatch.setattr("easymigrate.cli._stdin_is_tty", lambda: True)
+    result = runner.invoke(app, ["plan", "--gcp-project", "p"])
+    assert result.exit_code == 1
+    assert callable(captured["ask_password"])

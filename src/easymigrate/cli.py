@@ -1,11 +1,12 @@
 """Command-line entry point. Commands only call `easymigrate.core`."""
 
 import json
+import sys
 from collections import Counter
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, NoReturn
+from typing import Annotated, Any, NoReturn
 
 import typer
 from pydantic import ValidationError
@@ -299,16 +300,53 @@ def _print_plan_summary(summary: PlanSummary) -> None:
             console.print(f"  {entry.message}", markup=False)
 
 
+def _parse_db_passwords(values: list[str]) -> dict[str, str]:
+    """Parse repeated `--db-password <ir-id>=<value>` options. The id is validated against
+    the resolved IR inside `plan`, which is the only place that knows it."""
+    passwords: dict[str, str] = {}
+    for value in values:
+        ir_id, separator, secret = value.partition("=")
+        if not separator or not ir_id:
+            _fail(
+                "--db-password takes <ir-id>=<value>, for example "
+                "--db-password database_instance:prod-db=s3cret"
+            )
+        passwords[ir_id] = secret
+    return passwords
+
+
+def _stdin_is_tty() -> bool:
+    """A seam: `plan` only offers an interactive password prompt on a terminal, and tests
+    drive both sides of that without replacing sys.stdin."""
+    return sys.stdin.isatty()
+
+
+def _ask_db_password(ir_id: str) -> str:
+    return typer.prompt(f"Password for {ir_id}", hide_input=True)
+
+
 @app.command()
 def plan(
     gcp_project: str = typer.Option(..., "--gcp-project", help="Destination GCP project id."),
     gcp_region: str | None = typer.Option(
         None, "--gcp-region", help="GCP region; inferred from the scanned AWS region if omitted."
     ),
+    db_password: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--db-password",
+            metavar="ID=VALUE",
+            help=(
+                "Password for a migrated database, as <ir-id>=<value>; repeatable. "
+                "EasyMigrate never invents one: AWS does not return the original."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Generate GCP Terraform from the resolved decisions and run `tofu plan`."""
     project = Project(Path.cwd())
     with _user_errors():
+        passwords = _parse_db_passwords(db_password or [])
         config = project.load_config()
         if config.source is None:
             _fail("no scan found; run `easymigrate scan` first")
@@ -321,7 +359,12 @@ def plan(
             )
 
         summary = run_plan(
-            project, gcp_project=gcp_project, gcp_region=gcp_region, confirm_bucket=confirm_bucket
+            project,
+            gcp_project=gcp_project,
+            gcp_region=gcp_region,
+            confirm_bucket=confirm_bucket,
+            db_passwords=passwords,
+            ask_password=_ask_db_password if _stdin_is_tty() else None,
         )
     _print_plan_summary(summary)
     console.print(f"Plan: {summary.plan_text_path.relative_to(project.root)}", markup=False)

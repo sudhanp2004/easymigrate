@@ -25,6 +25,10 @@ Migrates cloud infrastructure from AWS to GCP. It scans the live source cloud, b
     easymigrate plan --gcp-project my-gcp-project
     #    or, when the AWS region has no built-in GCP mapping:
     easymigrate plan --gcp-project my-gcp-project --gcp-region asia-south1
+    # A migrated database needs a password: AWS never returns the original, and
+    # EasyMigrate never invents one. Supply it by flag, by EASYMIGRATE_DB_PASSWORD_<SLUG>,
+    # or at the prompt when you are on a terminal.
+    easymigrate plan --gcp-project my-gcp-project --db-password database_instance:prod-db=s3cret
 
     # 5. Review the plan and apply it (prompts for confirmation; no auto-approve flag)
     easymigrate apply
@@ -35,7 +39,7 @@ Scanned families: networking (VPCs, subnets, route tables, internet/NAT gateways
 
 Permissions `scan` needs: `ec2:DescribeVpcs`, `ec2:DescribeVpcAttribute`, `ec2:DescribeSubnets`, `ec2:DescribeRouteTables`, `ec2:DescribeInternetGateways`, `ec2:DescribeNatGateways`, `ec2:DescribeSecurityGroups`, `ec2:DescribeNetworkAcls`, `rds:DescribeDBInstances`, `rds:DescribeDBSubnetGroups`, `rds:DescribeDBParameterGroups`, `rds:DescribeDBParameters`, `rds:DescribeDBClusters`, `ec2:DescribeInstanceTypes`, `tag:GetResources`, `sts:GetCallerIdentity`. Missing permissions are reported as scan gaps rather than failing the scan.
 
-`plan` and `apply` need GCP Application Default Credentials (`gcloud auth application-default login`) for a principal with, on the destination project: `roles/compute.networkAdmin` (create the generated networking resources) and `roles/storage.admin` (create and use the `<project>-easymigrate-tfstate` state bucket). EasyMigrate runs OpenTofu inside the application; you never install or invoke `tofu` yourself.
+`plan` and `apply` need GCP Application Default Credentials (`gcloud auth application-default login`) for a principal with, on the destination project: `roles/compute.networkAdmin` (create the generated networking resources) and `roles/storage.admin` (create and use the `<project>-easymigrate-tfstate` state bucket), plus `roles/cloudsql.admin` and `roles/servicenetworking.networksAdmin` when the scan found RDS instances. EasyMigrate runs OpenTofu inside the application; you never install or invoke `tofu` yourself.
 
 ## Development
 
