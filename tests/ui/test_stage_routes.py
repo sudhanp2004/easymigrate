@@ -4,6 +4,7 @@ tests/core/test_pipeline_plan_apply.py: registry.gcp_target/ensure_tofu/new_tofu
 
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 
@@ -93,6 +94,50 @@ def _scanned_and_resolved(project: Project) -> None:
         run_scan(project, region="ap-south-1")
     run_analyze(project)
     run_resolve(project, accept_defaults=True)
+
+
+def _scanned_and_resolved_with_database(project: Project) -> str:
+    """Like `_scanned_and_resolved`, but with a real RDS instance in the snapshot, so a
+    supplied password is actually consumed by `_resolve_db_passwords` rather than the
+    engine finding nothing to do with it. Returns the instance's IR id."""
+    with mock_aws():
+        clients = source_for("aws").connect(region="ap-south-1")
+        ec2 = clients.client("ec2")
+        rds = clients.client("rds")
+        vpc = ec2.create_vpc(
+            CidrBlock="10.0.0.0/16",
+            TagSpecifications=[{"ResourceType": "vpc", "Tags": [{"Key": "Name", "Value": "main"}]}],
+        )["Vpc"]["VpcId"]
+        subnet_a = ec2.create_subnet(
+            VpcId=vpc, CidrBlock="10.0.1.0/24", AvailabilityZone="ap-south-1a"
+        )["Subnet"]["SubnetId"]
+        subnet_b = ec2.create_subnet(
+            VpcId=vpc, CidrBlock="10.0.2.0/24", AvailabilityZone="ap-south-1b"
+        )["Subnet"]["SubnetId"]
+        sg = ec2.create_security_group(GroupName="db-sg", Description="db", VpcId=vpc)["GroupId"]
+        rds.create_db_subnet_group(
+            DBSubnetGroupName="subgrp1",
+            DBSubnetGroupDescription="subgrp1",
+            SubnetIds=[subnet_a, subnet_b],
+        )
+        rds.create_db_instance(
+            DBInstanceIdentifier="orders-db",
+            Engine="postgres",
+            EngineVersion="15.5",
+            DBInstanceClass="db.t3.micro",
+            AllocatedStorage=20,
+            MasterUsername="postgres",
+            MasterUserPassword="placeholder-not-the-sentinel",
+            DBSubnetGroupName="subgrp1",
+            VpcSecurityGroupIds=[sg],
+        )
+        run_scan(project, region="ap-south-1")
+    run_analyze(project)
+    run_resolve(project, accept_defaults=True)
+
+    ir_doc = json.loads(project.ir_path.read_text(encoding="utf-8"))
+    db_id = next(obj["id"] for obj in ir_doc["objects"] if obj["kind"] == "database_instance")
+    return db_id
 
 
 def _wait_for_terminal(client: TestClient, job_id: str, timeout: float = 5.0) -> dict:
@@ -274,15 +319,18 @@ def test_apply_with_no_plan_yet_is_409(client: TestClient, project: Project):
 def test_password_never_appears_in_job_record_log_or_response(
     client: TestClient, project: Project, monkeypatch
 ):
+    """A real database instance is required here: without one, `db_passwords` is never
+    consumed by `_resolve_db_passwords` at all, and the assertions below would hold even
+    if the route leaked the value verbatim — a guard that can't fail is not a guard."""
     sentinel = "SENTINEL-DB-PASSWORD-abc123"
-    _scanned_and_resolved(project)
+    db_id = _scanned_and_resolved_with_database(project)
     _patch_gcp_and_tofu(monkeypatch)
 
     resp = client.post(
         "/api/plan",
         json={
             "gcp_project": "my-proj",
-            "db_passwords": {"db-1": sentinel},
+            "db_passwords": {db_id: sentinel},
             "create_bucket": True,
         },
         headers=HEADERS,
@@ -297,6 +345,7 @@ def test_password_never_appears_in_job_record_log_or_response(
             break
         time.sleep(0.01)
     assert finished_resp is not None
+    assert finished_resp.json()["status"] == "succeeded"
     assert sentinel not in finished_resp.text
 
     jobs_dir = project.jobs_dir
@@ -304,3 +353,7 @@ def test_password_never_appears_in_job_record_log_or_response(
         assert sentinel not in path.read_text(encoding="utf-8")
     for path in jobs_dir.glob("*.log"):
         assert sentinel not in path.read_text(encoding="utf-8")
+    if project.report_json_path.exists():
+        assert sentinel not in project.report_json_path.read_text(encoding="utf-8")
+    if project.plan_txt_path.exists():
+        assert sentinel not in project.plan_txt_path.read_text(encoding="utf-8")

@@ -33,6 +33,19 @@ class JobAlreadyRunning(Exception):
     """Raised by `JobStore.start` when a job is already active for this project."""
 
 
+def _process_alive(pid: int) -> bool:
+    """`os.kill(pid, 0)` sends no signal; it only asks whether `pid` could be signalled.
+    `ProcessLookupError` means the process is gone; `PermissionError` means it exists but
+    is owned by someone else, which still counts as alive."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 class JobRecord(StrictModel):
     id: str
     stage: str
@@ -130,13 +143,21 @@ class JobStore:
         return record
 
     def reap_stale(self) -> list[JobRecord]:
-        """Called once at server startup (spec §4): any record left `running` by a
-        process that is no longer this one is dead, not live. Showing it as live would be
-        a lie about the state of someone's cloud."""
+        """Called once at server startup (spec §4): any record left `running` whose
+        process is genuinely gone is dead, not live. Showing it as live would be a lie
+        about the state of someone's cloud.
+
+        A record's pid differing from ours is not enough by itself — a second
+        `easymigrate ui` started in the same project (an easy mistake: `--port 0` picks a
+        free port every time) must not reap the first one's still-running job, or the
+        one-job-at-a-time rule breaks and two `apply`s can race the same Terraform
+        state. Only a pid that is both foreign *and* actually dead is reaped."""
         reaped = []
         current_pid = os.getpid()
         for record in self._all_records():
-            if record.status != "running" or record.pid == current_pid:
+            if record.status != "running":
+                continue
+            if record.pid == current_pid or _process_alive(record.pid):
                 continue
             updated = record.model_copy(
                 update={

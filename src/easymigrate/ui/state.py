@@ -18,6 +18,7 @@ from easymigrate.core.project import Project
 from easymigrate.differences.decisions import from_yaml, readiness_problems
 from easymigrate.differences.engine import catalogue
 from easymigrate.ir.base import StrictModel
+from easymigrate.ui.jobs import JobRecord, JobStore
 
 
 class StageState(StrictModel):
@@ -32,6 +33,7 @@ class ProjectState(StrictModel):
     source: dict | None = None
     target: dict | None = None
     blocked: list[str] = []
+    active_job: JobRecord | None = None
 
 
 def project_state(project: Project) -> ProjectState:
@@ -49,6 +51,9 @@ def project_state(project: Project) -> ProjectState:
         source=source,
         target=target,
         blocked=_blocked(project),
+        # spec §5: "the active job if any" — this is what lets a closed browser tab
+        # reconnect to a running job without already knowing its id.
+        active_job=JobStore(project).active(),
     )
 
 

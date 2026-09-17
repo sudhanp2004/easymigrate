@@ -4,6 +4,8 @@ the truth; nothing here may be cached in server memory."""
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import threading
 from datetime import UTC, datetime
 from pathlib import Path
@@ -142,6 +144,14 @@ def _wait_terminal(store: JobStore, job_id: str, timeout: float = 5.0) -> JobRec
     raise AssertionError("job did not reach a terminal state in time")
 
 
+def _dead_pid() -> int:
+    """Spawn a subprocess and wait for it to exit: its pid is genuinely free, unlike
+    `os.getpid() + 1`, which can collide with an unrelated live process on the machine."""
+    proc = subprocess.Popen([sys.executable, "-c", "pass"])
+    proc.wait(timeout=5)
+    return proc.pid
+
+
 def test_reap_stale_marks_a_different_pid_running_record_as_failed(project: Project):
     store = JobStore(project)
     dead = JobRecord(
@@ -149,7 +159,7 @@ def test_reap_stale_marks_a_different_pid_running_record_as_failed(project: Proj
         stage="apply",
         status="running",
         started_at=datetime.now(UTC),
-        pid=os.getpid() + 1,
+        pid=_dead_pid(),
     )
     project.write_json(store._record_path(dead.id), dead)
 
@@ -161,6 +171,31 @@ def test_reap_stale_marks_a_different_pid_running_record_as_failed(project: Proj
     assert updated.finished_at is not None
     assert "the EasyMigrate server stopped while this apply was running" in updated.error
     assert "its result is unknown" in updated.error
+
+
+def test_reap_stale_leaves_a_live_foreign_pid_running_record_alone(project: Project):
+    """A record's pid differing from ours is not enough: a second `easymigrate ui`
+    started against the same project must not reap the first server's still-running
+    job. Only a pid that is both foreign and actually dead may be reaped."""
+    store = JobStore(project)
+    proc = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+    try:
+        alive = JobRecord(
+            id="alive-job",
+            stage="apply",
+            status="running",
+            started_at=datetime.now(UTC),
+            pid=proc.pid,
+        )
+        project.write_json(store._record_path(alive.id), alive)
+
+        reaped = store.reap_stale()
+
+        assert reaped == []
+        assert store.get("alive-job").status == "running"
+    finally:
+        proc.terminate()
+        proc.wait(timeout=5)
 
 
 def test_reap_stale_leaves_succeeded_records_alone(project: Project):

@@ -44,7 +44,9 @@ class DecisionsResponse(StrictModel):
 class DecisionWriteRequest(StrictModel):
     strategy: str
     params: dict[str, Any] | None = None
-    acknowledged: bool = False
+    # spec §5: "optional acknowledgement" — omitted must leave the current value alone;
+    # only an explicit `false` may revoke an existing acknowledgement.
+    acknowledged: bool | None = None
 
 
 def _rules_by_id() -> dict[str, DifferenceRule]:
@@ -138,11 +140,12 @@ def register(app: FastAPI, project: Project, security: Security) -> None:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from None
 
+        acknowledged = current.acknowledged if body.acknowledged is None else body.acknowledged
         new_decision = Decision(
             key=key,
             strategy=body.strategy,
             decided_by="user",
-            acknowledged=body.acknowledged,
+            acknowledged=acknowledged,
             params=params,
         )
         updated_decisions = [new_decision if d.key == key else d for d in merged.decisions]

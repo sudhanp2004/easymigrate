@@ -136,6 +136,53 @@ def test_apply_complete_from_succeeded_job_record(tmp_path: Path):
     assert by_name["apply"].artifact_at is not None
 
 
+def test_project_state_exposes_a_running_job_as_active(tmp_path: Path):
+    """spec §5: GET /api/project must carry the active job, so a closed browser tab can
+    find its way back to a job in progress without already knowing its id."""
+    import threading
+
+    from easymigrate.ui.jobs import JobStore
+
+    project = Project(tmp_path)
+    store = JobStore(project)
+    gate = threading.Event()
+    record = store.start("scan", lambda stream: gate.wait(5))
+
+    try:
+        state = project_state(project)
+        assert state.active_job is not None
+        assert state.active_job.id == record.id
+        assert state.active_job.status == "running"
+    finally:
+        gate.set()
+        _wait_terminal(store, record.id)
+
+
+def test_project_state_active_job_is_none_once_finished(tmp_path: Path):
+    from easymigrate.ui.jobs import JobStore
+
+    project = Project(tmp_path)
+    store = JobStore(project)
+    record = store.start("scan", lambda stream: None)
+    _wait_terminal(store, record.id)
+
+    state = project_state(project)
+
+    assert state.active_job is None
+
+
+def _wait_terminal(store, job_id: str, timeout: float = 5.0) -> None:
+    import time
+
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        record = store.get(job_id)
+        if record.status != "running":
+            return
+        time.sleep(0.01)
+    raise AssertionError("job did not reach a terminal state in time")
+
+
 def test_apply_not_complete_from_failed_job_record(tmp_path: Path):
     project = Project(tmp_path)
     project.init()

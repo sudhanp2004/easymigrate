@@ -295,6 +295,34 @@ def test_acknowledging_manual_strategy_clears_the_block(client: TestClient, proj
     assert not any(key in b for b in blocked)
 
 
+def test_put_omitting_acknowledged_preserves_an_existing_acknowledgement(
+    client: TestClient, project: Project
+):
+    """spec §5 calls acknowledgement "optional": omitting it on a later edit (e.g. a
+    params-only change) must not silently revoke an acknowledgement already given."""
+    _analyzed(project, "old_engine_version")
+    key = "DB-PRIVATE-IP@database_instance:legacy-db"
+
+    client.put(f"/api/decisions/{key}", json={"strategy": "manual"}, headers=HEADERS)
+    client.put(
+        f"/api/decisions/{key}",
+        json={"strategy": "manual", "acknowledged": True},
+        headers=HEADERS,
+    )
+
+    resp = client.put(
+        f"/api/decisions/{key}",
+        json={"strategy": "manual"},
+        headers=HEADERS,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["needs_acknowledgement"] is False
+
+    decisions_resp = client.get("/api/decisions", headers=HEADERS)
+    blocked = decisions_resp.json()["blocked"]
+    assert not any(key in b for b in blocked)
+
+
 # --- POST /api/resolve ------------------------------------------------------------------
 
 
