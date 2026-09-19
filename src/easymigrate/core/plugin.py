@@ -123,6 +123,10 @@ class GenerationError(Exception):
 
 class Plugin(Protocol):
     name: str
+    # Plugin names whose objects this plugin's `normalize` reads out of
+    # `NormalizeContext.objects`, and which must therefore run earlier (spec 4 §2.2).
+    # `core.pipeline.check_plugin_order` validates this; it does not reorder.
+    requires: frozenset[str]
     aws_resource_types: frozenset[str]
 
     def collect_aws(self, connection: Any, ctx: CollectContext) -> dict[str, Any]: ...

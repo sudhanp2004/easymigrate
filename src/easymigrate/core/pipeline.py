@@ -156,10 +156,33 @@ def _inventory_findings(source: Any, connection: Any, plugins: Sequence[Plugin])
     return findings
 
 
+def check_plugin_order(plugins: Sequence[Plugin]) -> None:
+    """Every plugin's `requires` must name a plugin earlier in the sequence (spec 4 §2.2).
+
+    Validates the given order; it neither reorders nor resolves dependencies.
+    """
+    seen: set[str] = set()
+    later = {plugin.name for plugin in plugins}
+    for plugin in plugins:
+        for requirement in sorted(plugin.requires):
+            if requirement in seen:
+                continue
+            if requirement in later:
+                raise EasyMigrateError(
+                    f"plugin {plugin.name!r} requires {requirement!r}, which runs later; "
+                    f"move {requirement!r} before it in registry.PLUGINS"
+                )
+            raise EasyMigrateError(
+                f"plugin {plugin.name!r} requires {requirement!r}, which is not registered"
+            )
+        seen.add(plugin.name)
+
+
 def analyze(
     project: Project, *, plugins: Sequence[Plugin] | None = None, strict: bool = False
 ) -> IRDocument:
     plugins = registry.PLUGINS if plugins is None else plugins
+    check_plugin_order(plugins)
     snapshot_dir = project.snapshot_dir("aws")
     meta = project.read_json(snapshot_dir / SCAN_FILE, produced_by="scan")
     snapshot = Snapshot.from_dir(snapshot_dir)

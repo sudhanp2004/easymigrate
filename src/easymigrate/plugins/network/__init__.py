@@ -12,6 +12,7 @@ from easymigrate.providers.gcp.hcl import HclFile
 
 class NetworkPlugin:
     name = "network"
+    requires: frozenset[str] = frozenset()
     aws_resource_types = frozenset(
         {
             "ec2:vpc",

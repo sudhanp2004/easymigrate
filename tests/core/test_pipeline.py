@@ -35,8 +35,9 @@ class FakeSource:
 class FakePlugin:
     aws_resource_types = frozenset({"ec2:vpc"})
 
-    def __init__(self, name="fake", files=None, deny=None, make_objects=None):
+    def __init__(self, name="fake", files=None, deny=None, make_objects=None, requires=frozenset()):
         self.name, self.files, self.deny, self.make_objects = name, files or {}, deny, make_objects
+        self.requires = requires
         self.seen_objects = None
         self.snapshot_names = None
 

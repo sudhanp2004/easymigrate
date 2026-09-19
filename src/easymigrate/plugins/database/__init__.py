@@ -12,6 +12,7 @@ from easymigrate.providers.gcp.hcl import HclFile
 
 class DatabasePlugin:
     name = "database"
+    requires = frozenset({"network"})
     aws_resource_types = frozenset(
         {
             "rds:db",
