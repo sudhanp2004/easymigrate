@@ -47,7 +47,6 @@ def test_cidr_rules_ports_descriptions_and_sorting():
         "network:main",
     )
     assert policy.source.id == "sg-web" and policy.source.type == "security_group"
-    assert policy.applies_to == []
     summary = [(r.direction, r.protocol, r.ports, r.peer, r.description) for r in policy.rules]
     assert summary == [
         ("egress", "all", [], CidrPeer(cidr="0.0.0.0/0"), None),

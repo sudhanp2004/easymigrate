@@ -75,11 +75,9 @@ def test_testbed_shape_public_postgres():
     assert inst.network.subnets == ["subnet:test-vpc-subnet-0", "subnet:test-vpc-subnet-1"]
 
 
-def test_private_mysql_resolves_network_subnets_and_firewall_and_updates_applies_to():
+def test_private_mysql_resolves_network_subnets_and_firewall_policies():
     ctx = _ctx()
-    objects = _network_objects(ctx)
-    policy = next(o for o in objects if o.kind == "firewall_policy")
-    assert policy.applies_to == []
+    _network_objects(ctx)
 
     snap = b.snapshot(
         db_instances=[
@@ -100,7 +98,9 @@ def test_private_mysql_resolves_network_subnets_and_firewall_and_updates_applies
     assert inst.network.network == "network:test-vpc"
     assert inst.network.subnets == ["subnet:test-vpc-subnet-0", "subnet:test-vpc-subnet-1"]
     assert inst.network.firewall_policies == ["firewall_policy:db-sg"]
-    assert ctx.objects["firewall_policy:db-sg"].applies_to == ["database_instance:private-mysql"]
+    # Spec 4 §2.1: the instance's forward reference is the only record of membership; the
+    # policy carries no back-reference for the normalizer to update.
+    assert not hasattr(ctx.objects["firewall_policy:db-sg"], "applies_to")
 
 
 def test_read_replica_resolves_to_ir_id_of_primary():

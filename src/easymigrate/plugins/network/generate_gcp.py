@@ -444,9 +444,6 @@ FIELD_COVERAGE: dict[str, dict[str, str]] = {
         **_METADATA_FIELDS,
         "network": "exact",
         "rules": "derived:grouped by (direction, peer kind) into google_compute_firewall",
-        "applies_to": (
-            "not_generated:attaching the network tag to resources is a later plugin's job"
-        ),
     },
     "network_acl": {
         **_METADATA_FIELDS,

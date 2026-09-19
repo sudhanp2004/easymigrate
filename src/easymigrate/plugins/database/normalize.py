@@ -217,8 +217,6 @@ def _resolve_firewall_policies(
         if policy is None:
             continue
         resolved.add(policy.id)
-        if ir_id not in policy.applies_to:
-            policy.applies_to = sorted({*policy.applies_to, ir_id})
     return sorted(resolved)
 
 

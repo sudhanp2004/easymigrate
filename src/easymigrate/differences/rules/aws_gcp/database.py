@@ -15,6 +15,7 @@ import ipaddress
 import re
 from typing import Any
 
+from easymigrate.differences.membership import policy_members
 from easymigrate.differences.model import Difference, DifferenceRule, Risk, Strategy
 from easymigrate.differences.rules.aws_gcp.cloudsql_facts import (
     DATABASE_VERSION,
@@ -34,6 +35,10 @@ from easymigrate.differences.rules.aws_gcp.cloudsql_facts import (
 from easymigrate.ir.base import IntentObject, IRDocument
 from easymigrate.ir.database import DatabaseInstance
 from easymigrate.ir.network import CidrPeer, FirewallPolicy, Network
+
+# Members that mean a policy is not RDS-only: dropping it would strip a migrated workload's
+# firewall rules (spec 4 §2.1.1).
+_NON_DATABASE_MEMBERS = frozenset({"compute_instance", "instance_template"})
 
 # ---- shared helpers (mirrors network.py's idiom) --------------------------
 
@@ -690,12 +695,21 @@ class DbSgFirewall(DifferenceRule):
     default = "drop_with_note"
 
     def detect(self, ir: IRDocument) -> list[Difference]:
+        """A policy is RDS-only when something is behind it, at least one member is a database
+        instance, and no compute instance or launch template is (spec 4 §2.1.1).
+
+        Membership is derived from forward references rather than read from a back-reference,
+        so a policy shared with an EC2 instance can no longer look RDS-only and be dropped.
+        """
+        members = policy_members(ir)
         diffs = []
         for policy in sorted(ir.of_kind(FirewallPolicy), key=lambda p: p.id):
-            if policy.applies_to and all(
-                a.startswith("database_instance:") for a in policy.applies_to
-            ):
-                diffs.append(self.difference([policy.id], applies_to=list(policy.applies_to)))
+            behind = members.get(policy.id, set())
+            if not behind:
+                continue
+            kinds = {member.split(":", 1)[0] for member in behind}
+            if "database_instance" in kinds and not kinds & _NON_DATABASE_MEMBERS:
+                diffs.append(self.difference([policy.id], applies_to=sorted(behind)))
         return diffs
 
     def apply(

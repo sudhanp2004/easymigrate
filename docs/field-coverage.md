@@ -87,7 +87,6 @@ Every IR field the network generator could touch is declared here, so an IR fiel
 
 | Field | Declaration |
 |---|---|
-| `applies_to` | not_generated:attaching the network tag to resources is a later plugin's job |
 | `excluded` | metadata |
 | `id` | metadata |
 | `kind` | metadata |

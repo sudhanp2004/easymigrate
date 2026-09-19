@@ -125,9 +125,9 @@ def test_normalization_is_deterministic(case):
     assert first == second
 
 
-def test_applies_to_is_never_written_by_the_compute_normalizer():
-    """Plan 1 constraint: plan 2 deletes the field; until then compute must not fill it."""
-    for case in CASES:
-        doc = _normalize(case)
-        for policy in _kinds(doc, "firewall_policy"):
-            assert policy.applies_to == [], f"{case} wrote applies_to"
+def test_applies_to_no_longer_exists_on_firewall_policy():
+    """Spec 4 §2.1: the back-reference is deleted; membership is derived from forward
+    references by `differences.membership.policy_members`."""
+    from easymigrate.ir.network import FirewallPolicy
+
+    assert "applies_to" not in FirewallPolicy.model_fields

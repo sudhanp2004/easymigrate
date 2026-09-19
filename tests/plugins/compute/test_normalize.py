@@ -95,14 +95,18 @@ def test_security_groups_resolve_to_forward_references():
     assert instance.firewall_policies == ["firewall_policy:web-sg"]
 
 
-def test_applies_to_is_not_written(monkeypatch):
-    """Plan 1 constraint: applies_to stays untouched until plan 2 deletes it."""
-    ctx = NormalizeContext(account_id="1", region="ap-south-1")
-    ctx.objects = {obj.id: obj for obj in _network_objects()}
-    normalize(Snapshot(b.snapshot_files(instances=[b.instance(security_groups=["sg-1"])])), ctx)
+def test_policy_membership_comes_from_the_instance_not_the_policy():
+    """Spec 4 §2.1: the instance points at the policy; the policy holds no back-reference."""
+    from easymigrate.differences.membership import policy_members
+    from easymigrate.ir.base import IRDocument
 
-    policy = ctx.objects["firewall_policy:web-sg"]
-    assert policy.applies_to == []
+    objects, _ = run(b.snapshot_files(instances=[b.instance(security_groups=["sg-1"])]))
+    doc = IRDocument(
+        source={"cloud": "aws", "account_id": "1", "region": "ap-south-1"},
+        objects=[*_network_objects(), *objects],
+    )
+
+    assert policy_members(doc)["firewall_policy:web-sg"] == {"compute_instance:web"}
 
 
 def test_boot_disk_is_first_and_extras_follow_sorted_by_device():

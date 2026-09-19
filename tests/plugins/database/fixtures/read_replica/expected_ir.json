@@ -119,10 +119,6 @@
           "icmp_type": null,
           "icmp_code": null
         }
-      ],
-      "applies_to": [
-        "database_instance:orders-db",
-        "database_instance:orders-db-replica"
       ]
     },
     {

@@ -5,6 +5,7 @@ from typing import Any
 from easymigrate.core.plugin import CollectContext, GenerateContext, NormalizeContext, Snapshot
 from easymigrate.ir.base import IntentObject, IRDocument
 from easymigrate.plugins.compute.collect_aws import collect
+from easymigrate.plugins.compute.generate_gcp import generate
 from easymigrate.plugins.compute.normalize import normalize
 from easymigrate.providers.gcp.hcl import HclFile
 
@@ -31,6 +32,4 @@ class ComputePlugin:
         return normalize(snapshot, ctx)
 
     def generate_gcp(self, resolved: IRDocument, ctx: GenerateContext) -> HclFile:
-        # Generation is plan 3. Returning an empty file satisfies the plugin protocol so
-        # `plan` keeps working, the same approach spec 2 plan 1 took for databases.
-        return HclFile()
+        return generate(resolved, ctx)

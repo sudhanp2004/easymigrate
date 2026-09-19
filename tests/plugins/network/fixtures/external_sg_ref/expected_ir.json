@@ -73,8 +73,7 @@
           "icmp_type": null,
           "icmp_code": null
         }
-      ],
-      "applies_to": []
+      ]
     },
     {
       "kind": "firewall_policy",
@@ -104,8 +103,7 @@
           "icmp_type": null,
           "icmp_code": null
         }
-      ],
-      "applies_to": []
+      ]
     }
   ],
   "findings": []

@@ -179,7 +179,6 @@ class FirewallPolicy(IntentObject):
     kind: Literal["firewall_policy"] = "firewall_policy"
     network: NetworkRef
     rules: list[FirewallRule] = Field(default_factory=list)
-    applies_to: list[str] = Field(default_factory=list)  # native ids, filled by later plugins
 
     def references(self) -> list[str]:
         peers = [rule.peer.policy for rule in self.rules if isinstance(rule.peer, PolicyPeer)]

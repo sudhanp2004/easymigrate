@@ -60,14 +60,13 @@ def _network(id_="network:main", cidr="10.0.0.0/16"):
     )
 
 
-def _policy(id_, network="network:main", rules=None, applies_to=None):
+def _policy(id_, network="network:main", rules=None):
     return FirewallPolicy(
         id=id_,
         name=id_.split(":", 1)[1],
         source=_source("security-group", id_),
         network=network,
         rules=rules or [],
-        applies_to=applies_to or [],
     )
 
 
@@ -709,32 +708,101 @@ def test_public_access_manual_excludes_and_input_unchanged():
 # ---- DB-SG-FIREWALL --------------------------------------------------------------
 
 
+def _compute(id_="compute_instance:web", policies=None, subnet="subnet:a"):
+    from easymigrate.ir.compute import ComputeInstance
+
+    return ComputeInstance(
+        id=id_,
+        name=id_.split(":", 1)[1],
+        source=_source("instance", id_),
+        instance_type="t3.micro",
+        architecture="x86_64",
+        state="running",
+        zone="ap-south-1a",
+        subnet=subnet,
+        image="ami-1",
+        platform="linux",
+        firewall_policies=policies or [],
+    )
+
+
+def _subnet(id_="subnet:a", network="network:main", cidr="10.0.1.0/24"):
+    from easymigrate.ir.network import Subnet
+
+    return Subnet(
+        id=id_,
+        name=id_.split(":", 1)[1],
+        source=_source("subnet", id_),
+        network=network,
+        cidr=cidr,
+        zone="ap-south-1a",
+        internet="public",
+        map_public_ip=False,
+    )
+
+
 def test_sg_firewall_fires_for_db_only_policy():
     net = _network()
-    policy = _policy("firewall_policy:sg1", network=net.id, applies_to=["database_instance:db1"])
-    doc = _doc(net, policy)
+    policy = _policy("firewall_policy:sg1", network=net.id)
+    instance = _instance(firewall_policies=[policy.id])
+    doc = _doc(net, policy, instance)
 
     diffs = DbSgFirewall().detect(doc)
 
     assert len(diffs) == 1
     assert diffs[0].subjects == [policy.id]
+    assert diffs[0].context["applies_to"] == [instance.id]
 
 
-def test_sg_firewall_does_not_fire_when_attached_to_something_else():
+def test_sg_firewall_does_not_fire_when_a_compute_instance_shares_the_policy():
+    """Spec 4 §2.1: `applies_to` was written only by the database plugin, so a security group
+    guarding both an RDS instance and an EC2 instance read as RDS-only and would be dropped,
+    removing the firewall rules protecting a migrated instance."""
     net = _network()
-    policy = _policy(
-        "firewall_policy:sg1",
-        network=net.id,
-        applies_to=["database_instance:db1", "instance:ec2-1"],
+    policy = _policy("firewall_policy:sg1", network=net.id)
+    doc = _doc(
+        net,
+        _subnet(),
+        policy,
+        _instance(firewall_policies=[policy.id]),
+        _compute(policies=[policy.id]),
     )
-    doc = _doc(net, policy)
 
     assert DbSgFirewall().detect(doc) == []
 
 
-def test_sg_firewall_does_not_fire_when_applies_to_empty():
+def test_sg_firewall_does_not_fire_for_a_compute_only_policy():
     net = _network()
-    policy = _policy("firewall_policy:sg1", network=net.id, applies_to=[])
+    policy = _policy("firewall_policy:sg1", network=net.id)
+    doc = _doc(net, _subnet(), policy, _compute(policies=[policy.id]))
+
+    assert DbSgFirewall().detect(doc) == []
+
+
+def test_sg_firewall_does_not_fire_when_a_template_shares_the_policy():
+    from easymigrate.ir.compute import InstanceTemplate
+
+    net = _network()
+    policy = _policy("firewall_policy:sg1", network=net.id)
+    template = InstanceTemplate(
+        id="instance_template:web-lt",
+        name="web-lt",
+        source=_source("launch-template", "lt-1"),
+        instance_type="t3.micro",
+        architecture="x86_64",
+        image="ami-1",
+        platform="linux",
+        version="1",
+        firewall_policies=[policy.id],
+    )
+    doc = _doc(net, policy, _instance(firewall_policies=[policy.id]), template)
+
+    assert DbSgFirewall().detect(doc) == []
+
+
+def test_sg_firewall_does_not_fire_when_nothing_is_behind_the_policy():
+    net = _network()
+    policy = _policy("firewall_policy:sg1", network=net.id)
     doc = _doc(net, policy)
 
     assert DbSgFirewall().detect(doc) == []
@@ -759,7 +827,6 @@ def test_sg_firewall_runs_after_public_access_so_derivation_still_worked():
                 peer=CidrPeer(cidr="1.2.3.0/24"),
             )
         ],
-        applies_to=["database_instance:db1"],
     )
     instance = _instance(
         id_="database_instance:db1",
@@ -786,8 +853,8 @@ def test_sg_firewall_runs_after_public_access_so_derivation_still_worked():
 
 def test_sg_firewall_apply_excludes_with_reason():
     net = _network()
-    policy = _policy("firewall_policy:sg1", network=net.id, applies_to=["database_instance:db1"])
-    doc = _doc(net, policy)
+    policy = _policy("firewall_policy:sg1", network=net.id)
+    doc = _doc(net, policy, _instance(firewall_policies=[policy.id]))
     rule = DbSgFirewall()
     diff = rule.detect(doc)[0]
 
@@ -1554,7 +1621,6 @@ def _public_instance_with_policy_peer_only():
         id="firewall_policy:db-sg",
         name="db-sg",
         network="network:main",
-        applies_to=["database_instance:db1"],
         rules=[
             FirewallRule(
                 direction="ingress",
