@@ -435,3 +435,27 @@ def test_instance_store_rule_ordering_follows_machine_type():
 
     ids = [rule.id for rule in AWS_GCP_RULES]
     assert ids.index("VM-MACHINE-TYPE") < ids.index("VM-INSTANCE-STORE")
+
+
+def test_gp3_at_baseline_performance_is_not_a_difference():
+    """Live-run finding (2026-09-19): AWS reports Iops=3000 and Throughput=125 on every gp3
+    volume — the free baseline, not provisioned values. Treating those as provisioned made
+    VM-DISK-TYPE fire for every gp3 disk and claim performance was lost when none was."""
+    doc = _doc(_disk(id_="disk:baseline", type_="gp3", iops=3000, throughput_mibps=125))
+    assert VmDiskType().detect(doc) == []
+
+
+def test_gp3_above_baseline_iops_is_still_a_difference():
+    doc = _doc(_disk(id_="disk:fast", type_="gp3", iops=6000, throughput_mibps=125))
+    assert [d.subjects[0] for d in VmDiskType().detect(doc)] == ["disk:fast"]
+
+
+def test_gp3_above_baseline_throughput_is_still_a_difference():
+    doc = _doc(_disk(id_="disk:wide", type_="gp3", iops=3000, throughput_mibps=250))
+    assert [d.subjects[0] for d in VmDiskType().detect(doc)] == ["disk:wide"]
+
+
+def test_io1_always_differs_regardless_of_iops():
+    """io1 has no free baseline; its IOPS are provisioned by definition."""
+    doc = _doc(_disk(id_="disk:io", type_="io1", iops=100))
+    assert [d.subjects[0] for d in VmDiskType().detect(doc)] == ["disk:io"]

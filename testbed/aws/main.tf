@@ -350,3 +350,68 @@ resource "aws_eks_node_group" "nodes" {
     aws_iam_role_policy_attachment.node_amazon_ec2_container_registry_read_only,
   ]
 }
+# 12. A standalone EC2 instance, for the compute family (spec 4 live run).
+#
+# Deliberately attached to BOTH the app security group and the MySQL one. The MySQL group
+# guards an RDS instance too, so this is the shared-policy case spec 4 §2.1 describes: before
+# the plan-2 fix, DB-SG-FIREWALL read such a group as RDS-only and would have dropped it,
+# stripping the firewall rules from this instance.
+#
+# The app group also has an egress rule targeting the db group, which exercises the
+# NET-EGRESS-TAG narrowing (spec 4 §10): with an instance behind the peer, the destination
+# should resolve to that instance's subnet rather than the whole VPC.
+resource "aws_instance" "app" {
+  ami                         = data.aws_ami.al2023.id
+  instance_type               = "t3.micro"
+  subnet_id                   = aws_subnet.public_1.id
+  vpc_security_group_ids      = [aws_security_group.app.id, aws_security_group.mysql.id]
+  associate_public_ip_address = true
+
+  root_block_device {
+    volume_size = 8
+    volume_type = "gp3"
+  }
+
+  tags = {
+    Name = "migration-test-app"
+  }
+}
+
+data "aws_ami" "al2023" {
+  most_recent = true
+  owners      = ["amazon"]
+
+  filter {
+    name   = "name"
+    values = ["al2023-ami-2023.*-x86_64"]
+  }
+}
+
+# A second, non-boot volume: VM-DISK-EMPTY should recreate it empty at high risk.
+resource "aws_ebs_volume" "app_data" {
+  availability_zone = aws_subnet.public_1.availability_zone
+  size              = 20
+  type              = "gp3"
+
+  tags = {
+    Name = "migration-test-app-data"
+  }
+}
+
+resource "aws_volume_attachment" "app_data" {
+  device_name = "/dev/xvdb"
+  volume_id   = aws_ebs_volume.app_data.id
+  instance_id = aws_instance.app.id
+}
+
+# An Elastic IP, so VM-PUBLIC-IP has a reserved address to decide about.
+resource "aws_eip" "app" {
+  domain   = "vpc"
+  instance = aws_instance.app.id
+
+  tags = {
+    Name = "migration-test-app-eip"
+  }
+
+  depends_on = [aws_internet_gateway.gw]
+}

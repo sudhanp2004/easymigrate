@@ -12,6 +12,8 @@ from typing import Any
 from easymigrate.differences.model import Difference, DifferenceRule, Risk, Strategy
 from easymigrate.differences.rules.aws_gcp.gce_facts import (
     DISK_TYPE,
+    GP3_BASELINE_IOPS,
+    GP3_BASELINE_THROUGHPUT_MIBPS,
     IMAGE_FAMILIES,
     image_for,
     local_ssd_units,
@@ -461,6 +463,20 @@ class VmStopped(DifferenceRule):
         return _replace_object(doc, _set_hint(doc.get(obj_id), "desired_status", "TERMINATED"))
 
 
+def _is_provisioned(disk) -> bool:
+    """Whether this volume actually bought performance beyond what its type includes free.
+
+    gp3 ships 3000 IOPS and 125 MiB/s at no cost, and AWS reports those figures on every gp3
+    volume. Reading them as provisioned made VM-DISK-TYPE fire for every gp3 disk and tell the
+    user performance was being lost when none had been bought (live run, 2026-09-19).
+    """
+    if disk.type != "gp3":
+        return disk.iops is not None or disk.throughput_mibps is not None
+    return (disk.iops or 0) > GP3_BASELINE_IOPS or (
+        disk.throughput_mibps or 0
+    ) > GP3_BASELINE_THROUGHPUT_MIBPS
+
+
 def _disks(ir: IRDocument):
     return sorted(ir.of_kind(Disk), key=lambda d: d.id)
 
@@ -508,8 +524,7 @@ class VmDiskType(DifferenceRule):
         for disk in _disks(ir):
             if disk.instance_store or disk.type is None:
                 continue
-            provisioned = disk.iops is not None or disk.throughput_mibps is not None
-            if disk.type not in {"io1", "io2", "st1", "sc1"} and not provisioned:
+            if disk.type not in {"io1", "io2", "st1", "sc1"} and not _is_provisioned(disk):
                 continue
             diffs.append(
                 self.difference(

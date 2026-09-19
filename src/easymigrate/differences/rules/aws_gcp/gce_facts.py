@@ -104,6 +104,13 @@ DISK_TYPE: dict[str, str] = {
     "standard": "pd-standard",
 }
 
+# gp3's free baseline. AWS reports these figures on every gp3 volume whether or not anything
+# was provisioned, so a volume at exactly these numbers has provisioned nothing. Found in the
+# 2026-09-19 live run, where VM-DISK-TYPE fired for every gp3 disk and claimed performance was
+# lost when none had been bought. Checked 2026-09-19.
+GP3_BASELINE_IOPS = 3000
+GP3_BASELINE_THROUGHPUT_MIBPS = 125
+
 # Local SSD is attached in fixed-size devices; a partial device cannot be requested.
 LOCAL_SSD_GIB = 375
 
