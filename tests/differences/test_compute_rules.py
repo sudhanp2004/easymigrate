@@ -6,7 +6,13 @@ import pytest
 
 from easymigrate.differences.rules.aws_gcp.compute import (
     VmBootImage,
+    VmDiskEmpty,
+    VmDiskEncryption,
+    VmDiskType,
+    VmInstanceStore,
     VmMachineType,
+    VmPublicIp,
+    VmStopped,
     VmZoneMapping,
 )
 from easymigrate.ir.base import IRDocument, SourceRef
@@ -277,3 +283,155 @@ def test_rules_are_registered_in_the_declared_order():
     assert "VM-BOOT-IMAGE" in ids
     # Spec 4 §5: a Windows image constrains the machine types available.
     assert ids.index("VM-BOOT-IMAGE") < ids.index("VM-MACHINE-TYPE")
+
+
+# ---- VM-PUBLIC-IP, VM-STOPPED and the disk rules ---------------------------
+
+
+def _disk(id_="disk:data", boot=False, instance_store=False, type_="gp3", **kw):
+    from easymigrate.ir.compute import Disk
+
+    return Disk(
+        id=id_,
+        name=id_.split(":", 1)[1],
+        source=_source("volume", id_),
+        size_gib=kw.pop("size_gib", 100),
+        type=None if instance_store else type_,
+        zone="ap-south-1a",
+        boot=boot,
+        instance_store=instance_store,
+        **kw,
+    )
+
+
+def test_public_ip_defaults_to_private_only_for_both_kinds_of_exposure():
+    from easymigrate.ir.compute import ExternalAddress
+
+    rule = VmPublicIp()
+    assert rule.default == "private_only"
+
+    ephemeral = _instance(id_="compute_instance:eph").model_copy(
+        update={"external_ip": "ephemeral"}
+    )
+    address = ExternalAddress(
+        id="external_address:eip",
+        name="eip",
+        source=_source("elastic-ip", "eipalloc-1"),
+        address="13.1.1.1",
+        attached=True,
+    )
+    reserved = _instance(id_="compute_instance:eip").model_copy(
+        update={"external_ip": "external_address:eip"}
+    )
+    doc = _doc(ephemeral, address, reserved)
+
+    diffs = {d.subjects[0]: d.context for d in rule.detect(doc)}
+
+    assert set(diffs) == {"compute_instance:eph", "compute_instance:eip"}
+    assert diffs["compute_instance:eip"]["reserved"] is True
+    assert diffs["compute_instance:eph"]["reserved"] is False
+
+
+def test_public_ip_does_not_fire_for_a_private_instance():
+    assert VmPublicIp().detect(_doc(_instance())) == []
+
+
+def test_public_ip_private_only_sets_the_hint():
+    instance = _instance().model_copy(update={"external_ip": "ephemeral"})
+    doc = _doc(instance)
+    rule = VmPublicIp()
+    diff = rule.detect(doc)[0]
+
+    result = rule.apply(doc, diff, "private_only")
+
+    assert result.get(instance.id).target_hints["external"] == "none"
+
+
+def test_keeping_exposure_is_high_risk():
+    rule = VmPublicIp()
+    assert rule.strategy("ephemeral_external").risk == "high"
+    assert rule.strategy("static_external").risk == "high"
+
+
+def test_stopped_fires_only_for_stopped_instances():
+    doc = _doc(
+        _instance(id_="compute_instance:on", state="running"),
+        _instance(id_="compute_instance:off", state="stopped"),
+    )
+    diffs = VmStopped().detect(doc)
+    assert [d.subjects[0] for d in diffs] == ["compute_instance:off"]
+
+
+def test_stopped_default_costs_nothing_and_sets_terminated():
+    instance = _instance(state="stopped")
+    doc = _doc(instance)
+    rule = VmStopped()
+    diff = rule.detect(doc)[0]
+
+    assert rule.strategy("create_stopped").risk == "none"
+    result = rule.apply(doc, diff, "create_stopped")
+    assert result.get(instance.id).target_hints["desired_status"] == "TERMINATED"
+
+
+def test_disk_type_fires_for_provisioned_and_throughput_classes_only():
+    doc = _doc(
+        _disk(id_="disk:plain", type_="gp3"),
+        _disk(id_="disk:fast", type_="io1", iops=6000),
+        _disk(id_="disk:cold", type_="sc1"),
+        _disk(id_="disk:tuned", type_="gp3", iops=6000, throughput_mibps=250),
+    )
+    fired = {d.subjects[0] for d in VmDiskType().detect(doc)}
+    assert fired == {"disk:fast", "disk:cold", "disk:tuned"}
+
+
+def test_disk_type_maps_to_the_nearest_persistent_disk():
+    doc = _doc(_disk(id_="disk:fast", type_="io1", iops=6000))
+    rule = VmDiskType()
+    diff = rule.detect(doc)[0]
+    result = rule.apply(doc, diff, "nearest_pd")
+    assert result.get("disk:fast").target_hints["disk_type"] == "pd-ssd"
+
+
+def test_disk_empty_ignores_boot_and_instance_store_disks():
+    doc = _doc(
+        _disk(id_="disk:boot", boot=True),
+        _disk(id_="disk:scratch", instance_store=True),
+        _disk(id_="disk:data"),
+    )
+    assert [d.subjects[0] for d in VmDiskEmpty().detect(doc)] == ["disk:data"]
+
+
+def test_disk_empty_is_high_risk_like_the_boot_image():
+    assert VmDiskEmpty().strategy("create_empty").risk == "high"
+
+
+def test_disk_empty_omit_excludes_the_disk():
+    doc = _doc(_disk())
+    rule = VmDiskEmpty()
+    diff = rule.detect(doc)[0]
+    assert rule.apply(doc, diff, "omit").get("disk:data").excluded is not None
+
+
+def test_disk_encryption_fires_only_for_customer_managed_keys():
+    doc = _doc(
+        _disk(id_="disk:plain"),
+        _disk(id_="disk:cmek", encrypted=True, kms_key="arn:aws:kms:::key/abc"),
+        _disk(id_="disk:aws-managed", encrypted=True),
+    )
+    assert [d.subjects[0] for d in VmDiskEncryption().detect(doc)] == ["disk:cmek"]
+
+
+def test_instance_store_rounds_up_to_whole_devices():
+    doc = _doc(_disk(id_="disk:scratch", instance_store=True, size_gib=400))
+    rule = VmInstanceStore()
+    diff = rule.detect(doc)[0]
+    assert diff.context["units"] == 2
+    result = rule.apply(doc, diff, "local_ssd")
+    assert result.get("disk:scratch").target_hints["local_ssd_count"] == 2
+
+
+def test_instance_store_rule_ordering_follows_machine_type():
+    from easymigrate.differences.rules.aws_gcp import AWS_GCP_RULES
+
+    ids = [rule.id for rule in AWS_GCP_RULES]
+    assert ids.index("VM-MACHINE-TYPE") < ids.index("VM-INSTANCE-STORE")

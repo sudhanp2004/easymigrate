@@ -5,7 +5,13 @@ from __future__ import annotations
 from easymigrate.differences.model import DifferenceRule
 from easymigrate.differences.rules.aws_gcp.compute import (
     VmBootImage,
+    VmDiskEmpty,
+    VmDiskEncryption,
+    VmDiskType,
+    VmInstanceStore,
     VmMachineType,
+    VmPublicIp,
+    VmStopped,
     VmZoneMapping,
 )
 from easymigrate.differences.rules.aws_gcp.database import (
@@ -81,4 +87,11 @@ AWS_GCP_RULES: tuple[DifferenceRule, ...] = (
     VmBootImage(),
     VmMachineType(),
     VmZoneMapping(),
+    VmPublicIp(),
+    VmStopped(),
+    VmDiskType(),
+    VmDiskEmpty(),
+    VmDiskEncryption(),
+    # After VM-MACHINE-TYPE: local SSD needs a machine type that supports it (spec 4 §5).
+    VmInstanceStore(),
 )

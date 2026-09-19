@@ -328,3 +328,59 @@ An AWS AZ letter is a per-account alias over a stable AZ id, so `ap-south-1a` is
 |---|---|---|---|---|---|
 | `positional` | Assign zones by position | distinct source zones are sorted and mapped to the destination region's zones in order; co-location and spread are preserved, letters are not | low |  | yes |
 | `manual` | Handle manually | nothing is generated for this instance | low | yes |  |
+
+### A reachable-from-the-internet instance stays reachable unless you say otherwise (`VM-PUBLIC-IP`)
+
+An instance with a public address is reachable from the internet, governed only by its firewall rules. Recreating that exposure without asking would change the security posture of a machine the user may not have reviewed, so the default is to give the instance no external address.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `private_only` | No external IP | the instance has no external address; every client must reach it from inside the VPC or through a bastion. This matches nothing in the source | medium |  | yes |
+| `ephemeral_external` | Keep an ephemeral external IP | the instance stays reachable from the internet on a new, non-reserved address, governed only by the migrated firewall rules | high |  |  |
+| `static_external` | Reserve a static external IP | as above, with a reserved address, so the instance keeps a stable public endpoint; it is billed whether or not it is in use | high |  |  |
+
+### A stopped instance should not start billing on arrival (`VM-STOPPED`)
+
+An instance the customer deliberately stopped costs nothing in AWS. Creating it running in GCP would start charging for it without anyone asking.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `create_stopped` | Create it stopped | the instance is created and immediately left in TERMINATED state | none |  | yes |
+| `create_running` | Create it running | the instance is created running, and billing starts at apply time | medium |  |  |
+
+### Persistent disk performance scales with size; EBS provisions it directly (`VM-DISK-TYPE`)
+
+An EBS volume can be given IOPS and throughput independently of its size. A persistent disk cannot: its performance follows its size and type, so provisioned figures do not carry and a small disk may be slower than the source.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `nearest_pd` | Nearest persistent disk type | io1/io2 become pd-ssd, st1/sc1 become pd-standard, gp2/gp3 become pd-balanced; provisioned IOPS and throughput are lost | medium |  | yes |
+| `hyperdisk` | Hyperdisk | provisioned IOPS and throughput are preserved, at a different price and with machine-type and zone availability limits | medium |  |  |
+| `manual` | Handle manually | nothing is generated for this disk | low | yes |  |
+
+### A data volume is recreated empty (`VM-DISK-EMPTY`)
+
+EasyMigrate does not copy disk contents. A non-boot volume is recreated at the same size and type with nothing on it. A mounted empty disk is a subtler failure than a missing one, which is why this carries the same risk as the boot image.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `create_empty` | Create an empty disk | a persistent disk of matching size and type is created and attached, containing nothing from the source volume | high |  | yes |
+| `omit` | Do not create it | the disk is reported and not created; the instance comes up without it | medium |  |  |
+
+### A customer-managed KMS key does not carry to GCP (`VM-DISK-ENCRYPTION`)
+
+An EBS volume encrypted with a customer-managed AWS KMS key cannot use that key in GCP. The disk stays encrypted at rest either way; what changes is who holds the key.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `google_managed` | Google-managed encryption | the disk is encrypted at rest with Google-managed keys | low |  | yes |
+| `manual` | Handle manually | create a Cloud KMS key, grant the Compute Engine service agent, and set disk_encryption_key yourself | low | yes |  |
+
+### Instance-store volumes become fixed-size local SSDs (`VM-INSTANCE-STORE`)
+
+Both clouds lose the data when the machine stops. GCP local SSD comes in fixed 375 GiB devices and requires a machine type that supports it, so the size rarely matches the source exactly.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `local_ssd` | Attach local SSD | whole 375 GiB local SSD devices are attached, rounded up; the machine type must support local SSD | medium |  | yes |
+| `omit` | Do not attach it | the ephemeral volume is reported and not recreated | low |  |  |
