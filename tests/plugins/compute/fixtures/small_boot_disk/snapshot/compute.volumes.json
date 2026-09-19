@@ -1,0 +1,17 @@
+{
+  "Volumes": [
+    {
+      "Attachments": [
+        {
+          "InstanceId": "i-1"
+        }
+      ],
+      "AvailabilityZone": "ap-south-1a",
+      "Encrypted": false,
+      "Size": 8,
+      "Tags": [],
+      "VolumeId": "vol-small-root",
+      "VolumeType": "gp3"
+    }
+  ]
+}

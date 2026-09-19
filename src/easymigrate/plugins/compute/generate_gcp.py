@@ -251,8 +251,11 @@ def _generate_instance(
     boot_block = block.block("boot_disk")
     params = boot_block.block("initialize_params")
     params.attr("image", f"{boot_image['project']}/{boot_image['family']}")
-    if boot.size_gib:
-        params.attr("size", boot.size_gib)
+    # VM-BOOT-DISK-MINIMUM raises this when the source root volume is smaller than the stock
+    # image needs; GCP refuses a boot disk below the image's minimum.
+    size = instance.target_hints.get("boot_disk_size_gib") or boot.size_gib
+    if size:
+        params.attr("size", size)
     params.attr("type", boot.target_hints.get("disk_type", _DEFAULT_DISK_TYPE))
 
     for disk_id in instance.disks:

@@ -17,6 +17,7 @@ from easymigrate.differences.rules.aws_gcp.gce_facts import (
     IMAGE_FAMILIES,
     image_for,
     local_ssd_units,
+    min_disk_for_image,
     nearest_predefined,
 )
 from easymigrate.ir.base import IntentObject, IRDocument
@@ -719,3 +720,81 @@ class VmInstanceStore(DifferenceRule):
         if strategy_id != "local_ssd":
             raise ValueError(f"unknown strategy {strategy_id!r}")
         return _replace_object(doc, _set_hint(disk, "local_ssd_count", diff.context["units"]))
+
+
+class VmBootDiskMinimum(DifferenceRule):
+    id = "VM-BOOT-DISK-MINIMUM"
+    family = "compute"
+    title = "A GCP stock image needs a bigger boot disk than the source root volume"
+    impact = (
+        "Every Compute Engine image carries a minimum boot-disk size and the API refuses "
+        "anything smaller. An AWS AMI of the same distribution routinely fits in less, so a "
+        "root volume that was legal in AWS can be too small for the image replacing it."
+    )
+    strategies = (
+        Strategy(
+            id="grow_to_minimum",
+            title="Grow the boot disk to the image's minimum",
+            effect="the boot disk is created at the image's minimum size instead of the source's",
+            risk="none",
+        ),
+    )
+    default = "grow_to_minimum"
+
+    @staticmethod
+    def _boot_disk(obj, disks: dict[str, object]):
+        for disk_id in obj.disks:
+            disk = disks.get(disk_id)
+            if disk is not None and disk.boot:
+                return disk
+        return None
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        disks = {disk.id: disk for disk in ir.of_kind(Disk)}
+        diffs = []
+        for obj in _shapes(ir):
+            # Detection runs against the unresolved IR, before any rule's `apply`, so the
+            # `boot_image` hint does not exist yet. Recompute VM-BOOT-IMAGE's default choice
+            # here; `apply` re-reads the hint, so an image the user overrode still wins.
+            project, family = image_for(obj.platform, obj.platform_details)
+            boot = self._boot_disk(obj, disks)
+            if boot is None or not boot.size_gib:
+                continue
+            minimum = min_disk_for_image(project, family)
+            if boot.size_gib >= minimum:
+                continue
+            diffs.append(
+                self.difference(
+                    [obj.id],
+                    source_gib=boot.size_gib,
+                    minimum_gib=minimum,
+                    image_family=family,
+                )
+            )
+        return diffs
+
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
+        doc = ir.model_copy(deep=True)
+        obj_id = diff.subjects[0]
+        if obj_id not in {o.id for o in doc.objects}:
+            return doc
+        if strategy_id != "grow_to_minimum":
+            raise ValueError(f"unknown strategy {strategy_id!r}")
+        obj = doc.get(obj_id)
+        # VM-BOOT-IMAGE runs first, so by now the hint holds the image actually chosen —
+        # which may not be the default this rule detected against.
+        chosen = obj.target_hints.get("boot_image")
+        minimum = (
+            min_disk_for_image(chosen["project"], chosen["family"])
+            if chosen
+            else diff.context["minimum_gib"]
+        )
+        if minimum <= diff.context["source_gib"]:
+            return doc
+        return _replace_object(doc, _set_hint(obj, "boot_disk_size_gib", minimum))

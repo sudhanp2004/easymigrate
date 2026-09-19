@@ -117,6 +117,29 @@ LOCAL_SSD_GIB = 375
 # Compute Engine's smallest persistent disk.
 MIN_DISK_GIB = 10
 
+# Smallest boot disk each stock image will fit on. A GCP image carries a minimum size and the
+# API refuses a smaller boot disk, where an AWS AMI of the same distribution commonly fits in
+# 8 GiB. Found in the 2026-09-19 live run: an 8 GiB Amazon Linux root volume was rejected
+# against rocky-linux-9's 20 GB minimum. Keyed like IMAGE_FAMILIES. Checked 2026-09-19.
+IMAGE_MIN_DISK_GIB: dict[str, int] = {
+    "amazon": 20,
+    "rocky": 20,
+    "rhel": 20,
+    "ubuntu": 10,
+    "debian": 10,
+    "suse": 10,
+    "windows": 50,
+}
+
+
+def min_disk_for_image(project: str, family: str) -> int:
+    """The smallest boot disk the chosen stock image will fit on."""
+    for key, (image_project, image_family) in IMAGE_FAMILIES.items():
+        if (image_project, image_family) == (project, family):
+            return IMAGE_MIN_DISK_GIB.get(key, MIN_DISK_GIB)
+    return MIN_DISK_GIB
+
+
 _FAMILY_LETTER = re.compile(r"^([a-z])")
 
 

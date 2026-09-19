@@ -1,0 +1,6 @@
+{
+  "vpc-fixture": {
+    "enableDnsHostnames": true,
+    "enableDnsSupport": true
+  }
+}

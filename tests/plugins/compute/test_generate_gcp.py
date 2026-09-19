@@ -254,3 +254,15 @@ def test_generation_is_deterministic():
         _instance(disks=["disk:boot", "disk:data"], policies=["firewall_policy:web-sg"]),
     )
     assert _render(*objects) == _render(*objects)
+
+
+def test_boot_disk_uses_the_minimum_hint_when_the_source_is_too_small():
+    """Live-run finding: GCP refuses a boot disk smaller than the image (2026-09-19)."""
+    out = _render(
+        _network(),
+        _subnet(),
+        _disk(size_gib=8),
+        _instance(target_hints={"boot_disk_size_gib": 20}),
+    )
+    assert "size  = 20" in out or "size = 20" in out
+    assert "size  = 8" not in out

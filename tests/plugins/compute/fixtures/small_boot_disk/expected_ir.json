@@ -1,0 +1,183 @@
+{
+  "schema_version": "1",
+  "source": {
+    "cloud": "aws",
+    "account_id": "123456789012",
+    "region": "ap-south-1"
+  },
+  "objects": [
+    {
+      "kind": "network",
+      "id": "network:migration-test-vpc",
+      "name": "migration-test-vpc",
+      "labels": {
+        "name": "migration-test-vpc"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "vpc",
+        "id": "vpc-fixture",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "cidr_blocks": [
+        "10.0.0.0/16"
+      ],
+      "ipv6_cidr_blocks": [],
+      "dns_hostnames": true,
+      "dns_resolution": true
+    },
+    {
+      "kind": "subnet",
+      "id": "subnet:subnet-1",
+      "name": "subnet-1",
+      "labels": {
+        "name": "subnet-1"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "subnet",
+        "id": "subnet-a",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:migration-test-vpc",
+      "cidr": "10.0.1.0/24",
+      "ipv6_cidr": null,
+      "zone": "ap-south-1a",
+      "internet": "public",
+      "map_public_ip": false
+    },
+    {
+      "kind": "subnet",
+      "id": "subnet:subnet-2",
+      "name": "subnet-2",
+      "labels": {
+        "name": "subnet-2"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "subnet",
+        "id": "subnet-b",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:migration-test-vpc",
+      "cidr": "10.0.2.0/24",
+      "ipv6_cidr": null,
+      "zone": "ap-south-1b",
+      "internet": "public",
+      "map_public_ip": false
+    },
+    {
+      "kind": "firewall_policy",
+      "id": "firewall_policy:web-sg",
+      "name": "web-sg",
+      "labels": {
+        "name": "web-sg"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "security_group",
+        "id": "sg-web",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:migration-test-vpc",
+      "rules": [
+        {
+          "direction": "egress",
+          "protocol": "all",
+          "ports": [],
+          "peer": {
+            "type": "cidr",
+            "cidr": "0.0.0.0/0"
+          },
+          "description": null,
+          "icmp_type": null,
+          "icmp_code": null
+        }
+      ]
+    },
+    {
+      "kind": "disk",
+      "id": "disk:vol-small-root",
+      "name": "vol-small-root",
+      "labels": {},
+      "source": {
+        "cloud": "aws",
+        "type": "volume",
+        "id": "vol-small-root",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "size_gib": 8,
+      "type": "gp3",
+      "iops": null,
+      "throughput_mibps": null,
+      "encrypted": false,
+      "kms_key": null,
+      "zone": "ap-south-1a",
+      "boot": true,
+      "instance_store": false
+    },
+    {
+      "kind": "compute_instance",
+      "id": "compute_instance:small",
+      "name": "small",
+      "labels": {
+        "name": "small"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "instance",
+        "id": "i-small",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "instance_type": "t3.micro",
+      "vcpus": 2,
+      "memory_mib": 1024,
+      "architecture": "x86_64",
+      "image": "ami-1111",
+      "platform": "linux",
+      "platform_details": "Linux/UNIX",
+      "firewall_policies": [
+        "firewall_policy:web-sg"
+      ],
+      "disks": [
+        "disk:vol-small-root"
+      ],
+      "user_data": null,
+      "key_pair": null,
+      "key_material": null,
+      "iam_profile": null,
+      "spot": false,
+      "imds": null,
+      "state": "running",
+      "zone": "ap-south-1a",
+      "zone_id": "aps1-az1",
+      "subnet": "subnet:subnet-1",
+      "external_ip": "none",
+      "private_ip": "10.0.1.10",
+      "tenancy": "default",
+      "placement_group": null,
+      "termination_protection": false,
+      "monitoring": false,
+      "eks_cluster": null
+    }
+  ],
+  "findings": []
+}

@@ -310,6 +310,14 @@ Params:
 - `image_family`: GCP image family, e.g. debian-12
 - `image_project`: GCP image project, e.g. debian-cloud
 
+### A GCP stock image needs a bigger boot disk than the source root volume (`VM-BOOT-DISK-MINIMUM`)
+
+Every Compute Engine image carries a minimum boot-disk size and the API refuses anything smaller. An AWS AMI of the same distribution routinely fits in less, so a root volume that was legal in AWS can be too small for the image replacing it.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `grow_to_minimum` | Grow the boot disk to the image's minimum | the boot disk is created at the image's minimum size instead of the source's | none |  | yes |
+
 ### EC2 instance types and GCP machine types do not line up (`VM-MACHINE-TYPE`)
 
 GCP predefined machine types come in fixed memory-per-vCPU ratios, and AWS families do not share them. EasyMigrate never reduces memory, so a source whose ratio GCP has no type for gains memory, which costs more.

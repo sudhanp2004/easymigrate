@@ -459,3 +459,55 @@ def test_io1_always_differs_regardless_of_iops():
     """io1 has no free baseline; its IOPS are provisioned by definition."""
     doc = _doc(_disk(id_="disk:io", type_="io1", iops=100))
     assert [d.subjects[0] for d in VmDiskType().detect(doc)] == ["disk:io"]
+
+
+def test_boot_disk_grows_to_the_stock_images_minimum():
+    """Live-run finding (2026-09-19): an 8 GiB Amazon Linux root volume was rejected against
+    rocky-linux-9's 20 GB minimum. GCP images carry a minimum size; AWS AMIs of the same
+    distribution routinely fit in less."""
+    from easymigrate.differences.rules.aws_gcp.compute import VmBootDiskMinimum
+
+    boot = _disk(id_="disk:boot", boot=True, size_gib=8)
+    instance = _instance().model_copy(
+        update={
+            "disks": ["disk:boot"],
+            "target_hints": {
+                "boot_image": {"project": "rocky-linux-cloud", "family": "rocky-linux-9"}
+            },
+        }
+    )
+    doc = _doc(boot, instance)
+    rule = VmBootDiskMinimum()
+
+    diffs = rule.detect(doc)
+
+    assert len(diffs) == 1
+    assert diffs[0].context["minimum_gib"] == 20
+    assert diffs[0].context["source_gib"] == 8
+    assert rule.strategy("grow_to_minimum").risk == "none"
+
+    result = rule.apply(doc, diffs[0], "grow_to_minimum")
+    assert result.get(instance.id).target_hints["boot_disk_size_gib"] == 20
+
+
+def test_boot_disk_already_large_enough_is_not_a_difference():
+    from easymigrate.differences.rules.aws_gcp.compute import VmBootDiskMinimum
+
+    boot = _disk(id_="disk:boot", boot=True, size_gib=50)
+    instance = _instance().model_copy(
+        update={
+            "disks": ["disk:boot"],
+            "target_hints": {
+                "boot_image": {"project": "rocky-linux-cloud", "family": "rocky-linux-9"}
+            },
+        }
+    )
+    assert VmBootDiskMinimum().detect(_doc(boot, instance)) == []
+
+
+def test_boot_disk_minimum_runs_after_boot_image():
+    """It needs the chosen image to know the minimum."""
+    from easymigrate.differences.rules.aws_gcp import AWS_GCP_RULES
+
+    ids = [rule.id for rule in AWS_GCP_RULES]
+    assert ids.index("VM-BOOT-IMAGE") < ids.index("VM-BOOT-DISK-MINIMUM")

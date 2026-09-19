@@ -47,6 +47,7 @@ KEY_FACTS: dict[str, Callable[[IRDocument], bool]] = {
         and any(d.iops == 6000 and d.throughput_mibps == 250 for d in _kinds(doc, "disk"))
     ),
     "windows_instance": lambda doc: _kinds(doc, "compute_instance")[0].platform == "windows",
+    "small_boot_disk": lambda doc: _kinds(doc, "disk")[0].size_gib == 8,
     "spot_instance": lambda doc: (
         _kinds(doc, "compute_instance")[0].spot
         and _kinds(doc, "compute_instance")[0].tenancy == "dedicated"
@@ -88,6 +89,7 @@ def test_every_spec_case_has_a_fixture():
         "asg_two_az",
         "eks_member",
         "extra_volumes",
+        "small_boot_disk",
         "spot_instance",
         "standalone_linux",
         "stopped_instance",

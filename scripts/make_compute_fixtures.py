@@ -301,6 +301,31 @@ def asg_two_az() -> Files:
     }
 
 
+def small_boot_disk() -> Files:
+    """An 8 GiB Amazon Linux root volume, which no stock GCP image will fit on.
+
+    Added after the 2026-09-19 live run, where this exact shape failed at apply with
+    "Requested disk size cannot be smaller than the image size (20 GB)". Every other fixture
+    had a boot disk of 20 GiB or more, which is why nothing caught it.
+    """
+    return {
+        **_site(),
+        **_compute(
+            instances=[
+                vm.instance(
+                    "i-small",
+                    name="small",
+                    subnet_id=SUBNET_A,
+                    security_groups=[SG_WEB],
+                    block_devices=[("/dev/xvda", "vol-small-root")],
+                )
+            ],
+            volumes=[vm.volume("vol-small-root", size=8, volume_type="gp3")],
+            instance_types=[_type("t3.micro", 2, 1024)],
+        ),
+    }
+
+
 def unsupported_resources() -> Files:
     """A Dedicated Host and a Spot Fleet request: reported, never translated (spec 4 §4.4)."""
     files = {
@@ -326,6 +351,7 @@ CASES = {
     "asg_two_az": asg_two_az,
     "eks_member": eks_member,
     "extra_volumes": extra_volumes,
+    "small_boot_disk": small_boot_disk,
     "spot_instance": spot_instance,
     "standalone_linux": standalone_linux,
     "stopped_instance": stopped_instance,
