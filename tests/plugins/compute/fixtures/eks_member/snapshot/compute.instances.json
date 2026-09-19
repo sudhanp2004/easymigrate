@@ -1,0 +1,53 @@
+{
+  "Instances": [
+    {
+      "Architecture": "x86_64",
+      "BlockDeviceMappings": [
+        {
+          "DeviceName": "/dev/xvda",
+          "Ebs": {
+            "VolumeId": "vol-node-root"
+          }
+        }
+      ],
+      "ImageId": "ami-1111",
+      "InstanceId": "i-node",
+      "InstanceType": "t3.micro",
+      "Monitoring": {
+        "State": "disabled"
+      },
+      "NetworkInterfaces": [
+        {
+          "NetworkInterfaceId": "eni-1",
+          "SubnetId": "subnet-a"
+        }
+      ],
+      "Placement": {
+        "AvailabilityZone": "ap-south-1a",
+        "AvailabilityZoneId": "aps1-az1",
+        "Tenancy": "default"
+      },
+      "PrivateIpAddress": "10.0.1.10",
+      "RootDeviceName": "/dev/xvda",
+      "SecurityGroups": [
+        {
+          "GroupId": "sg-web"
+        }
+      ],
+      "State": {
+        "Name": "running"
+      },
+      "SubnetId": "subnet-a",
+      "Tags": [
+        {
+          "Key": "Name",
+          "Value": "eks-node"
+        },
+        {
+          "Key": "eks:cluster-name",
+          "Value": "test-eks-cluster"
+        }
+      ]
+    }
+  ]
+}

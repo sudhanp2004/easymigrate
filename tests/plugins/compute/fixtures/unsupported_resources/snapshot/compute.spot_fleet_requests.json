@@ -1,0 +1,7 @@
+{
+  "SpotFleetRequestConfigs": [
+    {
+      "SpotFleetRequestId": "sfr-batch"
+    }
+  ]
+}

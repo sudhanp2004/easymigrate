@@ -1,0 +1,49 @@
+{
+  "Instances": [
+    {
+      "Architecture": "x86_64",
+      "BlockDeviceMappings": [
+        {
+          "DeviceName": "/dev/xvda",
+          "Ebs": {
+            "VolumeId": "vol-batch-root"
+          }
+        }
+      ],
+      "ImageId": "ami-1111",
+      "InstanceId": "i-batch",
+      "InstanceType": "t3.micro",
+      "Monitoring": {
+        "State": "disabled"
+      },
+      "NetworkInterfaces": [
+        {
+          "NetworkInterfaceId": "eni-1",
+          "SubnetId": "subnet-b"
+        }
+      ],
+      "Placement": {
+        "AvailabilityZone": "ap-south-1b",
+        "AvailabilityZoneId": "aps1-az2",
+        "Tenancy": "default"
+      },
+      "PrivateIpAddress": "10.0.1.10",
+      "RootDeviceName": "/dev/xvda",
+      "SecurityGroups": [
+        {
+          "GroupId": "sg-web"
+        }
+      ],
+      "State": {
+        "Name": "stopped"
+      },
+      "SubnetId": "subnet-b",
+      "Tags": [
+        {
+          "Key": "Name",
+          "Value": "batch"
+        }
+      ]
+    }
+  ]
+}

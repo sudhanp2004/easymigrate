@@ -1,0 +1,10 @@
+{
+  "Images": [
+    {
+      "ImageId": "ami-1111",
+      "Name": "Windows_Server-2022-English-Full-Base",
+      "Platform": "windows",
+      "PlatformDetails": "Windows"
+    }
+  ]
+}

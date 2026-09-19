@@ -1,0 +1,10 @@
+[
+  {
+    "Attachments": [
+      {
+        "VpcId": "vpc-fixture"
+      }
+    ],
+    "InternetGatewayId": "igw-fixture"
+  }
+]

@@ -1,0 +1,25 @@
+{
+  "AutoScalingGroups": [
+    {
+      "AutoScalingGroupName": "web-asg",
+      "AvailabilityZones": [
+        "ap-south-1a",
+        "ap-south-1b"
+      ],
+      "DesiredCapacity": 3,
+      "HealthCheckGracePeriod": 300,
+      "HealthCheckType": "ELB",
+      "LaunchTemplate": {
+        "LaunchTemplateId": "lt-web",
+        "Version": "1"
+      },
+      "MaxSize": 6,
+      "MinSize": 2,
+      "Tags": [],
+      "TargetGroupARNs": [
+        "arn:aws:elasticloadbalancing:ap-south-1:123456789012:targetgroup/web/1"
+      ],
+      "VPCZoneIdentifier": "subnet-a,subnet-b"
+    }
+  ]
+}

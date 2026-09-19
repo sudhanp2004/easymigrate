@@ -1,0 +1,38 @@
+{
+  "Volumes": [
+    {
+      "Attachments": [
+        {
+          "InstanceId": "i-1"
+        }
+      ],
+      "AvailabilityZone": "ap-south-1a",
+      "Encrypted": false,
+      "Size": 20,
+      "Tags": [],
+      "VolumeId": "vol-data-root",
+      "VolumeType": "gp3"
+    },
+    {
+      "Attachments": [
+        {
+          "InstanceId": "i-1"
+        }
+      ],
+      "AvailabilityZone": "ap-south-1a",
+      "Encrypted": true,
+      "Iops": 6000,
+      "KmsKeyId": "arn:aws:kms:ap-south-1:123456789012:key/data",
+      "Size": 500,
+      "Tags": [
+        {
+          "Key": "Name",
+          "Value": "data-1"
+        }
+      ],
+      "Throughput": 250,
+      "VolumeId": "vol-data-1",
+      "VolumeType": "gp3"
+    }
+  ]
+}

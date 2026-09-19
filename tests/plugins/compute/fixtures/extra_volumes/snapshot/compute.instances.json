@@ -1,0 +1,58 @@
+{
+  "Instances": [
+    {
+      "Architecture": "x86_64",
+      "BlockDeviceMappings": [
+        {
+          "DeviceName": "/dev/xvda",
+          "Ebs": {
+            "VolumeId": "vol-data-root"
+          }
+        },
+        {
+          "DeviceName": "/dev/xvdb",
+          "Ebs": {
+            "VolumeId": "vol-data-1"
+          }
+        },
+        {
+          "DeviceName": "/dev/xvdc"
+        }
+      ],
+      "ImageId": "ami-1111",
+      "InstanceId": "i-data",
+      "InstanceType": "m5.xlarge",
+      "Monitoring": {
+        "State": "disabled"
+      },
+      "NetworkInterfaces": [
+        {
+          "NetworkInterfaceId": "eni-1",
+          "SubnetId": "subnet-a"
+        }
+      ],
+      "Placement": {
+        "AvailabilityZone": "ap-south-1a",
+        "AvailabilityZoneId": "aps1-az1",
+        "Tenancy": "default"
+      },
+      "PrivateIpAddress": "10.0.1.10",
+      "RootDeviceName": "/dev/xvda",
+      "SecurityGroups": [
+        {
+          "GroupId": "sg-web"
+        }
+      ],
+      "State": {
+        "Name": "running"
+      },
+      "SubnetId": "subnet-a",
+      "Tags": [
+        {
+          "Key": "Name",
+          "Value": "data"
+        }
+      ]
+    }
+  ]
+}

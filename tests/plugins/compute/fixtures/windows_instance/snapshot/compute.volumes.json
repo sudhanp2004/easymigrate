@@ -1,0 +1,17 @@
+{
+  "Volumes": [
+    {
+      "Attachments": [
+        {
+          "InstanceId": "i-1"
+        }
+      ],
+      "AvailabilityZone": "ap-south-1a",
+      "Encrypted": false,
+      "Size": 50,
+      "Tags": [],
+      "VolumeId": "vol-win-root",
+      "VolumeType": "gp2"
+    }
+  ]
+}

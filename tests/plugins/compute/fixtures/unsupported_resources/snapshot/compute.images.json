@@ -1,0 +1,9 @@
+{
+  "Images": [
+    {
+      "ImageId": "ami-1111",
+      "Name": "amzn2-x86_64",
+      "PlatformDetails": "Linux/UNIX"
+    }
+  ]
+}

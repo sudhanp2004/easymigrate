@@ -1,0 +1,58 @@
+{
+  "Instances": [
+    {
+      "Architecture": "x86_64",
+      "BlockDeviceMappings": [
+        {
+          "DeviceName": "/dev/xvda",
+          "Ebs": {
+            "VolumeId": "vol-spot-root"
+          }
+        }
+      ],
+      "IamInstanceProfile": {
+        "Arn": "arn:aws:iam::123456789012:instance-profile/app-role"
+      },
+      "ImageId": "ami-1111",
+      "InstanceId": "i-spot",
+      "InstanceLifecycle": "spot",
+      "InstanceType": "c5.xlarge",
+      "MetadataOptions": {
+        "HttpPutResponseHopLimit": 2,
+        "HttpTokens": "required"
+      },
+      "Monitoring": {
+        "State": "enabled"
+      },
+      "NetworkInterfaces": [
+        {
+          "NetworkInterfaceId": "eni-1",
+          "SubnetId": "subnet-a"
+        }
+      ],
+      "Placement": {
+        "AvailabilityZone": "ap-south-1a",
+        "AvailabilityZoneId": "aps1-az1",
+        "GroupName": "cluster-1",
+        "Tenancy": "dedicated"
+      },
+      "PrivateIpAddress": "10.0.1.10",
+      "RootDeviceName": "/dev/xvda",
+      "SecurityGroups": [
+        {
+          "GroupId": "sg-web"
+        }
+      ],
+      "State": {
+        "Name": "running"
+      },
+      "SubnetId": "subnet-a",
+      "Tags": [
+        {
+          "Key": "Name",
+          "Value": "spot"
+        }
+      ]
+    }
+  ]
+}

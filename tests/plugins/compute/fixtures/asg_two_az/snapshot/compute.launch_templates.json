@@ -1,0 +1,35 @@
+{
+  "lt-web": {
+    "template": {
+      "DefaultVersionNumber": 1,
+      "LaunchTemplateId": "lt-web",
+      "LaunchTemplateName": "web-lt"
+    },
+    "versions": [
+      {
+        "LaunchTemplateData": {
+          "ImageId": "ami-1111",
+          "InstanceType": "t3.small",
+          "KeyName": "web-key",
+          "SecurityGroupIds": [
+            "sg-web"
+          ],
+          "UserData": "IyEvYmluL2Jhc2gKZWNobyBhc2cK"
+        },
+        "VersionNumber": 1
+      },
+      {
+        "LaunchTemplateData": {
+          "ImageId": "ami-1111",
+          "InstanceType": "t3.medium",
+          "KeyName": "web-key",
+          "SecurityGroupIds": [
+            "sg-web"
+          ],
+          "UserData": "IyEvYmluL2Jhc2gKZWNobyBhc2cK"
+        },
+        "VersionNumber": 2
+      }
+    ]
+  }
+}

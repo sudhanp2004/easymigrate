@@ -1,0 +1,24 @@
+[
+  {
+    "CidrBlock": "10.0.0.0/16",
+    "CidrBlockAssociationSet": [
+      {
+        "CidrBlock": "10.0.0.0/16",
+        "CidrBlockState": {
+          "State": "associated"
+        }
+      }
+    ],
+    "Ipv6CidrBlockAssociationSet": [],
+    "IsDefault": false,
+    "OwnerId": "123456789012",
+    "State": "available",
+    "Tags": [
+      {
+        "Key": "Name",
+        "Value": "migration-test-vpc"
+      }
+    ],
+    "VpcId": "vpc-fixture"
+  }
+]

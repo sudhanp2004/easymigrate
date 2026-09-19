@@ -1,0 +1,196 @@
+{
+  "schema_version": "1",
+  "source": {
+    "cloud": "aws",
+    "account_id": "123456789012",
+    "region": "ap-south-1"
+  },
+  "objects": [
+    {
+      "kind": "network",
+      "id": "network:migration-test-vpc",
+      "name": "migration-test-vpc",
+      "labels": {
+        "name": "migration-test-vpc"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "vpc",
+        "id": "vpc-fixture",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "cidr_blocks": [
+        "10.0.0.0/16"
+      ],
+      "ipv6_cidr_blocks": [],
+      "dns_hostnames": true,
+      "dns_resolution": true
+    },
+    {
+      "kind": "subnet",
+      "id": "subnet:subnet-1",
+      "name": "subnet-1",
+      "labels": {
+        "name": "subnet-1"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "subnet",
+        "id": "subnet-a",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:migration-test-vpc",
+      "cidr": "10.0.1.0/24",
+      "ipv6_cidr": null,
+      "zone": "ap-south-1a",
+      "internet": "public",
+      "map_public_ip": false
+    },
+    {
+      "kind": "subnet",
+      "id": "subnet:subnet-2",
+      "name": "subnet-2",
+      "labels": {
+        "name": "subnet-2"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "subnet",
+        "id": "subnet-b",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:migration-test-vpc",
+      "cidr": "10.0.2.0/24",
+      "ipv6_cidr": null,
+      "zone": "ap-south-1b",
+      "internet": "public",
+      "map_public_ip": false
+    },
+    {
+      "kind": "firewall_policy",
+      "id": "firewall_policy:web-sg",
+      "name": "web-sg",
+      "labels": {
+        "name": "web-sg"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "security_group",
+        "id": "sg-web",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "network": "network:migration-test-vpc",
+      "rules": [
+        {
+          "direction": "egress",
+          "protocol": "all",
+          "ports": [],
+          "peer": {
+            "type": "cidr",
+            "cidr": "0.0.0.0/0"
+          },
+          "description": null,
+          "icmp_type": null,
+          "icmp_code": null
+        }
+      ],
+      "applies_to": []
+    },
+    {
+      "kind": "instance_template",
+      "id": "instance_template:web-lt",
+      "name": "web-lt",
+      "labels": {},
+      "source": {
+        "cloud": "aws",
+        "type": "launch-template",
+        "id": "lt-web:1",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "instance_type": "t3.small",
+      "vcpus": 2,
+      "memory_mib": 2048,
+      "architecture": "x86_64",
+      "image": "ami-1111",
+      "platform": "linux",
+      "platform_details": "Linux/UNIX",
+      "firewall_policies": [
+        "firewall_policy:web-sg"
+      ],
+      "disks": [],
+      "user_data": "#!/bin/bash\necho asg\n",
+      "key_pair": "web-key",
+      "key_material": null,
+      "iam_profile": null,
+      "spot": false,
+      "imds": null,
+      "version": "1",
+      "default_version": "1"
+    },
+    {
+      "kind": "instance_group",
+      "id": "instance_group:web-asg",
+      "name": "web-asg",
+      "labels": {},
+      "source": {
+        "cloud": "aws",
+        "type": "autoScalingGroup",
+        "id": "web-asg",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "template": "instance_template:web-lt",
+      "min_size": 2,
+      "max_size": 6,
+      "desired_capacity": 3,
+      "zones": [
+        "ap-south-1a",
+        "ap-south-1b"
+      ],
+      "subnets": [
+        "subnet:subnet-1",
+        "subnet:subnet-2"
+      ],
+      "health_check_type": "ELB",
+      "health_check_grace": 300,
+      "target_groups": [
+        "arn:aws:elasticloadbalancing:ap-south-1:123456789012:targetgroup/web/1"
+      ],
+      "scaling_policies": [
+        {
+          "name": "cpu",
+          "policy_type": "TargetTrackingScaling",
+          "metric": "ASGAverageCPUUtilization",
+          "target_value": 60.0
+        }
+      ],
+      "mixed_instances": false
+    }
+  ],
+  "findings": [
+    {
+      "level": "info",
+      "code": "VM-LT-VERSION-UNUSED",
+      "message": "launch template lt-web version 2 is referenced by no Auto Scaling group; it is recorded but not migrated.",
+      "subject": "lt-web:2",
+      "suggestion": null
+    }
+  ]
+}
