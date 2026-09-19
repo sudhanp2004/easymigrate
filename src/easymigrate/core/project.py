@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from easymigrate import __version__
 from easymigrate.ir.base import IRDocument, StrictModel
@@ -24,6 +24,19 @@ class StageInputMissing(Exception):
         self.artifact = artifact
         self.command = command
         super().__init__(f"{artifact.name} not found. Run `easymigrate {command}` first.")
+
+
+class StaleProjectState(Exception):
+    """A saved artifact was written by an EasyMigrate whose IR had different fields."""
+
+    def __init__(self, artifact: Path, command: str) -> None:
+        self.artifact = artifact
+        self.command = command
+        super().__init__(
+            f"{artifact.name} was written by a different version of EasyMigrate and can no "
+            f"longer be read. Nothing is lost: run `easymigrate {command}` again to rebuild it "
+            "from the scan already on disk."
+        )
 
 
 class SourceConfig(StrictModel):
@@ -187,7 +200,31 @@ class Project:
     def read_ir(self, path: Path, *, produced_by: str) -> IRDocument:
         if not path.exists():
             raise StageInputMissing(path, produced_by)
-        return IRDocument.model_validate_json(path.read_text(encoding="utf-8"))
+        text = path.read_text(encoding="utf-8")
+        try:
+            return IRDocument.model_validate_json(text)
+        except ValidationError as exc:
+            if not _looks_like_an_older_schema(exc):
+                raise
+            raise StaleProjectState(path, produced_by) from None
+
+
+def _looks_like_an_older_schema(exc: ValidationError) -> bool:
+    """Whether this validation failure is a field the IR no longer has.
+
+    The IR forbids unknown fields on purpose, so a document written by an older EasyMigrate
+    that carried a since-removed field fails to load. That is a stale-state problem with an
+    easy fix, not a corrupt file, and it deserves to say so (spec 4 §2.1 removed
+    `FirewallPolicy.applies_to` without this, and the user met a raw pydantic dump).
+    """
+    for error in exc.errors():
+        if error.get("type") == "extra_forbidden":
+            return True
+        # `IRDocument._dispatch_kinds` re-raises a per-object failure as a ValueError, so the
+        # original extra_forbidden survives only inside the message.
+        if "Extra inputs are not permitted" in str(error.get("msg", "")):
+            return True
+    return False
 
 
 def _find_git_root(start: Path) -> Path | None:

@@ -236,3 +236,58 @@ def test_write_secrets_is_atomic(tmp_path):
     p.write_secrets({"db_password_a": "hunter2hunter2"})
 
     assert not list(p.terraform_dir.glob("*.tmp"))
+
+
+def test_ir_from_an_older_schema_says_so_instead_of_dumping_pydantic(tmp_path):
+    """Live-run finding (2026-09-19): after spec 4 §2.1 removed FirewallPolicy.applies_to,
+    an ir.json written by the previous version failed with a raw `extra_forbidden` dump that
+    gave the user no idea the fix was simply to re-run analyze."""
+    from easymigrate.core.project import Project, StaleProjectState
+
+    project = Project(tmp_path)
+    project.init()
+    path = project.ir_path
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": "1",
+                "source": {"cloud": "aws", "account_id": "1", "region": "ap-south-1"},
+                "objects": [
+                    {
+                        "kind": "firewall_policy",
+                        "id": "firewall_policy:web",
+                        "name": "web",
+                        "source": {
+                            "cloud": "aws",
+                            "type": "security-group",
+                            "id": "sg-1",
+                            "region": "ap-south-1",
+                        },
+                        "network": "network:vpc",
+                        "applies_to": [],
+                    }
+                ],
+            }
+        )
+    )
+
+    with pytest.raises(StaleProjectState) as exc:
+        project.read_ir(path, produced_by="analyze")
+
+    message = str(exc.value)
+    assert "different version" in message
+    assert "easymigrate analyze" in message
+    assert "Nothing is lost" in message
+
+
+def test_a_genuinely_corrupt_ir_still_raises_the_validation_error(tmp_path):
+    from easymigrate.core.project import Project, StaleProjectState
+
+    project = Project(tmp_path)
+    project.init()
+    path = project.ir_path
+    path.write_text(json.dumps({"schema_version": "1", "source": {}, "objects": [{}]}))
+
+    with pytest.raises(Exception) as exc:
+        project.read_ir(path, produced_by="analyze")
+    assert not isinstance(exc.value, StaleProjectState)
