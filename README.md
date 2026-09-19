@@ -35,7 +35,7 @@ Migrates cloud infrastructure from AWS to GCP. It scans the live source cloud, b
 
 These commands work in the current directory and keep their output in `.easymigrate/`. That folder holds account metadata such as account IDs and ARNs; keep it private. It is added to `.gitignore` automatically inside a git repository. After every stage that has enough information, a report is written to `.easymigrate/report.md` and `.easymigrate/report.json`.
 
-Scanned families: networking (VPCs, subnets, route tables, internet/NAT gateways, security groups, network ACLs) and databases (RDS instances and Multi-AZ DB clusters).
+Scanned families: networking (VPCs, subnets, route tables, internet/NAT gateways, security groups, network ACLs), databases (RDS instances and Multi-AZ DB clusters) and compute (EC2 instances, EBS volumes, Elastic IPs, launch templates and Auto Scaling groups). Compute is scanned and recorded in the IR; generating GCP resources for it is still in progress.
 
 Permissions `scan` needs: `ec2:DescribeVpcs`, `ec2:DescribeVpcAttribute`, `ec2:DescribeSubnets`, `ec2:DescribeRouteTables`, `ec2:DescribeInternetGateways`, `ec2:DescribeNatGateways`, `ec2:DescribeSecurityGroups`, `ec2:DescribeNetworkAcls`, `rds:DescribeDBInstances`, `rds:DescribeDBSubnetGroups`, `rds:DescribeDBParameterGroups`, `rds:DescribeDBParameters`, `rds:DescribeDBClusters`, `ec2:DescribeInstanceTypes`, `tag:GetResources`, `sts:GetCallerIdentity`. Missing permissions are reported as scan gaps rather than failing the scan.
 

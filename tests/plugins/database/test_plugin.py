@@ -27,4 +27,8 @@ def test_generate_gcp_delegates_to_the_generator():
 
 
 def test_registry_orders_network_before_database():
-    assert [p.name for p in PLUGINS] == ["network", "database"]
+    """The database normalizer reads network objects out of ctx.objects, so network must run
+    first. Asserted as relative order, not an exact tuple, so adding a family does not break
+    this; `check_plugin_order` enforces the same thing from `requires`."""
+    names = [p.name for p in PLUGINS]
+    assert names.index("network") < names.index("database")

@@ -9,6 +9,7 @@ from easymigrate.core.errors import SourceConnectionError
 from easymigrate.core.plugin import Plugin
 from easymigrate.engine import tofu as tofu_engine
 from easymigrate.ir.base import IRDocument
+from easymigrate.plugins.compute import ComputePlugin
 from easymigrate.plugins.database import DatabasePlugin
 from easymigrate.plugins.database.generate_gcp import (
     database_password_variables as _database_password_variables,
@@ -18,7 +19,7 @@ from easymigrate.providers.aws import source as aws_source
 from easymigrate.providers.gcp import boilerplate, state_bucket
 from easymigrate.providers.gcp import services as gcp_services
 
-PLUGINS: tuple[Plugin, ...] = (NetworkPlugin(), DatabasePlugin())
+PLUGINS: tuple[Plugin, ...] = (NetworkPlugin(), ComputePlugin(), DatabasePlugin())
 
 
 class AwsSource:
