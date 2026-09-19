@@ -12,9 +12,14 @@ def test_compute_plugin_satisfies_the_protocol():
     assert plugin.name == "compute"
 
 
-def test_generate_is_an_empty_file_until_plan_3():
+def test_generate_emits_nothing_when_there_are_no_instances():
+    """An empty document must still produce a valid, empty file rather than a bare header."""
+    from easymigrate.core.plugin import GenerateContext
+
     empty = IRDocument(source={"cloud": "aws", "account_id": "1", "region": "ap-south-1"})
-    assert ComputePlugin().generate_gcp(empty, None).render() == ""
+    ctx = GenerateContext(project="p", region="asia-south1", version="0.1.0")
+    rendered = ComputePlugin().generate_gcp(empty, ctx).render()
+    assert "google_compute_instance" not in rendered
 
 
 def test_compute_is_registered_after_network():

@@ -8,76 +8,76 @@ Every IR field the compute generator could touch is declared here, so an IR fiel
 
 | Field | Declaration |
 |---|---|
-| `architecture` | not_generated:generation is spec 4 plan 3 |
-| `disks` | not_generated:generation is spec 4 plan 3 |
-| `eks_cluster` | not_generated:generation is spec 4 plan 3 |
+| `architecture` | recorded:captured in the IR and the report; nothing is generated from it |
+| `disks` | exact:boot disk plus attached_disk/scratch_disk |
+| `eks_cluster` | always_excluded:EKS members are left to the EKS family (spec 4 §1) |
 | `excluded` | metadata |
-| `external_ip` | not_generated:generation is spec 4 plan 3 |
-| `firewall_policies` | not_generated:generation is spec 4 plan 3 |
-| `iam_profile` | not_generated:generation is spec 4 plan 3 |
+| `external_ip` | decision:VM-PUBLIC-IP decides access_config |
+| `firewall_policies` | exact:becomes the instance's network tags |
+| `iam_profile` | not_generated:VM-IAM-PROFILE is manual-only, spec 4 plan 4 |
 | `id` | metadata |
-| `image` | not_generated:generation is spec 4 plan 3 |
-| `imds` | not_generated:generation is spec 4 plan 3 |
-| `instance_type` | not_generated:generation is spec 4 plan 3 |
-| `key_material` | not_generated:generation is spec 4 plan 3 |
-| `key_pair` | not_generated:generation is spec 4 plan 3 |
+| `image` | derived:VM-BOOT-IMAGE chooses a stock image; the AMI itself is not migrated |
+| `imds` | not_generated:VM-IMDS is spec 4 plan 4 |
+| `instance_type` | derived:VM-MACHINE-TYPE chooses the GCP machine type |
+| `key_material` | not_generated:VM-SSH-KEYS is spec 4 plan 4 |
+| `key_pair` | not_generated:VM-SSH-KEYS is spec 4 plan 4 |
 | `kind` | metadata |
 | `labels` | metadata |
-| `memory_mib` | not_generated:generation is spec 4 plan 3 |
-| `monitoring` | not_generated:generation is spec 4 plan 3 |
+| `memory_mib` | derived:input to VM-MACHINE-TYPE |
+| `monitoring` | recorded:captured in the IR and the report; nothing is generated from it |
 | `name` | metadata |
-| `placement_group` | not_generated:generation is spec 4 plan 3 |
-| `platform` | not_generated:generation is spec 4 plan 3 |
-| `platform_details` | not_generated:generation is spec 4 plan 3 |
-| `private_ip` | not_generated:generation is spec 4 plan 3 |
+| `placement_group` | not_generated:VM-PLACEMENT-GROUP is manual-only, spec 4 plan 4 |
+| `platform` | derived:input to VM-BOOT-IMAGE |
+| `platform_details` | derived:input to VM-BOOT-IMAGE |
+| `private_ip` | recorded:captured in the IR and the report; nothing is generated from it |
 | `resolution` | metadata |
 | `source` | metadata |
-| `spot` | not_generated:generation is spec 4 plan 3 |
-| `state` | not_generated:generation is spec 4 plan 3 |
-| `subnet` | not_generated:generation is spec 4 plan 3 |
+| `spot` | not_generated:VM-SPOT is spec 4 plan 4 |
+| `state` | decision:VM-STOPPED sets desired_status |
+| `subnet` | exact:network_interface.subnetwork |
 | `target_hints` | metadata |
-| `tenancy` | not_generated:generation is spec 4 plan 3 |
-| `termination_protection` | not_generated:generation is spec 4 plan 3 |
-| `user_data` | not_generated:generation is spec 4 plan 3 |
-| `vcpus` | not_generated:generation is spec 4 plan 3 |
-| `zone` | not_generated:generation is spec 4 plan 3 |
-| `zone_id` | not_generated:generation is spec 4 plan 3 |
+| `tenancy` | not_generated:VM-TENANCY is manual-only, spec 4 plan 4 |
+| `termination_protection` | not_generated:spec 4 plan 4 |
+| `user_data` | not_generated:VM-USER-DATA is spec 4 plan 4 |
+| `vcpus` | derived:input to VM-MACHINE-TYPE |
+| `zone` | decision:VM-ZONE-MAPPING maps it positionally |
+| `zone_id` | derived:input to VM-ZONE-MAPPING |
 
 ## `disk`
 
 | Field | Declaration |
 |---|---|
-| `boot` | not_generated:generation is spec 4 plan 3 |
-| `encrypted` | not_generated:generation is spec 4 plan 3 |
+| `boot` | exact:boot_disk versus attached_disk |
+| `encrypted` | decision:VM-DISK-ENCRYPTION |
 | `excluded` | metadata |
 | `id` | metadata |
-| `instance_store` | not_generated:generation is spec 4 plan 3 |
-| `iops` | not_generated:generation is spec 4 plan 3 |
+| `instance_store` | exact:becomes scratch_disk |
+| `iops` | always_excluded:persistent disk performance follows size, not provisioning |
 | `kind` | metadata |
-| `kms_key` | not_generated:generation is spec 4 plan 3 |
+| `kms_key` | always_excluded:an AWS KMS key cannot be used by GCP |
 | `labels` | metadata |
 | `name` | metadata |
 | `resolution` | metadata |
-| `size_gib` | not_generated:generation is spec 4 plan 3 |
+| `size_gib` | exact |
 | `source` | metadata |
 | `target_hints` | metadata |
-| `throughput_mibps` | not_generated:generation is spec 4 plan 3 |
-| `type` | not_generated:generation is spec 4 plan 3 |
-| `zone` | not_generated:generation is spec 4 plan 3 |
+| `throughput_mibps` | always_excluded:persistent disk performance follows size |
+| `type` | decision:VM-DISK-TYPE maps it to a persistent disk type |
+| `zone` | derived:follows the instance's mapped zone |
 
 ## `external_address`
 
 | Field | Declaration |
 |---|---|
-| `address` | not_generated:generation is spec 4 plan 3 |
-| `attached` | not_generated:generation is spec 4 plan 3 |
+| `address` | not_generated:spec 4 plan 4 |
+| `attached` | not_generated:spec 4 plan 4 |
 | `excluded` | metadata |
 | `id` | metadata |
 | `kind` | metadata |
 | `labels` | metadata |
 | `name` | metadata |
 | `resolution` | metadata |
-| `scope` | not_generated:generation is spec 4 plan 3 |
+| `scope` | not_generated:spec 4 plan 4 |
 | `source` | metadata |
 | `target_hints` | metadata |
 
@@ -85,52 +85,52 @@ Every IR field the compute generator could touch is declared here, so an IR fiel
 
 | Field | Declaration |
 |---|---|
-| `desired_capacity` | not_generated:generation is spec 4 plan 3 |
+| `desired_capacity` | not_generated:managed instance groups are spec 4 plan 5 |
 | `excluded` | metadata |
-| `health_check_grace` | not_generated:generation is spec 4 plan 3 |
-| `health_check_type` | not_generated:generation is spec 4 plan 3 |
+| `health_check_grace` | not_generated:managed instance groups are spec 4 plan 5 |
+| `health_check_type` | not_generated:managed instance groups are spec 4 plan 5 |
 | `id` | metadata |
 | `kind` | metadata |
 | `labels` | metadata |
-| `max_size` | not_generated:generation is spec 4 plan 3 |
-| `min_size` | not_generated:generation is spec 4 plan 3 |
-| `mixed_instances` | not_generated:generation is spec 4 plan 3 |
+| `max_size` | not_generated:managed instance groups are spec 4 plan 5 |
+| `min_size` | not_generated:managed instance groups are spec 4 plan 5 |
+| `mixed_instances` | not_generated:managed instance groups are spec 4 plan 5 |
 | `name` | metadata |
 | `resolution` | metadata |
-| `scaling_policies` | not_generated:generation is spec 4 plan 3 |
+| `scaling_policies` | not_generated:managed instance groups are spec 4 plan 5 |
 | `source` | metadata |
-| `subnets` | not_generated:generation is spec 4 plan 3 |
-| `target_groups` | not_generated:generation is spec 4 plan 3 |
+| `subnets` | not_generated:managed instance groups are spec 4 plan 5 |
+| `target_groups` | not_generated:managed instance groups are spec 4 plan 5 |
 | `target_hints` | metadata |
-| `template` | not_generated:generation is spec 4 plan 3 |
-| `zones` | not_generated:generation is spec 4 plan 3 |
+| `template` | not_generated:managed instance groups are spec 4 plan 5 |
+| `zones` | not_generated:managed instance groups are spec 4 plan 5 |
 
 ## `instance_template`
 
 | Field | Declaration |
 |---|---|
-| `architecture` | not_generated:generation is spec 4 plan 3 |
-| `default_version` | not_generated:generation is spec 4 plan 3 |
-| `disks` | not_generated:generation is spec 4 plan 3 |
+| `architecture` | not_generated:instance templates are spec 4 plan 5 |
+| `default_version` | not_generated:instance templates are spec 4 plan 5 |
+| `disks` | not_generated:instance templates are spec 4 plan 5 |
 | `excluded` | metadata |
-| `firewall_policies` | not_generated:generation is spec 4 plan 3 |
-| `iam_profile` | not_generated:generation is spec 4 plan 3 |
+| `firewall_policies` | not_generated:instance templates are spec 4 plan 5 |
+| `iam_profile` | not_generated:instance templates are spec 4 plan 5 |
 | `id` | metadata |
-| `image` | not_generated:generation is spec 4 plan 3 |
-| `imds` | not_generated:generation is spec 4 plan 3 |
-| `instance_type` | not_generated:generation is spec 4 plan 3 |
-| `key_material` | not_generated:generation is spec 4 plan 3 |
-| `key_pair` | not_generated:generation is spec 4 plan 3 |
+| `image` | not_generated:instance templates are spec 4 plan 5 |
+| `imds` | not_generated:instance templates are spec 4 plan 5 |
+| `instance_type` | not_generated:instance templates are spec 4 plan 5 |
+| `key_material` | not_generated:instance templates are spec 4 plan 5 |
+| `key_pair` | not_generated:instance templates are spec 4 plan 5 |
 | `kind` | metadata |
 | `labels` | metadata |
-| `memory_mib` | not_generated:generation is spec 4 plan 3 |
+| `memory_mib` | not_generated:instance templates are spec 4 plan 5 |
 | `name` | metadata |
-| `platform` | not_generated:generation is spec 4 plan 3 |
-| `platform_details` | not_generated:generation is spec 4 plan 3 |
+| `platform` | not_generated:instance templates are spec 4 plan 5 |
+| `platform_details` | not_generated:instance templates are spec 4 plan 5 |
 | `resolution` | metadata |
 | `source` | metadata |
-| `spot` | not_generated:generation is spec 4 plan 3 |
+| `spot` | not_generated:instance templates are spec 4 plan 5 |
 | `target_hints` | metadata |
-| `user_data` | not_generated:generation is spec 4 plan 3 |
-| `vcpus` | not_generated:generation is spec 4 plan 3 |
-| `version` | not_generated:generation is spec 4 plan 3 |
+| `user_data` | not_generated:instance templates are spec 4 plan 5 |
+| `vcpus` | not_generated:instance templates are spec 4 plan 5 |
+| `version` | not_generated:instance templates are spec 4 plan 5 |

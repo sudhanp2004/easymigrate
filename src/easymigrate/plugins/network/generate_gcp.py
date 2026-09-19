@@ -250,13 +250,28 @@ def _peer_suffix(peer) -> str:
     return _PEER_SUFFIX[type(peer)]
 
 
-def _generate_firewalls(file, names, policies, network_cidrs, findings, decided_by, ctx) -> None:
-    policy_tag: dict[str, str] = {}
-    policy_gcp_name: dict[str, str] = {}
+def policy_network_tags(policies) -> tuple[dict[str, str], dict[str, str]]:
+    """(policy id -> GCP network tag, policy id -> allocated GCP name).
+
+    The compute generator reads the same function to tag instances, so the tag an instance
+    wears and the `target_tags` on the firewall rules protecting it cannot drift apart
+    (spec 4 §6.2). Allocation is order-dependent, so both callers iterate policies sorted
+    by IR id.
+    """
+    allocator = GcpNameAllocator()
+    tags: dict[str, str] = {}
+    gcp_names: dict[str, str] = {}
     for policy in sorted(policies, key=lambda p: p.id):
-        gcp, _ = names.gcp.allocate("network_tag", _slug(policy.id))
-        policy_gcp_name[policy.id] = gcp
-        policy_tag[policy.id] = f"fw-{gcp}"
+        gcp, _ = allocator.allocate("network_tag", _slug(policy.id))
+        gcp_names[policy.id] = gcp
+        tags[policy.id] = f"fw-{gcp}"
+    return tags, gcp_names
+
+
+def _generate_firewalls(file, names, policies, network_cidrs, findings, decided_by, ctx) -> None:
+    policy_tag, policy_gcp_name = policy_network_tags(policies)
+    for policy in sorted(policies, key=lambda p: p.id):
+        gcp = policy_gcp_name[policy.id]
         if gcp != policy.name:
             ctx.info(
                 "GEN-RENAMED",
