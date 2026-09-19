@@ -132,16 +132,25 @@ plugins/compute/
     __init__.py          ComputePlugin: name, requires, aws_resource_types, three methods
     collect_aws.py       raw describe_* responses, one file per call
     normalize.py         snapshot -> IntentObject list
-    aws_values.py        tag/name helpers, shared shapes
-    machine_types.py     EC2 instance type -> GCP machine type
-    images.py            AMI platform -> stock GCP image family
+    aws_values.py        AWS-side lookup tables and tag/name helpers
     generate_gcp.py      resolved IR -> terraform/compute.tf
+
+differences/rules/aws_gcp/
+    compute.py           the VM-* rules
+    gce_facts.py         GCP machine types, stock image families, disk types, local SSD sizes
 ```
 
-New rules module `differences/rules/aws_gcp/compute.py`, registered into `AWS_GCP_RULES` alongside
-the existing network and database rules. New IR module `ir/compute.py`.
+New IR module `ir/compute.py`.
+
+**GCP knowledge lives with the rules, not the plugin.** `tests/test_dependency_rules.py` allows
+`easymigrate.differences` to import only `easymigrate.ir`, so a table the rules need cannot sit
+under `plugins/`. This matches spec 2, where `cloudsql_facts.py` sits beside the database rules:
+the rule chooses the GCP shape and records it in `target_hints`, and the generator reads the hint
+rather than recomputing the choice. `gce_facts.py` follows that precedent, and like
+`cloudsql_facts.py` it is model knowledge with a date, to be re-verified before customers.
 
 No change to core, the pipeline stages, the CLI or the UI beyond §2.2.
+
 
 ## 4. Collection and IR
 
@@ -150,6 +159,7 @@ No change to core, the pipeline stages, the CLI or the UI beyond §2.2.
 | Call | Snapshot file | Used for |
 |---|---|---|
 | `describe_instances` | `compute.instances.json` | instances, their volumes, SGs, network placement |
+| `describe_instance_attribute` | `compute.instance_attributes.json` | `userData` and `disableApiTermination`, which `describe_instances` omits |
 | `describe_volumes` | `compute.volumes.json` | EBS size, type, IOPS, throughput, encryption |
 | `describe_addresses` | `compute.addresses.json` | Elastic IPs, attached and unattached |
 | `describe_images` | `compute.images.json` | AMI platform, for stock-image selection |
@@ -393,7 +403,7 @@ right shape on the right network.
 
 ## 9. Done when
 
-- `scan` collects all nine call groups, with a `scan_gap` finding for each denied permission.
+- `scan` collects all ten call groups, with a `scan_gap` finding for each denied permission.
 - `analyze` produces the five IR kinds, and `applies_to` no longer exists anywhere in the codebase —
   including the database normalizer that writes it today.
 - `DB-SG-FIREWALL` derives membership from forward references, and keeps a policy shared between an
