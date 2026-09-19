@@ -890,3 +890,140 @@ def test_golden_detected_difference_keys(case):
     doc = _golden_doc(case)
     differences = detect(doc)
     assert [d.key for d in differences] == _EXPECTED_KEYS[case]
+
+
+# ---- NET-EGRESS-TAG narrowing (spec 4 §10) --------------------------------
+
+
+def _compute(id_, subnet, policies):
+    from easymigrate.ir.compute import ComputeInstance
+
+    return ComputeInstance(
+        id=id_,
+        name=id_.split(":", 1)[1],
+        source=_source("instance", id_),
+        instance_type="t3.micro",
+        architecture="x86_64",
+        state="running",
+        zone="ap-south-1a",
+        subnet=subnet,
+        image="ami-1",
+        platform="linux",
+        firewall_policies=policies,
+    )
+
+
+def _egress_to(peer_id):
+    return FirewallRule(
+        direction="egress",
+        protocol="tcp",
+        ports=["443"],
+        peer=PolicyPeer(policy=peer_id),
+    )
+
+
+def _narrowing_doc(*extra):
+    net = _network(cidr="10.0.0.0/16")
+    peer = _policy("firewall_policy:peer")
+    main = _policy("firewall_policy:main", rules=[_egress_to("firewall_policy:peer")])
+    return _doc(
+        net,
+        _subnet("subnet:a", cidr="10.0.1.0/24"),
+        _subnet("subnet:b", cidr="10.0.2.0/24"),
+        _subnet("subnet:c", cidr="10.0.3.0/24"),
+        peer,
+        main,
+        *extra,
+    )
+
+
+def _ranges(doc):
+    rule = NetEgressTag()
+    diff = rule.detect(doc)[0]
+    result = rule.apply(doc, diff, "peer_attached_ranges")
+    return result.get("firewall_policy:main").target_hints["egress_ranges"]
+
+
+def test_egress_narrows_to_the_subnets_hosting_the_peers_instances():
+    doc = _narrowing_doc(
+        _compute("compute_instance:one", "subnet:a", ["firewall_policy:peer"]),
+        _compute("compute_instance:two", "subnet:b", ["firewall_policy:peer"]),
+    )
+
+    assert _ranges(doc)["firewall_policy:peer"] == ["10.0.1.0/24", "10.0.2.0/24"]
+
+
+def test_egress_narrowing_is_strictly_tighter_than_the_network_range():
+    """A regression that widened this back to the VPC CIDR would still be 'a list of CIDRs',
+    so assert the narrowing itself, not just the shape."""
+    doc = _narrowing_doc(_compute("compute_instance:one", "subnet:a", ["firewall_policy:peer"]))
+
+    ranges = _ranges(doc)["firewall_policy:peer"]
+
+    assert ranges == ["10.0.1.0/24"]
+    assert "10.0.0.0/16" not in ranges
+
+
+def test_egress_falls_back_to_network_cidrs_when_no_instance_is_behind_the_peer():
+    doc = _narrowing_doc()
+
+    assert _ranges(doc)["firewall_policy:peer"] == ["10.0.0.0/16"]
+
+
+def test_egress_falls_back_when_the_peers_only_member_is_a_template():
+    """A launch template names no subnet; the group that uses it does, and that describes
+    where instances *may* launch rather than where they are."""
+    from easymigrate.ir.compute import InstanceTemplate
+
+    template = InstanceTemplate(
+        id="instance_template:web-lt",
+        name="web-lt",
+        source=_source("launch-template", "lt-1"),
+        instance_type="t3.micro",
+        architecture="x86_64",
+        image="ami-1",
+        platform="linux",
+        version="1",
+        firewall_policies=["firewall_policy:peer"],
+    )
+    doc = _narrowing_doc(template)
+
+    assert _ranges(doc)["firewall_policy:peer"] == ["10.0.0.0/16"]
+
+
+def test_egress_resolves_each_peer_independently():
+    net = _network(cidr="10.0.0.0/16")
+    busy = _policy("firewall_policy:busy")
+    empty = _policy("firewall_policy:empty")
+    main = _policy(
+        "firewall_policy:main",
+        rules=[_egress_to("firewall_policy:busy"), _egress_to("firewall_policy:empty")],
+    )
+    doc = _doc(
+        net,
+        _subnet("subnet:a", cidr="10.0.1.0/24"),
+        busy,
+        empty,
+        main,
+        _compute("compute_instance:one", "subnet:a", ["firewall_policy:busy"]),
+    )
+
+    ranges = _ranges(doc)
+
+    assert ranges["firewall_policy:busy"] == ["10.0.1.0/24"]
+    assert ranges["firewall_policy:empty"] == ["10.0.0.0/16"]
+
+
+def test_egress_deduplicates_instances_sharing_a_subnet():
+    doc = _narrowing_doc(
+        _compute("compute_instance:one", "subnet:a", ["firewall_policy:peer"]),
+        _compute("compute_instance:two", "subnet:a", ["firewall_policy:peer"]),
+    )
+
+    assert _ranges(doc)["firewall_policy:peer"] == ["10.0.1.0/24"]
+
+
+def test_egress_effect_text_no_longer_admits_applies_to_is_unknown():
+    effect = next(s for s in NetEgressTag.strategies if s.id == "peer_attached_ranges").effect
+    assert "applies_to" not in effect
+    assert "subnets hosting" in effect

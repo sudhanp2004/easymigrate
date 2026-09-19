@@ -209,6 +209,25 @@ class NetIsolationVmLevel(DifferenceRule):
         return _replace_object(doc, _set_hint(doc.get(subnet_id), "no_external_ip", True))
 
 
+def _hosting_subnet_cidrs(ir: IRDocument) -> dict[str, set[str]]:
+    """policy IR id -> CIDRs of the subnets holding the compute instances behind it.
+
+    Used to narrow `NET-EGRESS-TAG` from a whole-VPC destination to the subnets that actually
+    host the peer's workloads (spec 4 §10).
+    """
+    subnet_cidr = {obj.id: obj.cidr for obj in ir.objects if obj.kind == "subnet"}
+    hosting: dict[str, set[str]] = {}
+    for obj in ir.objects:
+        if obj.kind != "compute_instance":
+            continue
+        cidr = subnet_cidr.get(obj.subnet)
+        if cidr is None:
+            continue
+        for policy_id in obj.firewall_policies:
+            hosting.setdefault(policy_id, set()).add(cidr)
+    return hosting
+
+
 class NetEgressTag(DifferenceRule):
     id = "NET-EGRESS-TAG"
     family = "network"
@@ -222,7 +241,8 @@ class NetEgressTag(DifferenceRule):
             id="peer_attached_ranges",
             title="Target the peer's attached ranges",
             effect=(
-                "destination becomes the peer's network CIDR blocks (applies_to is not yet known)"
+                "destination becomes the CIDRs of the subnets hosting the peer's instances, or "
+                "the peer's network CIDR blocks when no migrated instance is behind it"
             ),
             risk="medium",
         ),
@@ -271,7 +291,17 @@ class NetEgressTag(DifferenceRule):
         matching = self._matching_rules(policy)
         if strategy_id == "peer_attached_ranges":
             ranges = dict(policy.target_hints.get("egress_ranges", {}))
+            hosting = _hosting_subnet_cidrs(doc)
             for peer_id in diff.subjects[1:]:
+                # The peer's instances have no addresses at plan time — GCP assigns internal
+                # IPs during apply — so the tightest statically-known destination is the set of
+                # subnets those instances sit in (spec 4 §10). Instance templates are not
+                # consulted: a template names no subnet, and the group that uses it describes
+                # where instances *may* launch rather than where they are.
+                subnet_cidrs = hosting.get(peer_id)
+                if subnet_cidrs:
+                    ranges[peer_id] = sorted(subnet_cidrs)
+                    continue
                 peer_policy = doc.get(peer_id)
                 peer_network = doc.get(peer_policy.network)
                 ranges[peer_id] = list(peer_network.cidr_blocks)

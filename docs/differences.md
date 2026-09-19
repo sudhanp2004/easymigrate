@@ -28,7 +28,7 @@ An AWS egress rule can target another security group directly. GCP egress rules 
 
 | Strategy | Title | Effect | Risk | Manual | Default |
 |---|---|---|---|---|---|
-| `peer_attached_ranges` | Target the peer's attached ranges | destination becomes the peer's network CIDR blocks (applies_to is not yet known) | medium |  | yes |
+| `peer_attached_ranges` | Target the peer's attached ranges | destination becomes the CIDRs of the subnets hosting the peer's instances, or the peer's network CIDR blocks when no migrated instance is behind it | medium |  | yes |
 | `manual` | Handle manually | the egress rules are omitted | low | yes |  |
 
 ### GCP has no equivalent of a cross-VPC security group reference (`NET-SG-XVPC-REF`)
