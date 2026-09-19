@@ -131,17 +131,17 @@ def create_app(project: Project, security: Security) -> FastAPI:
     # "/" would fully match every /api path too (Starlette's Mount.matches ignores
     # method), silently swallowing both the origin check above the router and the
     # router's own 405-with-Allow-header logic for a wrong-method request to a real
-    # route. `index.html` itself, and anything else at the static root (e.g.
-    # favicon.svg), are served through the 404 handler above instead.
+    # route. `index.html` itself is served through the 404 handler above instead.
     assets_dir = _STATIC_DIR / "assets"
     if assets_dir.is_dir():
         app.mount("/assets", StaticFiles(directory=assets_dir), name="static-assets")
 
-    @app.get("/favicon.svg", dependencies=[Depends(security.require_origin)])
-    def favicon():
-        favicon_path = _STATIC_DIR / "favicon.svg"
-        if not favicon_path.exists():
-            raise HTTPException(status_code=404, detail="not found")
-        return FileResponse(favicon_path)
+    # The logo and favicons, copied verbatim from frontend/public/brand/ by Vite. A
+    # second scoped mount for the same reason as "/assets": one route per icon file
+    # would be the alternative, and the browser asks for these before any token is in
+    # play, so they stay outside the origin-checked routes just as /assets does.
+    brand_dir = _STATIC_DIR / "brand"
+    if brand_dir.is_dir():
+        app.mount("/brand", StaticFiles(directory=brand_dir), name="static-brand")
 
     return app

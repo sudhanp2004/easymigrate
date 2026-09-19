@@ -4,6 +4,7 @@ import { ApplyPage } from '../pages/ApplyPage'
 import { PlanPage } from '../pages/PlanPage'
 import { ResolvePage } from '../pages/ResolvePage'
 import { ScanPage } from '../pages/ScanPage'
+import { Brand } from './Brand'
 import { StageGate } from './StageGate'
 import { STAGE_ORDER, firstIncompleteStage } from './stageGating'
 import { useProject } from './useProject'
@@ -13,6 +14,10 @@ export function AppRoutes() {
 
   return (
     <div className="app">
+      <header className="app-header">
+        <Brand />
+      </header>
+
       <nav className="stage-nav">
         {STAGE_ORDER.map((stage) => (
           <NavLink key={stage} to={`/${stage}`} className={({ isActive }) => (isActive ? 'active' : '')}>

@@ -1,6 +1,9 @@
+import { Brand } from './Brand'
+
 export function Unauthenticated() {
   return (
-    <main className="page">
+    <main className="page page-standalone">
+      <Brand />
       <h1>Not authenticated</h1>
       <p>
         This session has no valid launch token. Relaunch <code>easymigrate ui</code> from
