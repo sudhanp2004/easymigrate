@@ -4,6 +4,7 @@ import re
 from typing import Any
 
 from easymigrate.core.plugin import CollectContext
+from easymigrate.ir.base import Finding
 from easymigrate.providers.aws.source import AwsConnection, is_access_denied
 
 # (snapshot name, client, boto3 method, response list key, id field, IAM action)
@@ -42,10 +43,34 @@ _LISTS = (
     ),
 )
 
+
+# Collected only so `normalize` can report them as unsupported (spec 4 §4.4). A user with these
+# would otherwise assume the instances they govern migrated cleanly. Collected tolerantly: an
+# inventory call that a partition, region or endpoint does not offer must never abort a scan.
+_INVENTORY_LISTS = (
+    ("compute.hosts", "describe_hosts", "Hosts", "HostId", "ec2:DescribeHosts"),
+    (
+        "compute.spot_fleet_requests",
+        "describe_spot_fleet_requests",
+        "SpotFleetRequestConfigs",
+        "SpotFleetRequestId",
+        "ec2:DescribeSpotFleetRequests",
+    ),
+    ("compute.fleets", "describe_fleets", "Fleets", "FleetId", "ec2:DescribeFleets"),
+    (
+        "compute.capacity_reservations",
+        "describe_capacity_reservations",
+        "CapacityReservations",
+        "CapacityReservationId",
+        "ec2:DescribeCapacityReservations",
+    ),
+)
+
 COMPUTE_SNAPSHOT_FILES = (
     "compute.instances",
     "compute.instance_attributes",
     *(entry[0] for entry in _LISTS),
+    *(entry[0] for entry in _INVENTORY_LISTS),
     "compute.images",
     "compute.key_pairs",
     "compute.instance_types",
@@ -73,7 +98,11 @@ def collect(connection: AwsConnection, ctx: CollectContext) -> dict[str, Any]:
 
     for name, client_name, method, key, id_field, action in _LISTS:
         items = _paginate(clients[client_name], method, key, action, ctx)
-        files[name] = {key: sorted(items or [], key=lambda item: item.get(id_field) or "")}
+        files[name] = {key: sorted(items or [], key=lambda item, f=id_field: item.get(f) or "")}
+
+    for name, method, key, id_field, action in _INVENTORY_LISTS:
+        items = _inventory(ec2, method, key, action, ctx)
+        files[name] = {key: sorted(items, key=lambda item, f=id_field: item.get(f) or "")}
 
     files["compute.instance_attributes"] = _collect_instance_attributes(ec2, instances, ctx)
     files["compute.images"] = {"Images": _collect_images(ec2, instances, ctx)}
@@ -252,3 +281,47 @@ def _paginate(
             return None
         raise
     return items
+
+
+def _inventory(
+    client: Any, method: str, key: str, action: str, ctx: CollectContext
+) -> list[dict[str, Any]]:
+    """Best-effort collection for the unsupported-resource inventory.
+
+    `NotImplementedError` and an unsupported-operation error mean the endpoint does not offer
+    this call at all. That is a gap in the inventory, not a reason to fail the scan, so it is
+    reported as a scan gap and collection continues.
+    """
+    try:
+        items = _paginate(client, method, key, action, ctx)
+    except NotImplementedError:
+        items = None
+    except Exception as exc:
+        if not _is_unsupported_operation(exc):
+            raise
+        items = None
+    else:
+        return items or []
+    ctx.findings.append(
+        Finding(
+            level="scan_gap",
+            code="SCAN-INVENTORY-UNAVAILABLE",
+            message=(
+                f"{action} is not available at this endpoint, so resources it would list are "
+                "missing from the unsupported-resource inventory."
+            ),
+            subject=action,
+        )
+    )
+    return []
+
+
+def _is_unsupported_operation(exc: BaseException) -> bool:
+    response = getattr(exc, "response", None)
+    if not isinstance(response, dict):
+        return False
+    return response.get("Error", {}).get("Code") in {
+        "UnsupportedOperation",
+        "InvalidAction",
+        "InvalidClientTokenId",
+    }

@@ -249,7 +249,7 @@ def test_access_denied_on_instances_records_a_finding_and_keeps_other_files(aws,
     ctx = CollectContext(plugin="compute")
     files = collect(aws, ctx)
 
-    assert [f.suggestion for f in ctx.findings] == ["Grant ec2:DescribeInstances"]
+    assert "Grant ec2:DescribeInstances" in [f.suggestion for f in ctx.findings]
     assert files["compute.instances"] == {"Instances": []}
     assert "compute.addresses" in files
 
