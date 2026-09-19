@@ -293,3 +293,38 @@ Deleting and recreating a Cloud SQL instance under the same name fails for about
 | Strategy | Title | Effect | Risk | Manual | Default |
 |---|---|---|---|---|---|
 | `keep` | No change | informational only | none |  | yes |
+
+## Compute rules
+
+### An AMI cannot be moved to GCP, and a disk's contents do not migrate (`VM-BOOT-IMAGE`)
+
+EasyMigrate does not import, convert or rebuild AMIs, and does not copy disk contents. A migrated instance boots a current stock image of the nearest distribution: the machine runs, on the right network, at the right size, with nothing that was installed or stored on the source disk.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `stock_image` | Boot a stock GCP image | the instance boots a current stock image chosen from the source platform; everything that was on the source disk is absent | high |  | yes |
+| `manual` | Handle manually | nothing is generated for this instance | low | yes |  |
+
+Params:
+
+- `image_family`: GCP image family, e.g. debian-12
+- `image_project`: GCP image project, e.g. debian-cloud
+
+### EC2 instance types and GCP machine types do not line up (`VM-MACHINE-TYPE`)
+
+GCP predefined machine types come in fixed memory-per-vCPU ratios, and AWS families do not share them. EasyMigrate never reduces memory, so a source whose ratio GCP has no type for gains memory, which costs more.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `nearest_predefined` | Nearest predefined machine type | same vCPU count, the smallest predefined type whose memory is at least the source's; the report names the exact delta | low |  | yes |
+| `custom_machine_type` | Custom machine type | exact vCPU and memory via a custom type, at a higher per-unit price and without committed-use discounts | medium |  |  |
+| `manual` | Handle manually | nothing is generated for this instance | low | yes |  |
+
+### AWS availability-zone names carry no meaning a GCP zone preserves (`VM-ZONE-MAPPING`)
+
+An AWS AZ letter is a per-account alias over a stable AZ id, so `ap-south-1a` is a different physical zone for different accounts. Zones are therefore assigned by position: instances that shared an AZ stay together, and instances that were spread stay spread, but no letter is preserved.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `positional` | Assign zones by position | distinct source zones are sorted and mapped to the destination region's zones in order; co-location and spread are preserved, letters are not | low |  | yes |
+| `manual` | Handle manually | nothing is generated for this instance | low | yes |  |

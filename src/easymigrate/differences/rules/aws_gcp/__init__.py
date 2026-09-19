@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 from easymigrate.differences.model import DifferenceRule
+from easymigrate.differences.rules.aws_gcp.compute import (
+    VmBootImage,
+    VmMachineType,
+    VmZoneMapping,
+)
 from easymigrate.differences.rules.aws_gcp.database import (
     DbBackupWindow,
     DbEngineVersion,
@@ -71,4 +76,9 @@ AWS_GCP_RULES: tuple[DifferenceRule, ...] = (
     DbReplica(),
     DbUsers(),
     DbNameReuse(),
+    # Compute. VM-BOOT-IMAGE precedes VM-MACHINE-TYPE because a Windows image
+    # constrains which machine types are available (spec 4 §5).
+    VmBootImage(),
+    VmMachineType(),
+    VmZoneMapping(),
 )
