@@ -10,7 +10,13 @@ from __future__ import annotations
 
 from easymigrate.core.plugin import GenerateContext, GenerationError
 from easymigrate.ir.base import IRDocument
-from easymigrate.ir.compute import ComputeInstance, Disk, ExternalAddress
+from easymigrate.ir.compute import (
+    ComputeInstance,
+    Disk,
+    ExternalAddress,
+    InstanceGroup,
+    InstanceTemplate,
+)
 from easymigrate.ir.network import FirewallPolicy, Subnet
 from easymigrate.plugins.network.generate_gcp import policy_network_tags
 from easymigrate.providers.gcp.hcl import HclFile, Ref
@@ -82,48 +88,38 @@ FIELD_COVERAGE: dict[str, dict[str, str]] = {
     },
     "instance_template": {
         **_METADATA_FIELDS,
-        **{
-            field: "not_generated:instance templates are spec 4 plan 5"
-            for field in (
-                "instance_type",
-                "vcpus",
-                "memory_mib",
-                "architecture",
-                "image",
-                "platform",
-                "platform_details",
-                "firewall_policies",
-                "disks",
-                "user_data",
-                "key_pair",
-                "key_material",
-                "iam_profile",
-                "spot",
-                "imds",
-                "version",
-                "default_version",
-            )
-        },
+        "instance_type": "derived:VM-MACHINE-TYPE chooses the GCP machine type",
+        "vcpus": "derived:input to VM-MACHINE-TYPE",
+        "memory_mib": "derived:input to VM-MACHINE-TYPE",
+        "architecture": _RECORDED,
+        "image": "derived:VM-BOOT-IMAGE chooses a stock image; the AMI itself is not migrated",
+        "platform": "derived:input to VM-BOOT-IMAGE",
+        "platform_details": "derived:input to VM-BOOT-IMAGE",
+        "firewall_policies": "exact:becomes the template's network tags",
+        "disks": "exact:one disk block per disk, created empty",
+        "user_data": "decision:VM-USER-DATA writes a startup-script or user-data metadata key",
+        "key_pair": "decision:VM-SSH-KEYS",
+        "key_material": "decision:VM-SSH-KEYS imports it as an ssh-keys metadata entry",
+        "iam_profile": "always_excluded:VM-IAM-PROFILE is manual; no service account is attached",
+        "spot": "decision:VM-SPOT sets scheduling.provisioning_model",
+        "imds": "always_excluded:VM-IMDS; GCP's metadata server has no token protocol to set",
+        "version": "derived:only the version a group references is migrated",
+        "default_version": _RECORDED,
     },
     "instance_group": {
         **_METADATA_FIELDS,
-        **{
-            field: "not_generated:managed instance groups are spec 4 plan 5"
-            for field in (
-                "template",
-                "min_size",
-                "max_size",
-                "desired_capacity",
-                "zones",
-                "subnets",
-                "health_check_type",
-                "health_check_grace",
-                "target_groups",
-                "scaling_policies",
-                "mixed_instances",
-                "lifecycle_hooks",
-            )
-        },
+        "template": "exact:version.instance_template",
+        "min_size": "exact:autoscaler min_replicas",
+        "max_size": "exact:autoscaler max_replicas",
+        "desired_capacity": "exact:target_size, unless an autoscaler owns the size",
+        "zones": "decision:VM-ASG-SHAPE maps them positionally to distribution zones",
+        "subnets": "decision:VM-ASG-SHAPE picks one regional subnet",
+        "health_check_type": "decision:VM-ASG-HEALTHCHECK",
+        "health_check_grace": "exact:auto_healing_policies.initial_delay_sec",
+        "target_groups": "always_excluded:VM-ASG-TARGET-GROUPS; load balancers are not migrated",
+        "scaling_policies": "decision:VM-ASG-SCALING",
+        "mixed_instances": "always_excluded:VM-ASG-MIXED-INSTANCES; one machine type per template",
+        "lifecycle_hooks": "always_excluded:VM-ASG-LIFECYCLE; MIGs have no lifecycle hooks",
     },
 }
 
@@ -170,7 +166,8 @@ def generate(resolved: IRDocument, ctx: GenerateContext) -> HclFile:
         instance for instance in _live(resolved, ComputeInstance) if not instance.eks_cluster
     ]
     addresses = _addresses(resolved, instances)
-    if not instances and not addresses:
+    groups = _live(resolved, InstanceGroup)
+    if not instances and not addresses and not groups:
         return file
 
     disks = {disk.id: disk for disk in resolved.of_kind(Disk)}
@@ -193,6 +190,11 @@ def generate(resolved: IRDocument, ctx: GenerateContext) -> HclFile:
         names.allocate("google_compute_disk", disk_id)
     for address in addresses:
         names.allocate("google_compute_address", address.id)
+    templates = _templates_for(resolved, groups)
+    for template_id in sorted(templates):
+        names.allocate("google_compute_instance_template", template_id)
+    for group in groups:
+        names.allocate("google_compute_instance_group_manager", group.id)
 
     for address in addresses:
         _generate_address(file, names, address, ctx)
@@ -200,7 +202,45 @@ def generate(resolved: IRDocument, ctx: GenerateContext) -> HclFile:
         _generate_disk(file, names, disks[disk_id], owner[disk_id], ctx)
     for instance in instances:
         _generate_instance(file, names, instance, disks, subnet_labels, tags, live_policies, ctx)
+    for template_id in sorted(templates):
+        template, subnet = templates[template_id]
+        _generate_template(
+            file, names, template, subnet, disks, subnet_labels, tags, live_policies, ctx
+        )
+    for group in groups:
+        _generate_group(file, names, group, ctx)
     return file
+
+
+def _templates_for(
+    resolved: IRDocument, groups: list[InstanceGroup]
+) -> dict[str, tuple[InstanceTemplate, str]]:
+    """Template id → (template, subnet) for every template a live group uses.
+
+    The subnet is the one VM-ASG-SHAPE chose for the group. An instance template carries its
+    network interface, so two groups that share a template must agree on it.
+    """
+    result: dict[str, tuple[InstanceTemplate, str]] = {}
+    for group in groups:
+        if group.target_hints.get("mig") not in {"regional", "zonal"}:
+            raise GenerationError(f"{group.id} has no 'mig' target hint; VM-ASG-SHAPE did not run")
+        subnet = group.target_hints.get("subnet")
+        if not subnet:
+            raise GenerationError(f"{group.id} has no subnet to place its instances in")
+        template = resolved.get(group.template)
+        if template.excluded is not None:
+            raise GenerationError(
+                f"{group.id} uses {template.id}, which is excluded; VM-ASG-SHAPE should have "
+                "excluded the group too"
+            )
+        if template.id in result and result[template.id][1] != subnet:
+            raise GenerationError(
+                f"{template.id} is used by groups in different subnets "
+                f"({result[template.id][1]}, {subnet}); a GCP instance template has one "
+                "network interface, so choose the same subnet for both groups"
+            )
+        result[template.id] = (template, subnet)
+    return result
 
 
 def _addresses(resolved: IRDocument, instances: list[ComputeInstance]) -> list[ExternalAddress]:
@@ -324,18 +364,9 @@ def _generate_instance(
     elif external != "none":
         interface.block("access_config")
 
-    instance_tags = sorted(
-        tags[policy_id] for policy_id in instance.firewall_policies if policy_id in live_policies
-    )
+    instance_tags = _network_tags(instance, tags, live_policies, ctx)
     if instance_tags:
         block.attr("tags", instance_tags)
-    elif instance.firewall_policies:
-        ctx.info(
-            "GEN-NO-TAGS",
-            f"{instance.id} has no network tags: every security group protecting it was "
-            "removed by a decision, so no migrated firewall rule applies to it.",
-            subject=instance.id,
-        )
 
     if instance.labels:
         block.attr("labels", dict(sorted(instance.labels.items())))
@@ -353,15 +384,164 @@ def _generate_instance(
     if protected:
         block.attr("deletion_protection", True)
     if spot:
-        scheduling = block.block("scheduling")
-        scheduling.attr("provisioning_model", "SPOT")
-        scheduling.attr("preemptible", True)
-        scheduling.attr("automatic_restart", False)
-        scheduling.attr("on_host_maintenance", "TERMINATE")
-        scheduling.attr("instance_termination_action", "STOP")
+        _spot_scheduling(block)
 
 
-def _boot_disk(instance: ComputeInstance, disks: dict[str, Disk]) -> Disk:
+def _network_tags(obj, tags: dict[str, str], live_policies: set[str], ctx) -> list[str]:
+    found = sorted(
+        tags[policy_id] for policy_id in obj.firewall_policies if policy_id in live_policies
+    )
+    if not found and obj.firewall_policies:
+        ctx.info(
+            "GEN-NO-TAGS",
+            f"{obj.id} has no network tags: every security group protecting it was "
+            "removed by a decision, so no migrated firewall rule applies to it.",
+            subject=obj.id,
+        )
+    return found
+
+
+def _spot_scheduling(block) -> None:
+    scheduling = block.block("scheduling")
+    scheduling.attr("provisioning_model", "SPOT")
+    scheduling.attr("preemptible", True)
+    scheduling.attr("automatic_restart", False)
+    scheduling.attr("on_host_maintenance", "TERMINATE")
+    scheduling.attr("instance_termination_action", "STOP")
+
+
+def _zone(letter: str) -> Ref:
+    return Ref(f'"${{var.region}}-{letter}"')
+
+
+# GCP limits an instance template's name_prefix to 37 characters, suffix included.
+_NAME_PREFIX_MAX = 36
+
+
+def _generate_template(
+    file: HclFile,
+    names: _Names,
+    template: InstanceTemplate,
+    subnet: str,
+    disks: dict[str, Disk],
+    subnet_labels: dict[str, str],
+    tags: dict[str, str],
+    live_policies: set[str],
+    ctx: GenerateContext,
+) -> None:
+    machine_type = _require(template, "machine_type")
+    boot_image = _require(template, "boot_image")
+
+    block = file.block("resource", "google_compute_instance_template", names.label[template.id])
+    block.comment("\n".join(_header_lines(template, ctx.decided_by)))
+    # Templates are immutable: every change replaces one, and create_before_destroy needs the
+    # replacement to have a fresh name while the group still uses the old (spec 4 §6.4).
+    prefix = names.name[template.id][:_NAME_PREFIX_MAX].rstrip("-")
+    block.attr("name_prefix", f"{prefix}-")
+    block.attr("machine_type", machine_type)
+
+    boot = _boot_disk(template, disks)
+    boot_block = block.block("disk")
+    boot_block.attr("source_image", f"{boot_image['project']}/{boot_image['family']}")
+    boot_block.attr("boot", True)
+    boot_block.attr("auto_delete", True)
+    size = template.target_hints.get("boot_disk_size_gib") or boot.size_gib
+    if size:
+        boot_block.attr("disk_size_gb", size)
+    boot_block.attr("disk_type", boot.target_hints.get("disk_type", _DEFAULT_DISK_TYPE))
+    for disk_id in template.disks:
+        disk = disks[disk_id]
+        if disk.boot or disk.excluded is not None or disk.instance_store:
+            continue
+        data = block.block("disk")
+        data.attr("boot", False)
+        data.attr("auto_delete", True)
+        if disk.size_gib:
+            data.attr("disk_size_gb", disk.size_gib)
+        data.attr("disk_type", disk.target_hints.get("disk_type", _DEFAULT_DISK_TYPE))
+
+    interface = block.block("network_interface")
+    interface.attr("subnetwork", Ref(f"google_compute_subnetwork.{subnet_labels[subnet]}.id"))
+
+    template_tags = _network_tags(template, tags, live_policies, ctx)
+    if template_tags:
+        block.attr("tags", template_tags)
+    if template.labels:
+        block.attr("labels", dict(sorted(template.labels.items())))
+    metadata = template.target_hints.get("metadata")
+    if metadata:
+        block.attr("metadata", dict(sorted(metadata.items())))
+    if template.target_hints.get("spot"):
+        _spot_scheduling(block)
+    block.block("lifecycle").attr("create_before_destroy", True)
+
+
+def _generate_group(
+    file: HclFile, names: _Names, group: InstanceGroup, ctx: GenerateContext
+) -> None:
+    hints = group.target_hints
+    regional = hints["mig"] == "regional"
+    letters = hints.get("zone_letters") or ["a"]
+    health_check = hints.get("health_check")
+    autoscaler = hints.get("autoscaler")
+    label = names.label[group.id]
+    name = names.name[group.id]
+
+    if health_check:
+        check = file.block("resource", "google_compute_health_check", label)
+        check.comment(f"autohealing for {group.id} (VM-ASG-HEALTHCHECK)")
+        check.attr("name", f"{name}-hc"[:63])
+        http = check.block("http_health_check")
+        http.attr("port", health_check["port"])
+        http.attr("request_path", health_check["request_path"])
+
+    mig_type = (
+        "google_compute_region_instance_group_manager"
+        if regional
+        else "google_compute_instance_group_manager"
+    )
+    mig = file.block("resource", mig_type, label)
+    mig.comment("\n".join(_header_lines(group, ctx.decided_by)))
+    mig.attr("name", name)
+    mig.attr("base_instance_name", name[:54])
+    if regional:
+        mig.attr("region", Ref("var.region"))
+        mig.attr("distribution_policy_zones", [_zone(letter) for letter in letters])
+    else:
+        mig.attr("zone", _zone(letters[0]))
+    # An autoscaler owns the group's size; a fixed target_size would fight it.
+    if not autoscaler:
+        mig.attr("target_size", group.desired_capacity)
+    version = mig.block("version")
+    version.attr(
+        "instance_template",
+        Ref(f"google_compute_instance_template.{names.label[group.template]}.id"),
+    )
+    if health_check:
+        healing = mig.block("auto_healing_policies")
+        healing.attr("health_check", Ref(f"google_compute_health_check.{label}.id"))
+        healing.attr("initial_delay_sec", hints.get("initial_delay_sec", 300))
+
+    if autoscaler:
+        scaler_type = (
+            "google_compute_region_autoscaler" if regional else "google_compute_autoscaler"
+        )
+        scaler = file.block("resource", scaler_type, label)
+        scaler.comment(f"scaling for {group.id} (VM-ASG-SCALING)")
+        scaler.attr("name", f"{name}-as"[:63])
+        if regional:
+            scaler.attr("region", Ref("var.region"))
+        else:
+            scaler.attr("zone", _zone(letters[0]))
+        scaler.attr("target", Ref(f"{mig_type}.{label}.id"))
+        policy = scaler.block("autoscaling_policy")
+        policy.attr("min_replicas", group.min_size)
+        policy.attr("max_replicas", group.max_size)
+        policy.attr("cooldown_period", group.health_check_grace or 60)
+        policy.block("cpu_utilization").attr("target", autoscaler["cpu_target"])
+
+
+def _boot_disk(instance: ComputeInstance | InstanceTemplate, disks: dict[str, Disk]) -> Disk:
     for disk_id in instance.disks:
         disk = disks.get(disk_id)
         if disk is not None and disk.boot:

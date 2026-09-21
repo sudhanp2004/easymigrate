@@ -6,7 +6,13 @@ import pytest
 
 from easymigrate.core.plugin import GenerateContext, GenerationError
 from easymigrate.ir.base import IRDocument, SourceRef
-from easymigrate.ir.compute import ComputeInstance, Disk, ExternalAddress
+from easymigrate.ir.compute import (
+    ComputeInstance,
+    Disk,
+    ExternalAddress,
+    InstanceGroup,
+    InstanceTemplate,
+)
 from easymigrate.ir.network import FirewallPolicy, Network, Subnet
 from easymigrate.plugins.compute.generate_gcp import FIELD_COVERAGE, generate
 
@@ -358,3 +364,108 @@ def test_data_disk_of_an_excluded_instance_is_not_rendered():
     data = _disk("disk:data", boot=False)
     instance = _instance(disks=("disk:boot", "disk:data"), excluded="VM-BOOT-IMAGE: manual")
     assert "google_compute_disk" not in _render(_network(), _subnet(), _disk(), data, instance)
+
+
+# ---- plan 5: templates and managed instance groups ----------------------------
+
+
+def _template(disks=("disk:lt-boot",), **overrides):
+    hints = {
+        "machine_type": "e2-small",
+        "boot_image": {"project": "rocky-linux-cloud", "family": "rocky-linux-9"},
+    }
+    hints.update(overrides.pop("target_hints", {}))
+    return InstanceTemplate(
+        id=overrides.pop("id", "instance_template:web-lt"),
+        name="web-lt",
+        source=_source("launch-template", "lt-1:1"),
+        instance_type="t3.small",
+        architecture="x86_64",
+        image="ami-1",
+        platform="linux",
+        version="1",
+        disks=list(disks),
+        target_hints=hints,
+        **overrides,
+    )
+
+
+def _group(id_="instance_group:web", template="instance_template:web-lt", **hints):
+    base = {"mig": "regional", "zone_letters": ["a", "b"], "subnet": "subnet:a"}
+    base.update(hints)
+    return InstanceGroup(
+        id=id_,
+        name=id_.split(":", 1)[1],
+        source=_source("autoScalingGroup", id_),
+        template=template,
+        min_size=1,
+        max_size=4,
+        desired_capacity=2,
+        target_hints=base,
+    )
+
+
+def _scaling_doc(*objects):
+    return (_network(), _subnet(), _disk("disk:lt-boot"), _template(), *objects)
+
+
+def test_template_renders_disks_subnet_and_create_before_destroy():
+    data = _disk("disk:lt-data", boot=False, size_gib=50)
+    template = _template(disks=("disk:lt-boot", "disk:lt-data"))
+    out = _render(_network(), _subnet(), _disk("disk:lt-boot"), data, template, _group())
+    assert 'resource "google_compute_instance_template" "web_lt"' in out
+    assert 'name_prefix  = "web-lt-"' in out
+    assert 'source_image = "rocky-linux-cloud/rocky-linux-9"' in out
+    assert "disk_size_gb = 50" in out
+    assert "subnetwork = google_compute_subnetwork.a.id" in out
+    assert "create_before_destroy = true" in out
+    # A template's data disk is a disk block, never a standalone google_compute_disk.
+    assert "google_compute_disk" not in out
+
+
+def test_template_nobody_uses_is_not_rendered():
+    assert "instance_template" not in _render(*_scaling_doc())
+
+
+def test_regional_group_renders_distribution_zones_and_target_size():
+    out = _render(*_scaling_doc(_group()))
+    assert 'resource "google_compute_region_instance_group_manager" "web"' in out
+    assert 'distribution_policy_zones = ["${var.region}-a", "${var.region}-b"]' in out
+    assert "target_size" in out
+    assert "instance_template = google_compute_instance_template.web_lt.id" in out
+
+
+def test_zonal_group_renders_a_zonal_manager():
+    out = _render(*_scaling_doc(_group(mig="zonal", zone_letters=["b"])))
+    assert 'resource "google_compute_instance_group_manager" "web"' in out
+    assert '"${var.region}-b"' in out
+
+
+def test_health_check_drives_autohealing():
+    group = _group(health_check={"port": 8080, "request_path": "/hz"}, initial_delay_sec=120)
+    out = _render(*_scaling_doc(group))
+    assert 'resource "google_compute_health_check" "web"' in out
+    assert "port         = 8080" in out
+    assert "health_check      = google_compute_health_check.web.id" in out
+    assert "initial_delay_sec = 120" in out
+
+
+def test_autoscaler_owns_the_size():
+    out = _render(*_scaling_doc(_group(autoscaler={"cpu_target": 0.6})))
+    assert 'resource "google_compute_region_autoscaler" "web"' in out
+    assert "target = 0.6" in out
+    assert "min_replicas    = 1" in out
+    assert "target_size" not in out
+
+
+def test_group_without_a_shape_hint_is_a_generation_error():
+    group = _group()
+    group = group.model_copy(update={"target_hints": {}})
+    with pytest.raises(GenerationError, match="VM-ASG-SHAPE"):
+        _render(*_scaling_doc(group))
+
+
+def test_groups_sharing_a_template_in_different_subnets_is_a_generation_error():
+    other = _group("instance_group:other", subnet="subnet:b")
+    with pytest.raises(GenerationError, match="different subnets"):
+        _render(*_scaling_doc(_group(), _subnet("subnet:b"), other))
