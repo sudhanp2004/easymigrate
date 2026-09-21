@@ -241,6 +241,59 @@ def test_autoscaling_groups_and_policies_are_collected(aws):
     assert [policy["PolicyName"] for policy in policies] == ["cpu"]
 
 
+def _template_group(aws, subnet, instance_type="m5.large"):
+    template = aws.client("ec2").create_launch_template(
+        LaunchTemplateName="web-lt",
+        LaunchTemplateData={"ImageId": AMI, "InstanceType": instance_type},
+    )["LaunchTemplate"]
+    aws.client("autoscaling").create_auto_scaling_group(
+        AutoScalingGroupName="web-asg",
+        MinSize=1,
+        MaxSize=3,
+        DesiredCapacity=1,
+        VPCZoneIdentifier=subnet,
+        LaunchTemplate={"LaunchTemplateId": template["LaunchTemplateId"], "Version": "1"},
+    )
+
+
+def test_template_amis_and_types_are_described_even_without_instances(aws):
+    _, subnet, _ = _network(aws.client("ec2"))
+    _template_group(aws, subnet)
+
+    files = collect(aws, CollectContext(plugin="compute"))
+
+    assert [image["ImageId"] for image in files["compute.images"]["Images"]] == [AMI]
+    types = files["compute.instance_types"]["InstanceTypes"]
+    assert [item["InstanceType"] for item in types] == ["m5.large"]
+
+
+def test_lifecycle_hooks_are_collected_per_group(aws):
+    _, subnet, _ = _network(aws.client("ec2"))
+    _template_group(aws, subnet)
+    aws.client("autoscaling").put_lifecycle_hook(
+        LifecycleHookName="drain",
+        AutoScalingGroupName="web-asg",
+        LifecycleTransition="autoscaling:EC2_INSTANCE_TERMINATING",
+    )
+
+    files = collect(aws, CollectContext(plugin="compute"))
+
+    hooks = files["compute.lifecycle_hooks"]["web-asg"]
+    assert [hook["LifecycleHookName"] for hook in hooks] == ["drain"]
+
+
+def test_access_denied_on_lifecycle_hooks_is_a_scan_gap(aws, monkeypatch):
+    _, subnet, _ = _network(aws.client("ec2"))
+    _template_group(aws, subnet)
+    _deny(type(aws), monkeypatch, "autoscaling", "DescribeLifecycleHooks")
+
+    ctx = CollectContext(plugin="compute")
+    files = collect(aws, ctx)
+
+    assert files["compute.lifecycle_hooks"] == {}
+    assert any("autoscaling:DescribeLifecycleHooks" in (f.suggestion or "") for f in ctx.findings)
+
+
 def test_access_denied_on_instances_records_a_finding_and_keeps_other_files(aws, monkeypatch):
     ec2 = aws.client("ec2")
     _network(ec2)

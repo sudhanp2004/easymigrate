@@ -75,6 +75,7 @@ COMPUTE_SNAPSHOT_FILES = (
     "compute.key_pairs",
     "compute.instance_types",
     "compute.launch_templates",
+    "compute.lifecycle_hooks",
 )
 
 # The request names the attribute in camelCase; the response keys it in PascalCase.
@@ -105,12 +106,17 @@ def collect(connection: AwsConnection, ctx: CollectContext) -> dict[str, Any]:
         files[name] = {key: sorted(items, key=lambda item, f=id_field: item.get(f) or "")}
 
     files["compute.instance_attributes"] = _collect_instance_attributes(ec2, instances, ctx)
-    files["compute.images"] = {"Images": _collect_images(ec2, instances, ctx)}
+    # Templates first: their AMIs and instance types need describing as much as the instances'
+    # do, or a template has no platform or sizing and no group built from it can migrate.
+    templates = _collect_launch_templates(ec2, ctx)
+    files["compute.launch_templates"] = templates
+    shapes = [*instances, *_template_data(templates)]
+    files["compute.images"] = {"Images": _collect_images(ec2, shapes, ctx)}
     files["compute.key_pairs"] = {"KeyPairs": _collect_key_pairs(ec2, ctx)}
-    files["compute.instance_types"] = {
-        "InstanceTypes": _collect_instance_types(ec2, instances, ctx)
-    }
-    files["compute.launch_templates"] = _collect_launch_templates(ec2, ctx)
+    files["compute.instance_types"] = {"InstanceTypes": _collect_instance_types(ec2, shapes, ctx)}
+    files["compute.lifecycle_hooks"] = _collect_lifecycle_hooks(
+        autoscaling, files["compute.autoscaling_groups"]["AutoScalingGroups"], ctx
+    )
 
     return files
 
@@ -126,6 +132,35 @@ def _collect_instances(ec2: Any, ctx: CollectContext) -> list[dict[str, Any]]:
         instance for reservation in reservations for instance in reservation.get("Instances", [])
     ]
     return sorted(instances, key=lambda item: item["InstanceId"])
+
+
+def _template_data(templates: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every launch-template version's data, which names an AMI and type like an instance."""
+    return [
+        version.get("LaunchTemplateData") or {}
+        for entry in templates.values()
+        for version in entry.get("versions") or []
+    ]
+
+
+def _collect_lifecycle_hooks(
+    autoscaling: Any, groups: list[dict[str, Any]], ctx: CollectContext
+) -> dict[str, list[dict[str, Any]]]:
+    result: dict[str, list[dict[str, Any]]] = {}
+    for group in groups:
+        name = group["AutoScalingGroupName"]
+        try:
+            hooks = autoscaling.describe_lifecycle_hooks(AutoScalingGroupName=name).get(
+                "LifecycleHooks", []
+            )
+        except Exception as exc:
+            if is_access_denied(exc):
+                ctx.access_denied("DescribeLifecycleHooks", "autoscaling:DescribeLifecycleHooks")
+                return result
+            raise
+        if hooks:
+            result[name] = sorted(hooks, key=lambda hook: hook.get("LifecycleHookName") or "")
+    return result
 
 
 def _collect_instance_attributes(

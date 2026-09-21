@@ -83,6 +83,7 @@ def normalize(snapshot: Snapshot, ctx: NormalizeContext) -> list[IntentObject]:
     groups_raw = (snapshot.get("compute.autoscaling_groups") or {}).get("AutoScalingGroups", [])
     policies_raw = (snapshot.get("compute.scaling_policies") or {}).get("ScalingPolicies", [])
     attributes = snapshot.get("compute.instance_attributes") or {}
+    hooks_raw = snapshot.get("compute.lifecycle_hooks") or {}
 
     subnet_ids, policy_ids = _lookups(ctx)
     images = {image["ImageId"]: image for image in images_raw}
@@ -110,15 +111,26 @@ def normalize(snapshot: Snapshot, ctx: NormalizeContext) -> list[IntentObject]:
         address_by_instance=address_by_instance,
     )
 
-    templates, template_ids = _templates(
-        templates_raw, groups_raw, ctx, policy_ids=policy_ids, images=images, sizes=sizes
+    templates, template_disks, template_ids = _templates(
+        templates_raw,
+        groups_raw,
+        ctx,
+        policy_ids=policy_ids,
+        images=images,
+        sizes=sizes,
+        key_pairs=key_pairs,
     )
     groups = _groups(
-        groups_raw, policies_raw, ctx, subnet_ids=subnet_ids, template_ids=template_ids
+        groups_raw,
+        policies_raw,
+        hooks_raw,
+        ctx,
+        subnet_ids=subnet_ids,
+        template_ids=template_ids,
     )
 
     return [
-        *sorted(disks, key=lambda o: o.id),
+        *sorted([*disks, *template_disks], key=lambda o: o.id),
         *sorted(addresses, key=lambda o: o.id),
         *sorted(instances, key=lambda o: o.id),
         *sorted(templates, key=lambda o: o.id),
@@ -479,7 +491,8 @@ def _templates(
     policy_ids: dict[str, str],
     images: dict[str, dict[str, Any]],
     sizes: dict[str, tuple[int, int]],
-) -> tuple[list[InstanceTemplate], dict[tuple[str, str], str]]:
+    key_pairs: dict[str, dict[str, Any]],
+) -> tuple[list[InstanceTemplate], list[Disk], dict[tuple[str, str], str]]:
     """Only versions an ASG references become objects (spec 4 §4.3)."""
     referenced: set[tuple[str, str]] = set()
     for group in groups_raw:
@@ -496,6 +509,7 @@ def _templates(
     ids = allocate_ids("instance_template", wanted)
 
     objects: list[InstanceTemplate] = []
+    disks: list[Disk] = []
     by_reference: dict[tuple[str, str], str] = {}
     for template_id, entry in sorted(templates_raw.items()):
         template = entry.get("template") or {}
@@ -515,6 +529,9 @@ def _templates(
             data = version.get("LaunchTemplateData") or {}
             image = images.get(data.get("ImageId", ""), {})
             vcpus, memory = sizes.get(data.get("InstanceType", ""), (None, None))
+            template_disks = _template_disks(native, data, image, ctx)
+            disks.extend(template_disks)
+            profile = data.get("IamInstanceProfile") or {}
             objects.append(
                 InstanceTemplate(
                     id=object_id,
@@ -532,14 +549,76 @@ def _templates(
                         for group in data.get("SecurityGroupIds") or []
                         if group in policy_ids
                     ],
+                    disks=[disk.id for disk in template_disks],
                     user_data=_template_user_data(data),
                     key_pair=data.get("KeyName"),
+                    key_material=key_pairs.get(data.get("KeyName", ""), {}).get("PublicKey"),
+                    iam_profile=profile.get("Arn") or profile.get("Name"),
+                    spot=(data.get("InstanceMarketOptions") or {}).get("MarketType") == "spot",
+                    imds=_imds(data),
                     version=number,
                     default_version=default_version,
                 )
             )
             by_reference[(template_id, number)] = object_id
-    return objects, by_reference
+    return objects, disks, by_reference
+
+
+def _template_disks(
+    native: str, data: dict[str, Any], image: dict[str, Any], ctx: NormalizeContext
+) -> list[Disk]:
+    """A template's EBS mappings, boot disk first. The boot disk comes from the image's root
+    mapping when the template does not override it, so every template has one.
+
+    Template disks have `zone = ""`: they belong to no zone until a group places an instance.
+    """
+    root = image.get("RootDeviceName")
+    image_root = next(
+        (
+            m.get("Ebs") or {}
+            for m in image.get("BlockDeviceMappings") or []
+            if m.get("DeviceName") == root
+        ),
+        {},
+    )
+    mappings: dict[str, dict[str, Any]] = {}
+    for mapping in data.get("BlockDeviceMappings") or []:
+        device = mapping.get("DeviceName")
+        if not device:
+            continue
+        if "Ebs" not in mapping:
+            ctx.info(
+                "VM-LT-INSTANCE-STORE",
+                f"launch template {native} maps instance-store device {device}; it is recorded "
+                "here and not migrated.",
+                subject=native,
+            )
+            continue
+        mappings[device] = mapping["Ebs"] or {}
+    boot_device = root or "/dev/xvda"
+    boot = {**image_root, **mappings.pop(boot_device, {})}
+
+    ordered = [(boot_device, boot, True), *((d, e, False) for d, e in sorted(mappings.items()))]
+    ids = allocate_ids("disk", [(None, f"{native}{device}") for device, _, _ in ordered])
+    disks = []
+    for device, ebs, is_boot in ordered:
+        volume_type = ebs.get("VolumeType") or "gp2"
+        disks.append(
+            Disk(
+                id=ids[f"{native}{device}"],
+                name=f"{native}{device}",
+                source=_source(ctx, "launch-template-disk", f"{native}{device}"),
+                size_gib=ebs.get("VolumeSize"),
+                type=volume_type,
+                iops=ebs.get("Iops") if volume_type in {"gp3", "io1", "io2"} else None,
+                throughput_mibps=ebs.get("Throughput") if volume_type == "gp3" else None,
+                encrypted=bool(ebs.get("Encrypted")),
+                kms_key=ebs.get("KmsKeyId"),
+                zone="",
+                boot=is_boot,
+            )
+        )
+    return disks
 
 
 def _template_user_data(data: dict[str, Any]) -> str | None:
@@ -555,6 +634,7 @@ def _template_user_data(data: dict[str, Any]) -> str | None:
 def _groups(
     groups_raw: list[dict[str, Any]],
     policies_raw: list[dict[str, Any]],
+    hooks_raw: dict[str, list[dict[str, Any]]],
     ctx: NormalizeContext,
     *,
     subnet_ids: dict[str, str],
@@ -606,6 +686,9 @@ def _groups(
                 target_groups=sorted(item.get("TargetGroupARNs") or []),
                 scaling_policies=sorted(by_group.get(native, []), key=lambda p: p.name),
                 mixed_instances=bool(item.get("MixedInstancesPolicy")),
+                lifecycle_hooks=sorted(
+                    hook["LifecycleHookName"] for hook in hooks_raw.get(native, [])
+                ),
             )
         )
     return objects

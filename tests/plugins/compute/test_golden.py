@@ -63,6 +63,10 @@ KEY_FACTS: dict[str, Callable[[IRDocument], bool]] = {
         and len(_kinds(doc, "instance_template")) == 1
         and _kinds(doc, "instance_group")[0].scaling_policies[0].target_value == 60.0
         and "VM-LT-VERSION-UNUSED" in _codes(doc)
+        and _kinds(doc, "instance_group")[0].lifecycle_hooks == ["drain"]
+        # The boot disk comes from the image's root mapping; the data disk from the template.
+        and [(d.boot, d.size_gib) for d in _kinds(doc, "disk")] == [(True, 8), (False, 50)]
+        and _kinds(doc, "instance_template")[0].imds.http_tokens == "required"
     ),
     "unsupported_resources": lambda doc: (
         _kinds(doc, "compute_instance") == []

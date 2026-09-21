@@ -14,7 +14,20 @@
           "SecurityGroupIds": [
             "sg-web"
           ],
-          "UserData": "IyEvYmluL2Jhc2gKZWNobyBhc2cK"
+          "UserData": "IyEvYmluL2Jhc2gKZWNobyBhc2cK",
+          "BlockDeviceMappings": [
+            {
+              "DeviceName": "/dev/xvdb",
+              "Ebs": {
+                "VolumeSize": 50,
+                "VolumeType": "gp3"
+              }
+            }
+          ],
+          "MetadataOptions": {
+            "HttpTokens": "required",
+            "HttpPutResponseHopLimit": 2
+          }
         },
         "VersionNumber": 1
       },

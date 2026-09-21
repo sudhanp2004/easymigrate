@@ -4,6 +4,12 @@ from __future__ import annotations
 
 from easymigrate.differences.model import DifferenceRule
 from easymigrate.differences.rules.aws_gcp.compute import (
+    VmAsgHealthcheck,
+    VmAsgLifecycle,
+    VmAsgMixedInstances,
+    VmAsgScaling,
+    VmAsgShape,
+    VmAsgTargetGroups,
     VmBootDiskMinimum,
     VmBootImage,
     VmDiskEmpty,
@@ -116,4 +122,12 @@ AWS_GCP_RULES: tuple[DifferenceRule, ...] = (
     VmTerminationProtection(),
     # After VM-PUBLIC-IP: an Elastic IP dropped with private_only must not be reserved (spec 4 §5).
     VmElasticIpUnattached(),
+    # Scaling. VM-ASG-SHAPE first: it excludes a group whose template an earlier rule excluded,
+    # and zonal and regional groups take different autohealing and autoscaler resources.
+    VmAsgShape(),
+    VmAsgHealthcheck(),
+    VmAsgScaling(),
+    VmAsgMixedInstances(),
+    VmAsgTargetGroups(),
+    VmAsgLifecycle(),
 )

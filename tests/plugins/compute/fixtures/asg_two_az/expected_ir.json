@@ -108,6 +108,54 @@
       ]
     },
     {
+      "kind": "disk",
+      "id": "disk:lt-web-1-dev-xvda",
+      "name": "lt-web:1/dev/xvda",
+      "labels": {},
+      "source": {
+        "cloud": "aws",
+        "type": "launch-template-disk",
+        "id": "lt-web:1/dev/xvda",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "size_gib": 8,
+      "type": "gp3",
+      "iops": null,
+      "throughput_mibps": null,
+      "encrypted": false,
+      "kms_key": null,
+      "zone": "",
+      "boot": true,
+      "instance_store": false
+    },
+    {
+      "kind": "disk",
+      "id": "disk:lt-web-1-dev-xvdb",
+      "name": "lt-web:1/dev/xvdb",
+      "labels": {},
+      "source": {
+        "cloud": "aws",
+        "type": "launch-template-disk",
+        "id": "lt-web:1/dev/xvdb",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "size_gib": 50,
+      "type": "gp3",
+      "iops": null,
+      "throughput_mibps": null,
+      "encrypted": false,
+      "kms_key": null,
+      "zone": "",
+      "boot": false,
+      "instance_store": false
+    },
+    {
       "kind": "instance_template",
       "id": "instance_template:web-lt",
       "name": "web-lt",
@@ -131,13 +179,19 @@
       "firewall_policies": [
         "firewall_policy:web-sg"
       ],
-      "disks": [],
+      "disks": [
+        "disk:lt-web-1-dev-xvda",
+        "disk:lt-web-1-dev-xvdb"
+      ],
       "user_data": "#!/bin/bash\necho asg\n",
       "key_pair": "web-key",
-      "key_material": null,
+      "key_material": "ssh-rsa AAAAB3NzaC1 web-key",
       "iam_profile": null,
       "spot": false,
-      "imds": null,
+      "imds": {
+        "http_tokens": "required",
+        "hop_limit": 2
+      },
       "version": "1",
       "default_version": "1"
     },
@@ -180,7 +234,10 @@
           "target_value": 60.0
         }
       ],
-      "mixed_instances": false
+      "mixed_instances": false,
+      "lifecycle_hooks": [
+        "drain"
+      ]
     }
   ],
   "findings": [

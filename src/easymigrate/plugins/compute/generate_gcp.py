@@ -121,6 +121,7 @@ FIELD_COVERAGE: dict[str, dict[str, str]] = {
                 "target_groups",
                 "scaling_policies",
                 "mixed_instances",
+                "lifecycle_hooks",
             )
         },
     },

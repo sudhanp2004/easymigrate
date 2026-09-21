@@ -164,6 +164,7 @@ class InstanceGroup(IntentObject):
     target_groups: list[str] = Field(default_factory=list)
     scaling_policies: list[ScalingPolicy] = Field(default_factory=list)
     mixed_instances: bool = False
+    lifecycle_hooks: list[str] = Field(default_factory=list)
 
     @model_validator(mode="after")
     def _sizes_are_ordered(self) -> InstanceGroup:

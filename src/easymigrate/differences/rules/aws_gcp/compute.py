@@ -22,7 +22,13 @@ from easymigrate.differences.rules.aws_gcp.gce_facts import (
     nearest_predefined,
 )
 from easymigrate.ir.base import IntentObject, IRDocument
-from easymigrate.ir.compute import ComputeInstance, Disk, ExternalAddress, InstanceTemplate
+from easymigrate.ir.compute import (
+    ComputeInstance,
+    Disk,
+    ExternalAddress,
+    InstanceGroup,
+    InstanceTemplate,
+)
 
 # Above this, the memory a machine gains in translation is large enough to matter for cost
 # and for sizing assumptions, so VM-MACHINE-TYPE raises its risk (spec 4 §5).
@@ -292,11 +298,16 @@ class VmZoneMapping(DifferenceRule):
         account-independent identifier AWS offers; instances without one sort last by zone
         name so the mapping stays deterministic.
         """
-        keyed = {
-            (instance.zone_id or "~", instance.zone)
+        zone_ids = {
+            instance.zone: instance.zone_id
             for instance in ir.of_kind(ComputeInstance)
-            if instance.zone
+            if instance.zone and instance.zone_id
         }
+        zones = {instance.zone for instance in ir.of_kind(ComputeInstance) if instance.zone}
+        # An Auto Scaling group names its AZs but not their ids; one that shares an AZ with an
+        # instance borrows that instance's id, so the two land in the same GCP zone.
+        zones.update(zone for group in ir.of_kind(InstanceGroup) for zone in group.zones)
+        keyed = {(zone_ids.get(zone) or "~", zone) for zone in zones}
         letters: dict[str, str] = {}
         for index, (_, zone) in enumerate(sorted(keyed)):
             letters[zone] = chr(ord("a") + index)
@@ -1356,3 +1367,363 @@ class VmElasticIpUnattached(DifferenceRule):
         if strategy_id != "reserve_static":
             raise ValueError(f"unknown strategy {strategy_id!r}")
         return _replace_object(doc, _set_hint(obj, "reserve", True))
+
+
+# --- Scaling (spec 4 plan 5) -----------------------------------------------------------------
+
+_CPU_METRIC = "ASGAverageCPUUtilization"
+_DEFAULT_GRACE_SEC = 300
+
+
+def _groups(ir: IRDocument) -> list[InstanceGroup]:
+    return sorted(ir.of_kind(InstanceGroup), key=lambda o: o.id)
+
+
+class VmAsgShape(DifferenceRule):
+    id = "VM-ASG-SHAPE"
+    family = "compute"
+    title = "An Auto Scaling group becomes a managed instance group"
+    impact = (
+        "An ASG spanning availability zones maps to a regional managed instance group, which "
+        "spreads instances across the mapped GCP zones. A GCP subnet is regional, so one subnet "
+        "serves every zone where AWS used one per AZ. Instances are created with no external IP."
+    )
+    strategies = (
+        Strategy(
+            id="regional_mig",
+            title="Regional managed instance group",
+            effect=(
+                "instances are distributed across the mapped zones, the closest match to an ASG "
+                "spanning AZs; they use one regional subnet and have no external IP"
+            ),
+            risk="low",
+        ),
+        Strategy(
+            id="zonal_mig",
+            title="Zonal managed instance group",
+            effect=(
+                "every instance runs in a single zone: cheaper, with no cross-zone redundancy; "
+                "instances have no external IP"
+            ),
+            risk="medium",
+        ),
+    )
+    default = "regional_mig"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        letters = VmZoneMapping._letters(ir)
+        return [
+            self.difference(
+                [group.id],
+                zones=group.zones,
+                zone_letters=sorted({letters[zone] for zone in group.zones if zone in letters}),
+                subnet=sorted(group.subnets)[0] if group.subnets else None,
+                subnets=sorted(group.subnets),
+            )
+            for group in _groups(ir)
+        ]
+
+    def default_strategy(self, diff: Difference) -> str:
+        return "zonal_mig" if len(diff.context.get("zones") or []) <= 1 else self.default
+
+    def risk_for(self, diff: Difference, strategy_id: str) -> Risk:
+        # With one source AZ a zonal group loses nothing the source had.
+        if strategy_id == "zonal_mig" and len(diff.context.get("zones") or []) <= 1:
+            return "low"
+        return self.strategy(strategy_id).risk
+
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
+        doc, group = _subject(ir, diff)
+        if group is None:
+            return doc
+        if strategy_id not in {"regional_mig", "zonal_mig"}:
+            raise ValueError(f"unknown strategy {strategy_id!r}")
+        template = next((o for o in doc.objects if o.id == group.template), None)
+        if template is None or template.excluded is not None:
+            reason = template.excluded if template is not None else "missing"
+            return _replace_object(
+                doc,
+                group.model_copy(
+                    update={"excluded": f"{self.id}: its template is not migrated ({reason})"}
+                ),
+            )
+        letters = diff.context.get("zone_letters") or ["a"]
+        if strategy_id == "zonal_mig":
+            letters = letters[:1]
+        updated = _set_hint(group, "mig", "regional" if strategy_id == "regional_mig" else "zonal")
+        updated = _set_hint(updated, "zone_letters", letters)
+        updated = _set_hint(updated, "subnet", diff.context.get("subnet"))
+        return _replace_object(doc, updated)
+
+
+class VmAsgHealthcheck(DifferenceRule):
+    id = "VM-ASG-HEALTHCHECK"
+    family = "compute"
+    title = "Autohealing needs a health check EasyMigrate must be told about"
+    impact = (
+        "An ASG with ELB health checks relied on a target group's health check, which this "
+        "family does not migrate. A managed instance group heals from a standalone health "
+        "check instead, whose port and path are yours to confirm. An ASG with EC2 health "
+        "checks only replaced instances that failed at the VM level."
+    )
+    strategies = (
+        Strategy(
+            id="autohealing_http",
+            title="Autoheal on an HTTP health check",
+            effect=(
+                "a standalone HTTP health check drives autohealing; an instance that fails it "
+                "is recreated. A wrong port or path recreates healthy instances in a loop"
+            ),
+            risk="medium",
+        ),
+        Strategy(
+            id="no_autohealing",
+            title="No autohealing",
+            effect=(
+                "instances are recreated only when the VM itself fails, not when the "
+                "application does"
+            ),
+            risk="low",
+        ),
+        Strategy(
+            id="manual",
+            title="Handle manually",
+            effect="no health check is generated; configure autohealing yourself",
+            risk="low",
+            manual=True,
+        ),
+    )
+    default = "autohealing_http"
+    param_docs = {
+        "port": "TCP port the health check requests, e.g. 80",
+        "request_path": "HTTP path the health check requests, e.g. /healthz",
+    }
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [
+            self.difference(
+                [group.id],
+                health_check_type=group.health_check_type,
+                grace_sec=group.health_check_grace,
+            )
+            for group in _groups(ir)
+        ]
+
+    def default_strategy(self, diff: Difference) -> str:
+        # EC2 checks never looked at the application; inventing an HTTP port for them would
+        # recreate healthy instances whenever the guess is wrong.
+        return self.default if diff.context.get("health_check_type") == "ELB" else "no_autohealing"
+
+    def default_params(self, diff: Difference, strategy_id: str) -> dict[str, Any]:
+        if strategy_id == "autohealing_http":
+            return {"port": 80, "request_path": "/"}
+        return {}
+
+    def validate_params(self, diff: Difference, strategy_id: str, params: dict[str, Any]) -> None:
+        if strategy_id != "autohealing_http":
+            return
+        port = params.get("port")
+        if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+            raise ValueError("port must be an integer between 1 and 65535")
+        path = params.get("request_path")
+        if not isinstance(path, str) or not path.startswith("/"):
+            raise ValueError("request_path must start with '/'")
+
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
+        doc, group = _subject(ir, diff)
+        if group is None:
+            return doc
+        if strategy_id in {"no_autohealing", "manual"}:
+            return doc
+        if strategy_id != "autohealing_http":
+            raise ValueError(f"unknown strategy {strategy_id!r}")
+        params = {**self.default_params(diff, strategy_id), **(params or {})}
+        self.validate_params(diff, strategy_id, params)
+        updated = _set_hint(
+            group,
+            "health_check",
+            {"port": params["port"], "request_path": params["request_path"]},
+        )
+        updated = _set_hint(
+            updated, "initial_delay_sec", group.health_check_grace or _DEFAULT_GRACE_SEC
+        )
+        return _replace_object(doc, updated)
+
+
+class VmAsgScaling(DifferenceRule):
+    id = "VM-ASG-SCALING"
+    family = "compute"
+    title = "Only CPU target tracking has a direct autoscaler equivalent"
+    impact = (
+        "A GCP autoscaler can track CPU utilisation the way an ASG target-tracking policy does. "
+        "Step scaling, scheduled actions and other metrics have no single equivalent."
+    )
+    strategies = (
+        Strategy(
+            id="cpu_target",
+            title="Autoscale on CPU utilisation",
+            effect=(
+                "an autoscaler holds average CPU at the source's target between the group's "
+                "minimum and maximum size; its scale-in timing differs from AWS"
+            ),
+            risk="medium",
+        ),
+        Strategy(
+            id="fixed_size",
+            title="Fixed size",
+            effect="no autoscaler; the group stays at its desired capacity",
+            risk="low",
+        ),
+        Strategy(
+            id="manual",
+            title="Handle manually",
+            effect=(
+                "no autoscaler is generated; the group stays at its desired capacity until you "
+                "add scaling yourself"
+            ),
+            risk="low",
+            manual=True,
+        ),
+    )
+    default = "cpu_target"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        diffs = []
+        for group in _groups(ir):
+            if not group.scaling_policies:
+                continue
+            policies = group.scaling_policies
+            cpu = (
+                len(policies) == 1
+                and policies[0].policy_type == "TargetTrackingScaling"
+                and policies[0].metric == _CPU_METRIC
+                and policies[0].target_value is not None
+                and group.max_size >= 1
+            )
+            diffs.append(
+                self.difference(
+                    [group.id],
+                    policies=[p.model_dump() for p in policies],
+                    cpu_target=policies[0].target_value if cpu else None,
+                )
+            )
+        return diffs
+
+    def allowed_strategies(self, diff: Difference) -> tuple[Strategy, ...]:
+        if diff.context.get("cpu_target") is None:
+            return (self.strategy("manual"),)
+        return self.strategies
+
+    def default_strategy(self, diff: Difference) -> str:
+        return self.default if diff.context.get("cpu_target") is not None else "manual"
+
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
+        doc, group = _subject(ir, diff)
+        if group is None:
+            return doc
+        if strategy_id not in {s.id for s in self.allowed_strategies(diff)}:
+            raise ValueError(f"strategy {strategy_id!r} is not offered for {group.id}")
+        if strategy_id != "cpu_target":
+            return doc
+        target = diff.context["cpu_target"] / 100
+        return _replace_object(doc, _set_hint(group, "autoscaler", {"cpu_target": target}))
+
+
+class VmAsgMixedInstances(_AcknowledgeOnly, DifferenceRule):
+    id = "VM-ASG-MIXED-INSTANCES"
+    family = "compute"
+    title = "A mixed-instances policy cannot be expressed in one instance template"
+    impact = (
+        "An instance template declares one machine type. A weighted mix of types and purchase "
+        "options needs choices EasyMigrate cannot infer."
+    )
+    strategies = (
+        Strategy(
+            id="manual",
+            title="Handle manually",
+            effect=(
+                "the group is created with the launch template's single machine type; "
+                "reproduce the mix yourself if it mattered for cost or capacity"
+            ),
+            risk="medium",
+            manual=True,
+        ),
+    )
+    default = "manual"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [self.difference([group.id]) for group in _groups(ir) if group.mixed_instances]
+
+
+class VmAsgTargetGroups(_AcknowledgeOnly, DifferenceRule):
+    id = "VM-ASG-TARGET-GROUPS"
+    family = "compute"
+    title = "The group's load-balancer attachment is not migrated"
+    impact = (
+        "Load balancers are outside this family. The managed instance group will look healthy "
+        "while receiving no traffic until a load balancer points at it."
+    )
+    strategies = (
+        Strategy(
+            id="drop_with_note",
+            title="Drop the attachment",
+            effect=(
+                "the migrated instances receive no load-balanced traffic until a GCP load "
+                "balancer is created with this group as its backend"
+            ),
+            risk="high",
+        ),
+    )
+    default = "drop_with_note"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [
+            self.difference([group.id], target_groups=group.target_groups)
+            for group in _groups(ir)
+            if group.target_groups
+        ]
+
+
+class VmAsgLifecycle(_AcknowledgeOnly, DifferenceRule):
+    id = "VM-ASG-LIFECYCLE"
+    family = "compute"
+    title = "Lifecycle hooks have no managed-instance-group equivalent"
+    impact = (
+        "An ASG lifecycle hook pauses a launch or termination until something calls back. MIG "
+        "update policies have no pause-and-callback step, so whatever the hook drove — "
+        "draining, registration, log shipping — no longer runs."
+    )
+    strategies = (
+        Strategy(
+            id="note_only",
+            title="Note it",
+            effect="the hooks are named in the report; nothing pauses instance changes",
+            risk="medium",
+        ),
+    )
+    default = "note_only"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [
+            self.difference([group.id], hooks=group.lifecycle_hooks)
+            for group in _groups(ir)
+            if group.lifecycle_hooks
+        ]

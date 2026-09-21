@@ -476,3 +476,61 @@ An Elastic IP nobody uses is usually kept for a reason — an allow-list entry o
 |---|---|---|---|---|---|
 | `reserve_static` | Reserve a static address | a new external address is reserved and billed while unused, as in AWS | low |  | yes |
 | `omit` | Do not reserve it | the address is reported and not created | none |  |  |
+
+### An Auto Scaling group becomes a managed instance group (`VM-ASG-SHAPE`)
+
+An ASG spanning availability zones maps to a regional managed instance group, which spreads instances across the mapped GCP zones. A GCP subnet is regional, so one subnet serves every zone where AWS used one per AZ. Instances are created with no external IP.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `regional_mig` | Regional managed instance group | instances are distributed across the mapped zones, the closest match to an ASG spanning AZs; they use one regional subnet and have no external IP | low |  | yes |
+| `zonal_mig` | Zonal managed instance group | every instance runs in a single zone: cheaper, with no cross-zone redundancy; instances have no external IP | medium |  |  |
+
+### Autohealing needs a health check EasyMigrate must be told about (`VM-ASG-HEALTHCHECK`)
+
+An ASG with ELB health checks relied on a target group's health check, which this family does not migrate. A managed instance group heals from a standalone health check instead, whose port and path are yours to confirm. An ASG with EC2 health checks only replaced instances that failed at the VM level.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `autohealing_http` | Autoheal on an HTTP health check | a standalone HTTP health check drives autohealing; an instance that fails it is recreated. A wrong port or path recreates healthy instances in a loop | medium |  | yes |
+| `no_autohealing` | No autohealing | instances are recreated only when the VM itself fails, not when the application does | low |  |  |
+| `manual` | Handle manually | no health check is generated; configure autohealing yourself | low | yes |  |
+
+Params:
+
+- `port`: TCP port the health check requests, e.g. 80
+- `request_path`: HTTP path the health check requests, e.g. /healthz
+
+### Only CPU target tracking has a direct autoscaler equivalent (`VM-ASG-SCALING`)
+
+A GCP autoscaler can track CPU utilisation the way an ASG target-tracking policy does. Step scaling, scheduled actions and other metrics have no single equivalent.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `cpu_target` | Autoscale on CPU utilisation | an autoscaler holds average CPU at the source's target between the group's minimum and maximum size; its scale-in timing differs from AWS | medium |  | yes |
+| `fixed_size` | Fixed size | no autoscaler; the group stays at its desired capacity | low |  |  |
+| `manual` | Handle manually | no autoscaler is generated; the group stays at its desired capacity until you add scaling yourself | low | yes |  |
+
+### A mixed-instances policy cannot be expressed in one instance template (`VM-ASG-MIXED-INSTANCES`)
+
+An instance template declares one machine type. A weighted mix of types and purchase options needs choices EasyMigrate cannot infer.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `manual` | Handle manually | the group is created with the launch template's single machine type; reproduce the mix yourself if it mattered for cost or capacity | medium | yes | yes |
+
+### The group's load-balancer attachment is not migrated (`VM-ASG-TARGET-GROUPS`)
+
+Load balancers are outside this family. The managed instance group will look healthy while receiving no traffic until a load balancer points at it.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `drop_with_note` | Drop the attachment | the migrated instances receive no load-balanced traffic until a GCP load balancer is created with this group as its backend | high |  | yes |
+
+### Lifecycle hooks have no managed-instance-group equivalent (`VM-ASG-LIFECYCLE`)
+
+An ASG lifecycle hook pauses a launch or termination until something calls back. MIG update policies have no pause-and-callback step, so whatever the hook drove — draining, registration, log shipping — no longer runs.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `note_only` | Note it | the hooks are named in the report; nothing pauses instance changes | medium |  | yes |

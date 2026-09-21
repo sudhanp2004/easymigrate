@@ -14,31 +14,31 @@ Every IR field the compute generator could touch is declared here, so an IR fiel
 | `excluded` | metadata |
 | `external_ip` | decision:VM-PUBLIC-IP decides access_config |
 | `firewall_policies` | exact:becomes the instance's network tags |
-| `iam_profile` | not_generated:VM-IAM-PROFILE is manual-only, spec 4 plan 4 |
+| `iam_profile` | always_excluded:VM-IAM-PROFILE is manual; no service account is attached |
 | `id` | metadata |
 | `image` | derived:VM-BOOT-IMAGE chooses a stock image; the AMI itself is not migrated |
-| `imds` | not_generated:VM-IMDS is spec 4 plan 4 |
+| `imds` | always_excluded:VM-IMDS; GCP's metadata server has no token protocol to set |
 | `instance_type` | derived:VM-MACHINE-TYPE chooses the GCP machine type |
-| `key_material` | not_generated:VM-SSH-KEYS is spec 4 plan 4 |
-| `key_pair` | not_generated:VM-SSH-KEYS is spec 4 plan 4 |
+| `key_material` | decision:VM-SSH-KEYS imports it as an ssh-keys metadata entry |
+| `key_pair` | decision:VM-SSH-KEYS |
 | `kind` | metadata |
 | `labels` | metadata |
 | `memory_mib` | derived:input to VM-MACHINE-TYPE |
 | `monitoring` | recorded:captured in the IR and the report; nothing is generated from it |
 | `name` | metadata |
-| `placement_group` | not_generated:VM-PLACEMENT-GROUP is manual-only, spec 4 plan 4 |
+| `placement_group` | always_excluded:VM-PLACEMENT-GROUP is manual |
 | `platform` | derived:input to VM-BOOT-IMAGE |
 | `platform_details` | derived:input to VM-BOOT-IMAGE |
 | `private_ip` | recorded:captured in the IR and the report; nothing is generated from it |
 | `resolution` | metadata |
 | `source` | metadata |
-| `spot` | not_generated:VM-SPOT is spec 4 plan 4 |
+| `spot` | decision:VM-SPOT sets scheduling.provisioning_model |
 | `state` | decision:VM-STOPPED sets desired_status |
 | `subnet` | exact:network_interface.subnetwork |
 | `target_hints` | metadata |
-| `tenancy` | not_generated:VM-TENANCY is manual-only, spec 4 plan 4 |
-| `termination_protection` | not_generated:spec 4 plan 4 |
-| `user_data` | not_generated:VM-USER-DATA is spec 4 plan 4 |
+| `tenancy` | always_excluded:VM-TENANCY is manual; sole-tenant nodes are not generated |
+| `termination_protection` | decision:VM-TERMINATION-PROTECTION sets deletion_protection |
+| `user_data` | decision:VM-USER-DATA writes a startup-script or user-data metadata key |
 | `vcpus` | derived:input to VM-MACHINE-TYPE |
 | `zone` | decision:VM-ZONE-MAPPING maps it positionally |
 | `zone_id` | derived:input to VM-ZONE-MAPPING |
@@ -69,15 +69,15 @@ Every IR field the compute generator could touch is declared here, so an IR fiel
 
 | Field | Declaration |
 |---|---|
-| `address` | not_generated:spec 4 plan 4 |
-| `attached` | not_generated:spec 4 plan 4 |
+| `address` | always_excluded:GCP cannot reserve a specific public address |
+| `attached` | decision:VM-ELASTIC-IP-UNATTACHED or the attached instance's VM-PUBLIC-IP |
 | `excluded` | metadata |
 | `id` | metadata |
 | `kind` | metadata |
 | `labels` | metadata |
 | `name` | metadata |
 | `resolution` | metadata |
-| `scope` | not_generated:spec 4 plan 4 |
+| `scope` | recorded:captured in the IR and the report; nothing is generated from it |
 | `source` | metadata |
 | `target_hints` | metadata |
 
@@ -92,6 +92,7 @@ Every IR field the compute generator could touch is declared here, so an IR fiel
 | `id` | metadata |
 | `kind` | metadata |
 | `labels` | metadata |
+| `lifecycle_hooks` | not_generated:managed instance groups are spec 4 plan 5 |
 | `max_size` | not_generated:managed instance groups are spec 4 plan 5 |
 | `min_size` | not_generated:managed instance groups are spec 4 plan 5 |
 | `mixed_instances` | not_generated:managed instance groups are spec 4 plan 5 |
