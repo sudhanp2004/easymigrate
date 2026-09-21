@@ -8,6 +8,11 @@ variable "db_password" {
   sensitive   = true
 }
 
+variable "ssh_public_key" {
+  description = "OpenSSH public key for the test key pair; VM-SSH-KEYS imports it (TF_VAR_ssh_public_key)"
+  type        = string
+}
+
 # 1. Create a basic VPC
 resource "aws_vpc" "main" {
   cidr_block           = "10.0.0.0/16"
@@ -366,6 +371,15 @@ resource "aws_instance" "app" {
   subnet_id                   = aws_subnet.public_1.id
   vpc_security_group_ids      = [aws_security_group.app.id, aws_security_group.mysql.id]
   associate_public_ip_address = true
+  key_name                    = aws_key_pair.test.key_name
+
+  # VM-USER-DATA: becomes a GCP startup script. Serves a page so the tag seam can be proven
+  # by reaching port 80 through the migrated firewall rules.
+  user_data = <<-EOT
+    #!/bin/bash
+    dnf install -y nginx || apt-get install -y nginx
+    systemctl enable --now nginx
+  EOT
 
   root_block_device {
     volume_size = 8
@@ -414,4 +428,82 @@ resource "aws_eip" "app" {
   }
 
   depends_on = [aws_internet_gateway.gw]
+}
+
+# VM-SSH-KEYS: AWS still holds this public key, so import_public_key is the default.
+resource "aws_key_pair" "test" {
+  key_name   = "migration-test-key"
+  public_key = var.ssh_public_key
+}
+
+# VM-STOPPED: must arrive in GCP stopped. It sits in the db group on the private subnet, so
+# NET-EGRESS-TAG's app->db egress rule narrows to private_1's CIDR instead of the whole VPC
+# (spec 4 §10) — the branch the 2026-09-19 live run could not reach.
+resource "aws_instance" "stopped" {
+  ami                    = data.aws_ami.al2023.id
+  instance_type          = "t3.micro"
+  subnet_id              = aws_subnet.private_1.id
+  vpc_security_group_ids = [aws_security_group.db.id]
+
+  tags = {
+    Name = "migration-test-stopped"
+  }
+}
+
+resource "aws_ec2_instance_state" "stopped" {
+  instance_id = aws_instance.stopped.id
+  state       = "stopped"
+}
+
+# Spec 4 plan 5: a launch template and a two-AZ ASG with CPU target tracking become an
+# instance template, a regional MIG and a regional autoscaler.
+resource "aws_launch_template" "web" {
+  name          = "migration-test-web-lt"
+  image_id      = data.aws_ami.al2023.id
+  instance_type = "t3.micro"
+  key_name      = aws_key_pair.test.key_name
+
+  vpc_security_group_ids = [aws_security_group.app.id]
+
+  metadata_options {
+    http_tokens = "required"
+  }
+
+  user_data = base64encode(<<-EOT
+    #!/bin/bash
+    echo "web from asg" > /tmp/hello
+  EOT
+  )
+}
+
+resource "aws_autoscaling_group" "web" {
+  name                = "migration-test-web-asg"
+  min_size            = 1
+  desired_capacity    = 1
+  max_size            = 2
+  vpc_zone_identifier = [aws_subnet.public_1.id, aws_subnet.public_2.id]
+
+  launch_template {
+    id      = aws_launch_template.web.id
+    version = aws_launch_template.web.latest_version
+  }
+
+  tag {
+    key                 = "Name"
+    value               = "migration-test-web-asg"
+    propagate_at_launch = true
+  }
+}
+
+resource "aws_autoscaling_policy" "web_cpu" {
+  name                   = "migration-test-web-cpu"
+  autoscaling_group_name = aws_autoscaling_group.web.name
+  policy_type            = "TargetTrackingScaling"
+
+  target_tracking_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ASGAverageCPUUtilization"
+    }
+    target_value = 50
+  }
 }
