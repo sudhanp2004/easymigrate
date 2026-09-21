@@ -7,6 +7,7 @@ module, because `easymigrate.differences` may import only `easymigrate.ir`.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from easymigrate.differences.model import Difference, DifferenceRule, Risk, Strategy
@@ -21,7 +22,7 @@ from easymigrate.differences.rules.aws_gcp.gce_facts import (
     nearest_predefined,
 )
 from easymigrate.ir.base import IntentObject, IRDocument
-from easymigrate.ir.compute import ComputeInstance, Disk, InstanceTemplate
+from easymigrate.ir.compute import ComputeInstance, Disk, ExternalAddress, InstanceTemplate
 
 # Above this, the memory a machine gains in translation is large enough to matter for cost
 # and for sizing assumptions, so VM-MACHINE-TYPE raises its risk (spec 4 §5).
@@ -379,6 +380,12 @@ class VmPublicIp(DifferenceRule):
     )
     default = "private_only"
 
+    def allowed_strategies(self, diff: Difference) -> tuple[Strategy, ...]:
+        # A reserved address needs an Elastic IP to stand for; an ephemeral source has none.
+        if diff.context.get("reserved"):
+            return self.strategies
+        return tuple(s for s in self.strategies if s.id != "static_external")
+
     def detect(self, ir: IRDocument) -> list[Difference]:
         diffs = []
         for instance in sorted(ir.of_kind(ComputeInstance), key=lambda o: o.id):
@@ -405,6 +412,8 @@ class VmPublicIp(DifferenceRule):
         if obj_id not in {o.id for o in doc.objects}:
             return doc
         instance = doc.get(obj_id)
+        if strategy_id not in {s.id for s in self.allowed_strategies(diff)}:
+            raise ValueError(f"strategy {strategy_id!r} is not offered for {obj_id}")
         external = {
             "private_only": "none",
             "ephemeral_external": "ephemeral",
@@ -798,3 +807,552 @@ class VmBootDiskMinimum(DifferenceRule):
         if minimum <= diff.context["source_gib"]:
             return doc
         return _replace_object(doc, _set_hint(obj, "boot_disk_size_gib", minimum))
+
+
+# --- Access and identity (spec 4 plan 4) -----------------------------------------------------
+
+_USERNAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+_PUBLIC_KEY_RE = re.compile(
+    r"^(ssh-(rsa|ed25519|dss)|ecdsa-sha2-nistp(256|384|521)|sk-\S+) [A-Za-z0-9+/=]+( .*)?$"
+)
+
+
+def _merge_metadata(obj: IntentObject, entries: dict[str, str]) -> IntentObject:
+    """Metadata is one GCP attribute written by several rules, so each merges its keys in."""
+    return _set_hint(obj, "metadata", {**obj.target_hints.get("metadata", {}), **entries})
+
+
+def _subject(ir: IRDocument, diff: Difference) -> tuple[IRDocument, IntentObject | None]:
+    doc = ir.model_copy(deep=True)
+    obj_id = diff.subjects[0]
+    if obj_id not in {o.id for o in doc.objects}:
+        return doc, None
+    return doc, doc.get(obj_id)
+
+
+def _default_username(platform_details: str | None) -> str:
+    """The login the AMI's distribution shipped, so the user keeps the name they already use."""
+    details = (platform_details or "").lower()
+    if "ubuntu" in details:
+        return "ubuntu"
+    if "debian" in details:
+        return "admin"
+    return "ec2-user"
+
+
+def _check_username(params: dict[str, Any]) -> None:
+    username = params.get("username")
+    if not isinstance(username, str) or not _USERNAME_RE.match(username):
+        raise ValueError("username must be a lowercase POSIX login name, e.g. ec2-user")
+
+
+class VmSshKeys(DifferenceRule):
+    id = "VM-SSH-KEYS"
+    family = "compute"
+    title = "An EC2 key pair becomes a GCP SSH key, or GCP's own access model"
+    impact = (
+        "AWS injects one key pair into an instance at launch. GCP reads SSH keys from instance "
+        "metadata, or delegates access to IAM through OS Login. EasyMigrate never generates a "
+        "key pair; it carries the public key AWS still holds, or lets you choose another model."
+    )
+    strategies = (
+        Strategy(
+            id="import_public_key",
+            title="Import the key pair's public key",
+            effect="the public key AWS holds becomes an ssh-keys metadata entry for the same login",
+            risk="low",
+        ),
+        Strategy(
+            id="os_login",
+            title="Use OS Login",
+            effect=(
+                "the key pair is ignored and GCP IAM governs who may log in; this changes the "
+                "access model, so every current user needs an IAM grant"
+            ),
+            risk="medium",
+        ),
+        Strategy(
+            id="user_supplied_key",
+            title="Use a public key you supply",
+            effect="the public key you give becomes an ssh-keys metadata entry",
+            risk="low",
+        ),
+        Strategy(
+            id="no_ssh_access",
+            title="No SSH access",
+            effect=(
+                "no key is added and project-wide SSH keys are blocked; nobody can log in "
+                "over SSH until access is configured"
+            ),
+            risk="medium",
+        ),
+    )
+    default = "import_public_key"
+    param_docs = {
+        "username": "login name the key is installed for, e.g. ec2-user",
+        "public_key": "an OpenSSH public key, e.g. 'ssh-ed25519 AAAA… you@host'",
+    }
+
+    _WINDOWS = Strategy(
+        id="no_ssh_access",
+        title="No SSH access",
+        effect=(
+            "a Windows key pair only decrypted the administrator password in AWS; in GCP, set "
+            "one with `gcloud compute reset-windows-password` after the instance starts"
+        ),
+        risk="low",
+    )
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [
+            self.difference(
+                [obj.id],
+                key_pair=obj.key_pair,
+                has_public_key=bool(obj.key_material),
+                platform=obj.platform,
+                username=_default_username(obj.platform_details),
+            )
+            for obj in _shapes(ir)
+            if obj.key_pair
+        ]
+
+    def allowed_strategies(self, diff: Difference) -> tuple[Strategy, ...]:
+        if diff.context.get("platform") == "windows":
+            return (self._WINDOWS,)
+        if not diff.context.get("has_public_key"):
+            return tuple(s for s in self.strategies if s.id != "import_public_key")
+        return self.strategies
+
+    def risk_for(self, diff: Difference, strategy_id: str) -> Risk:
+        if diff.context.get("platform") == "windows":
+            return self._WINDOWS.risk
+        return self.strategy(strategy_id).risk
+
+    def default_strategy(self, diff: Difference) -> str:
+        if diff.context.get("platform") == "windows":
+            return "no_ssh_access"
+        return self.default if diff.context.get("has_public_key") else "os_login"
+
+    def default_params(self, diff: Difference, strategy_id: str) -> dict[str, Any]:
+        if strategy_id == "import_public_key":
+            return {"username": diff.context["username"]}
+        if strategy_id == "user_supplied_key":
+            # Declared empty so the key set survives `merge_decisions`; validation refuses it
+            # until the user fills it in.
+            return {"username": diff.context["username"], "public_key": ""}
+        return {}
+
+    def validate_params(self, diff: Difference, strategy_id: str, params: dict[str, Any]) -> None:
+        if strategy_id not in {"import_public_key", "user_supplied_key"}:
+            return
+        _check_username(params)
+        if strategy_id == "user_supplied_key":
+            key = params.get("public_key")
+            if not isinstance(key, str) or not _PUBLIC_KEY_RE.match(key.strip()):
+                raise ValueError("public_key must be an OpenSSH public key line")
+
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
+        doc, obj = _subject(ir, diff)
+        if obj is None:
+            return doc
+        if strategy_id not in {s.id for s in self.allowed_strategies(diff)}:
+            raise ValueError(f"strategy {strategy_id!r} is not offered for {obj.id}")
+        params = {**self.default_params(diff, strategy_id), **(params or {})}
+        if strategy_id == "os_login":
+            return _replace_object(doc, _merge_metadata(obj, {"enable-oslogin": "TRUE"}))
+        if strategy_id == "no_ssh_access":
+            return _replace_object(doc, _merge_metadata(obj, {"block-project-ssh-keys": "TRUE"}))
+        self.validate_params(diff, strategy_id, params)
+        if strategy_id == "import_public_key":
+            if not obj.key_material:
+                raise ValueError(f"{obj.id} has no public key material to import")
+            key = obj.key_material.strip()
+        else:
+            key = params["public_key"].strip()
+        return _replace_object(
+            doc, _merge_metadata(obj, {"ssh-keys": f"{params['username']}:{key}"})
+        )
+
+
+_WINDOWS_WRAPPERS = (
+    ("<powershell>", "</powershell>", "windows-startup-script-ps1"),
+    ("<script>", "</script>", "windows-startup-script-cmd"),
+)
+
+
+def _windows_script(user_data: str) -> tuple[str, str]:
+    """AWS wraps Windows user data in <powershell> or <script>; GCP keys it by language."""
+    stripped = user_data.strip()
+    for opening, closing, key in _WINDOWS_WRAPPERS:
+        start = stripped.find(opening)
+        end = stripped.find(closing)
+        if start != -1 and end > start:
+            return key, stripped[start + len(opening) : end].strip()
+    return "windows-startup-script-ps1", stripped
+
+
+class VmUserData(DifferenceRule):
+    id = "VM-USER-DATA"
+    family = "compute"
+    title = "EC2 user data becomes a GCP startup script, which runs on every boot"
+    impact = (
+        "AWS runs user data once, on first boot, through cloud-init. GCP's guest agent runs a "
+        "startup script on every boot and does not interpret #cloud-config. A script that is "
+        "not safe to run twice needs a guard before it migrates."
+    )
+    strategies = (
+        Strategy(
+            id="startup_script",
+            title="Run it as a startup script",
+            effect=(
+                "copied verbatim into the startup-script metadata key; it runs on every boot, "
+                "not first boot only, and #cloud-config is not interpreted"
+            ),
+            risk="medium",
+        ),
+        Strategy(
+            id="cloud_init",
+            title="Pass it to cloud-init",
+            effect=(
+                "written to the user-data metadata key, which only images that ship cloud-init "
+                "honour; GCP's Debian, Rocky and RHEL images do not"
+            ),
+            risk="medium",
+        ),
+        Strategy(
+            id="omit",
+            title="Do not carry it",
+            effect="the script is reported in full and not run on the new instance",
+            risk="low",
+        ),
+    )
+    default = "startup_script"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [
+            self.difference(
+                [obj.id],
+                platform=obj.platform,
+                cloud_config=obj.user_data.lstrip().startswith("#cloud-config"),
+                length=len(obj.user_data),
+            )
+            for obj in _shapes(ir)
+            if obj.user_data and obj.user_data.strip()
+        ]
+
+    def allowed_strategies(self, diff: Difference) -> tuple[Strategy, ...]:
+        if diff.context.get("platform") == "windows":
+            return tuple(s for s in self.strategies if s.id != "cloud_init")
+        return self.strategies
+
+    def default_strategy(self, diff: Difference) -> str:
+        # Running a #cloud-config document as a shell script fails on its first line.
+        if diff.context.get("cloud_config") and diff.context.get("platform") != "windows":
+            return "cloud_init"
+        return self.default
+
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
+        doc, obj = _subject(ir, diff)
+        if obj is None:
+            return doc
+        if strategy_id not in {s.id for s in self.allowed_strategies(diff)}:
+            raise ValueError(f"strategy {strategy_id!r} is not offered for {obj.id}")
+        if strategy_id == "omit":
+            return doc
+        if strategy_id == "cloud_init":
+            return _replace_object(doc, _merge_metadata(obj, {"user-data": obj.user_data}))
+        if obj.platform == "windows":
+            key, script = _windows_script(obj.user_data)
+        else:
+            key, script = "startup-script", obj.user_data
+        return _replace_object(doc, _merge_metadata(obj, {key: script}))
+
+
+class _AcknowledgeOnly:
+    """A gap EasyMigrate names but does not bridge. The subject is still generated; the
+    `manual` strategy exists so the user must acknowledge the gap before `plan`. A mixin, since
+    `DifferenceRule.__init_subclass__` requires a concrete rule id."""
+
+    strategies: tuple[Strategy, ...]
+
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
+        if strategy_id not in {s.id for s in self.strategies}:
+            raise ValueError(f"unknown strategy {strategy_id!r}")
+        return ir.model_copy(deep=True)
+
+
+class VmIamProfile(_AcknowledgeOnly, DifferenceRule):
+    id = "VM-IAM-PROFILE"
+    family = "compute"
+    title = "An instance profile's IAM role is not translated"
+    impact = (
+        "An EC2 instance profile gives software on the machine AWS credentials. GCP service "
+        "accounts have different semantics, and translating permissions is out of scope, so "
+        "whatever the software did with those credentials stops working."
+    )
+    strategies = (
+        Strategy(
+            id="manual",
+            title="Handle manually",
+            effect=(
+                "the instance is created with no service account; the AWS role is named in the "
+                "report so you can create and attach a service account with equivalent access"
+            ),
+            risk="medium",
+            manual=True,
+        ),
+    )
+    default = "manual"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [
+            self.difference([obj.id], iam_profile=obj.iam_profile)
+            for obj in _shapes(ir)
+            if obj.iam_profile
+        ]
+
+
+class VmSpot(DifferenceRule):
+    id = "VM-SPOT"
+    family = "compute"
+    title = "AWS Spot and GCP Spot VMs are preempted differently"
+    impact = (
+        "Both clouds reclaim spot capacity at short notice, but AWS gives a two-minute "
+        "interruption notice through instance metadata while GCP gives thirty seconds through "
+        "an ACPI shutdown. Handlers written for one do not fire on the other."
+    )
+    strategies = (
+        Strategy(
+            id="spot_vm",
+            title="Create a Spot VM",
+            effect=(
+                "provisioning model SPOT, stopped rather than deleted on preemption, and never "
+                "restarted automatically"
+            ),
+            risk="medium",
+        ),
+        Strategy(
+            id="standard",
+            title="Create a standard VM",
+            effect="the instance costs more and is never preempted",
+            risk="low",
+        ),
+    )
+    default = "spot_vm"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [self.difference([obj.id]) for obj in _shapes(ir) if obj.spot]
+
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
+        doc, obj = _subject(ir, diff)
+        if obj is None:
+            return doc
+        if strategy_id == "standard":
+            return doc
+        if strategy_id != "spot_vm":
+            raise ValueError(f"unknown strategy {strategy_id!r}")
+        return _replace_object(doc, _set_hint(obj, "spot", True))
+
+
+class VmTenancy(_AcknowledgeOnly, DifferenceRule):
+    id = "VM-TENANCY"
+    family = "compute"
+    title = "Dedicated tenancy is not reproduced"
+    impact = (
+        "GCP's equivalent is sole-tenant nodes, which need a node template, a node group and "
+        "affinity labels. This family does not generate them."
+    )
+    strategies = (
+        Strategy(
+            id="manual",
+            title="Handle manually",
+            effect=(
+                "the instance is created on shared hardware; create a sole-tenant node group "
+                "and set node affinity yourself if isolation or licensing requires it"
+            ),
+            risk="medium",
+            manual=True,
+        ),
+    )
+    default = "manual"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [
+            self.difference([instance.id], tenancy=instance.tenancy)
+            for instance in sorted(ir.of_kind(ComputeInstance), key=lambda o: o.id)
+            if instance.tenancy in {"dedicated", "host"}
+        ]
+
+
+class VmPlacementGroup(_AcknowledgeOnly, DifferenceRule):
+    id = "VM-PLACEMENT-GROUP"
+    family = "compute"
+    title = "A placement group is not reproduced"
+    impact = (
+        "Cluster, spread and partition placement groups correspond to GCP resource policies "
+        "with different guarantees. This family does not generate them."
+    )
+    strategies = (
+        Strategy(
+            id="manual",
+            title="Handle manually",
+            effect=(
+                "the instance is created without placement constraints; attach a GCP placement "
+                "policy yourself if latency or failure isolation depended on the group"
+            ),
+            risk="medium",
+            manual=True,
+        ),
+    )
+    default = "manual"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [
+            self.difference([instance.id], placement_group=instance.placement_group)
+            for instance in sorted(ir.of_kind(ComputeInstance), key=lambda o: o.id)
+            if instance.placement_group
+        ]
+
+
+class VmImds(_AcknowledgeOnly, DifferenceRule):
+    id = "VM-IMDS"
+    family = "compute"
+    title = "GCP's metadata server has no IMDSv2 token protocol"
+    impact = (
+        "The source requires IMDSv2 session tokens. GCP's metadata server instead requires a "
+        "`Metadata-Flavor: Google` header on every request and has no v1/v2 distinction. "
+        "Software that calls the AWS metadata endpoint needs changing regardless."
+    )
+    strategies = (
+        Strategy(
+            id="note_only",
+            title="Note it",
+            effect=(
+                "nothing to configure: GCP's header requirement already blocks the "
+                "SSRF-style requests IMDSv2 was introduced to stop"
+            ),
+            risk="none",
+        ),
+    )
+    default = "note_only"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [
+            self.difference([obj.id], hop_limit=obj.imds.hop_limit)
+            for obj in _shapes(ir)
+            if obj.imds is not None and obj.imds.http_tokens == "required"
+        ]
+
+
+class VmTerminationProtection(DifferenceRule):
+    id = "VM-TERMINATION-PROTECTION"
+    family = "compute"
+    title = "Termination protection becomes deletion protection"
+    impact = (
+        "GCP's deletion protection refuses a delete exactly as AWS termination protection does."
+    )
+    strategies = (
+        Strategy(
+            id="deletion_protection",
+            title="Enable deletion protection",
+            effect="the instance cannot be deleted until deletion protection is turned off",
+            risk="none",
+        ),
+    )
+    default = "deletion_protection"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [
+            self.difference([instance.id])
+            for instance in sorted(ir.of_kind(ComputeInstance), key=lambda o: o.id)
+            if instance.termination_protection
+        ]
+
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
+        doc, obj = _subject(ir, diff)
+        if obj is None:
+            return doc
+        if strategy_id != "deletion_protection":
+            raise ValueError(f"unknown strategy {strategy_id!r}")
+        return _replace_object(doc, _set_hint(obj, "deletion_protection", True))
+
+
+class VmElasticIpUnattached(DifferenceRule):
+    id = "VM-ELASTIC-IP-UNATTACHED"
+    family = "compute"
+    title = "An unattached Elastic IP becomes a reserved address, with a different IP"
+    impact = (
+        "An Elastic IP nobody uses is usually kept for a reason — an allow-list entry or a DNS "
+        "record. GCP can reserve an address, but not the same one, so whatever depended on "
+        "the old IP needs updating either way."
+    )
+    strategies = (
+        Strategy(
+            id="reserve_static",
+            title="Reserve a static address",
+            effect="a new external address is reserved and billed while unused, as in AWS",
+            risk="low",
+        ),
+        Strategy(
+            id="omit",
+            title="Do not reserve it",
+            effect="the address is reported and not created",
+            risk="none",
+        ),
+    )
+    default = "reserve_static"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [
+            self.difference([address.id], address=address.address)
+            for address in sorted(ir.of_kind(ExternalAddress), key=lambda o: o.id)
+            if not address.attached
+        ]
+
+    def apply(
+        self,
+        ir: IRDocument,
+        diff: Difference,
+        strategy_id: str,
+        params: dict[str, Any] | None = None,
+    ) -> IRDocument:
+        doc, obj = _subject(ir, diff)
+        if obj is None:
+            return doc
+        if strategy_id == "omit":
+            return _replace_object(
+                doc, obj.model_copy(update={"excluded": f"{self.id}: not reserved"})
+            )
+        if strategy_id != "reserve_static":
+            raise ValueError(f"unknown strategy {strategy_id!r}")
+        return _replace_object(doc, _set_hint(obj, "reserve", True))

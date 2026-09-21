@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from easymigrate.core.plugin import GenerateContext, GenerationError
 from easymigrate.ir.base import IRDocument
-from easymigrate.ir.compute import ComputeInstance, Disk
+from easymigrate.ir.compute import ComputeInstance, Disk, ExternalAddress
 from easymigrate.ir.network import FirewallPolicy, Subnet
 from easymigrate.plugins.network.generate_gcp import policy_network_tags
 from easymigrate.providers.gcp.hcl import HclFile, Ref
@@ -44,21 +44,21 @@ FIELD_COVERAGE: dict[str, dict[str, str]] = {
         "platform_details": "derived:input to VM-BOOT-IMAGE",
         "firewall_policies": "exact:becomes the instance's network tags",
         "disks": "exact:boot disk plus attached_disk/scratch_disk",
-        "user_data": "not_generated:VM-USER-DATA is spec 4 plan 4",
-        "key_pair": "not_generated:VM-SSH-KEYS is spec 4 plan 4",
-        "key_material": "not_generated:VM-SSH-KEYS is spec 4 plan 4",
-        "iam_profile": "not_generated:VM-IAM-PROFILE is manual-only, spec 4 plan 4",
-        "spot": "not_generated:VM-SPOT is spec 4 plan 4",
-        "imds": "not_generated:VM-IMDS is spec 4 plan 4",
+        "user_data": "decision:VM-USER-DATA writes a startup-script or user-data metadata key",
+        "key_pair": "decision:VM-SSH-KEYS",
+        "key_material": "decision:VM-SSH-KEYS imports it as an ssh-keys metadata entry",
+        "iam_profile": "always_excluded:VM-IAM-PROFILE is manual; no service account is attached",
+        "spot": "decision:VM-SPOT sets scheduling.provisioning_model",
+        "imds": "always_excluded:VM-IMDS; GCP's metadata server has no token protocol to set",
         "state": "decision:VM-STOPPED sets desired_status",
         "zone": "decision:VM-ZONE-MAPPING maps it positionally",
         "zone_id": "derived:input to VM-ZONE-MAPPING",
         "subnet": "exact:network_interface.subnetwork",
         "external_ip": "decision:VM-PUBLIC-IP decides access_config",
         "private_ip": _RECORDED,
-        "tenancy": "not_generated:VM-TENANCY is manual-only, spec 4 plan 4",
-        "placement_group": "not_generated:VM-PLACEMENT-GROUP is manual-only, spec 4 plan 4",
-        "termination_protection": "not_generated:spec 4 plan 4",
+        "tenancy": "always_excluded:VM-TENANCY is manual; sole-tenant nodes are not generated",
+        "placement_group": "always_excluded:VM-PLACEMENT-GROUP is manual",
+        "termination_protection": "decision:VM-TERMINATION-PROTECTION sets deletion_protection",
         "monitoring": _RECORDED,
         "eks_cluster": "always_excluded:EKS members are left to the EKS family (spec 4 §1)",
     },
@@ -76,9 +76,9 @@ FIELD_COVERAGE: dict[str, dict[str, str]] = {
     },
     "external_address": {
         **_METADATA_FIELDS,
-        "address": "not_generated:spec 4 plan 4",
-        "attached": "not_generated:spec 4 plan 4",
-        "scope": "not_generated:spec 4 plan 4",
+        "address": "always_excluded:GCP cannot reserve a specific public address",
+        "attached": "decision:VM-ELASTIC-IP-UNATTACHED or the attached instance's VM-PUBLIC-IP",
+        "scope": _RECORDED,
     },
     "instance_template": {
         **_METADATA_FIELDS,
@@ -168,10 +168,19 @@ def generate(resolved: IRDocument, ctx: GenerateContext) -> HclFile:
     instances = [
         instance for instance in _live(resolved, ComputeInstance) if not instance.eks_cluster
     ]
-    if not instances:
+    addresses = _addresses(resolved, instances)
+    if not instances and not addresses:
         return file
 
     disks = {disk.id: disk for disk in resolved.of_kind(Disk)}
+    # A data disk is created only for an instance that is itself generated, in that instance's
+    # zone: GCP attaches a zonal disk only to an instance in the same zone.
+    owner: dict[str, ComputeInstance] = {}
+    for instance in instances:
+        for disk_id in instance.disks:
+            disk = disks.get(disk_id)
+            if disk and not disk.boot and not disk.instance_store and disk.excluded is None:
+                owner[disk_id] = instance
     subnet_labels = _subnet_labels(resolved)
     tags, _ = policy_network_tags(resolved.of_kind(FirewallPolicy))
     live_policies = {policy.id for policy in _live(resolved, FirewallPolicy)}
@@ -179,18 +188,47 @@ def generate(resolved: IRDocument, ctx: GenerateContext) -> HclFile:
     names = _Names()
     for instance in instances:
         names.allocate("google_compute_instance", instance.id)
-    for disk in _live(resolved, Disk):
-        if not disk.boot and not disk.instance_store:
-            names.allocate("google_compute_disk", disk.id)
+    for disk_id in sorted(owner):
+        names.allocate("google_compute_disk", disk_id)
+    for address in addresses:
+        names.allocate("google_compute_address", address.id)
 
-    for disk in _live(resolved, Disk):
-        if disk.boot or disk.instance_store:
-            continue
-        _generate_disk(file, names, disk, ctx)
-
+    for address in addresses:
+        _generate_address(file, names, address, ctx)
+    for disk_id in sorted(owner):
+        _generate_disk(file, names, disks[disk_id], owner[disk_id], ctx)
     for instance in instances:
         _generate_instance(file, names, instance, disks, subnet_labels, tags, live_policies, ctx)
     return file
+
+
+def _addresses(resolved: IRDocument, instances: list[ComputeInstance]) -> list[ExternalAddress]:
+    """Unattached addresses VM-ELASTIC-IP-UNATTACHED chose to reserve, plus the Elastic IP of
+    every instance whose VM-PUBLIC-IP decision was `static`."""
+    wanted = {
+        instance.external_ip
+        for instance in instances
+        if instance.target_hints.get("external") == "static"
+    }
+    return [
+        address
+        for address in _live(resolved, ExternalAddress)
+        if address.id in wanted or (not address.attached and address.target_hints.get("reserve"))
+    ]
+
+
+def _generate_address(
+    file: HclFile, names: _Names, address: ExternalAddress, ctx: GenerateContext
+) -> None:
+    block = file.block("resource", "google_compute_address", names.label[address.id])
+    lines = _header_lines(address, ctx.decided_by)
+    lines.append(f"AWS address {address.address} cannot be kept; GCP assigns a new one")
+    block.comment("\n".join(lines))
+    block.attr("name", names.name[address.id])
+    block.attr("region", Ref("var.region"))
+    block.attr("address_type", "EXTERNAL")
+    if address.labels:
+        block.attr("labels", dict(sorted(address.labels.items())))
 
 
 def _subnet_labels(resolved: IRDocument) -> dict[str, str]:
@@ -202,20 +240,19 @@ def _subnet_labels(resolved: IRDocument) -> dict[str, str]:
     return labels
 
 
-def _generate_disk(file: HclFile, names: _Names, disk: Disk, ctx: GenerateContext) -> None:
+def _generate_disk(
+    file: HclFile, names: _Names, disk: Disk, instance: ComputeInstance, ctx: GenerateContext
+) -> None:
     block = file.block("resource", "google_compute_disk", names.label[disk.id])
     block.comment("\n".join(_header_lines(disk, ctx.decided_by)))
     block.attr("name", names.name[disk.id])
     block.attr("type", disk.target_hints.get("disk_type", _DEFAULT_DISK_TYPE))
-    block.attr("zone", Ref(f'"${{var.region}}-{_zone_letter_for_disk(disk)}"'))
+    zone_letter = _require(instance, "zone_letter")
+    block.attr("zone", Ref(f'"${{var.region}}-{zone_letter}"'))
     if disk.size_gib:
         block.attr("size", disk.size_gib)
     if disk.labels:
         block.attr("labels", dict(sorted(disk.labels.items())))
-
-
-def _zone_letter_for_disk(disk: Disk) -> str:
-    return disk.target_hints.get("zone_letter", "a")
 
 
 def _require(obj, key: str):
@@ -273,7 +310,17 @@ def _generate_instance(
     interface.attr(
         "subnetwork", Ref(f"google_compute_subnetwork.{subnet_labels[instance.subnet]}.id")
     )
-    if instance.target_hints.get("external", "none") != "none":
+    external = instance.target_hints.get("external", "none")
+    if external == "static":
+        if not instance.external_ip.startswith("external_address:"):
+            raise GenerationError(
+                f"{instance.id} chose a static external IP but has no Elastic IP to stand for"
+            )
+        access = interface.block("access_config")
+        access.attr(
+            "nat_ip", Ref(f"google_compute_address.{names.label[instance.external_ip]}.address")
+        )
+    elif external != "none":
         interface.block("access_config")
 
     instance_tags = sorted(
@@ -291,9 +338,26 @@ def _generate_instance(
 
     if instance.labels:
         block.attr("labels", dict(sorted(instance.labels.items())))
+    metadata = instance.target_hints.get("metadata")
+    if metadata:
+        block.attr("metadata", dict(sorted(metadata.items())))
     desired_status = instance.target_hints.get("desired_status")
     if desired_status:
         block.attr("desired_status", desired_status)
+
+    spot = instance.target_hints.get("spot", False)
+    protected = instance.target_hints.get("deletion_protection", False)
+    # Spec 4 §5 said GCP rejects Spot with deletion protection; Compute Engine documents no
+    # such limit (only MIG members and instance templates cannot carry it), so both render.
+    if protected:
+        block.attr("deletion_protection", True)
+    if spot:
+        scheduling = block.block("scheduling")
+        scheduling.attr("provisioning_model", "SPOT")
+        scheduling.attr("preemptible", True)
+        scheduling.attr("automatic_restart", False)
+        scheduling.attr("on_host_maintenance", "TERMINATE")
+        scheduling.attr("instance_termination_action", "STOP")
 
 
 def _boot_disk(instance: ComputeInstance, disks: dict[str, Disk]) -> Disk:

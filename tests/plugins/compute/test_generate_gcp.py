@@ -6,7 +6,7 @@ import pytest
 
 from easymigrate.core.plugin import GenerateContext, GenerationError
 from easymigrate.ir.base import IRDocument, SourceRef
-from easymigrate.ir.compute import ComputeInstance, Disk
+from easymigrate.ir.compute import ComputeInstance, Disk, ExternalAddress
 from easymigrate.ir.network import FirewallPolicy, Network, Subnet
 from easymigrate.plugins.compute.generate_gcp import FIELD_COVERAGE, generate
 
@@ -266,3 +266,95 @@ def test_boot_disk_uses_the_minimum_hint_when_the_source_is_too_small():
     )
     assert "size  = 20" in out or "size = 20" in out
     assert "size  = 8" not in out
+
+
+# ---- plan 4: access and identity ---------------------------------------------
+
+
+def _address(id_="external_address:eip", attached=True, **kw):
+    return ExternalAddress(
+        id=id_,
+        name=id_.split(":", 1)[1],
+        source=_source("elastic-ip", "eipalloc-1"),
+        address="13.0.0.1",
+        attached=attached,
+        **kw,
+    )
+
+
+def test_metadata_renders_from_the_hint():
+    metadata = {"startup-script": "echo ${HOME}", "enable-oslogin": "TRUE"}
+    out = _render(_network(), _subnet(), _disk(), _instance(target_hints={"metadata": metadata}))
+    assert "metadata = {" in out
+    assert 'enable-oslogin = "TRUE"' in out
+    # Terraform would otherwise interpolate the script's shell variables.
+    assert 'startup-script = "echo $${HOME}"' in out
+
+
+def test_spot_renders_scheduling():
+    out = _render(_network(), _subnet(), _disk(), _instance(target_hints={"spot": True}))
+    assert 'provisioning_model          = "SPOT"' in out
+    assert "automatic_restart           = false" in out
+    assert 'instance_termination_action = "STOP"' in out
+
+
+def test_deletion_protection_renders():
+    out = _render(
+        _network(), _subnet(), _disk(), _instance(target_hints={"deletion_protection": True})
+    )
+    assert "deletion_protection = true" in out
+
+
+def test_spot_with_deletion_protection_renders_both():
+    instance = _instance(target_hints={"spot": True, "deletion_protection": True})
+    out = _render(_network(), _subnet(), _disk(), instance)
+    assert "deletion_protection = true" in out
+    assert '"SPOT"' in out
+
+
+def test_reserved_unattached_address_renders():
+    address = _address(attached=False, target_hints={"reserve": True})
+    out = _render(_network(), _subnet(), address)
+    assert 'resource "google_compute_address" "eip"' in out
+    assert 'address_type = "EXTERNAL"' in out
+    assert "region       = var.region" in out
+
+
+def test_unreserved_or_excluded_unattached_address_is_not_rendered():
+    plain = _address(attached=False)
+    assert "google_compute_address" not in _render(_network(), _subnet(), plain)
+    dropped = _address(attached=False, target_hints={"reserve": True}, excluded="omit")
+    assert "google_compute_address" not in _render(_network(), _subnet(), dropped)
+
+
+def test_static_instance_binds_its_elastic_ip():
+    instance = _instance(external_ip="external_address:eip", target_hints={"external": "static"})
+    out = _render(_network(), _subnet(), _disk(), _address(), instance)
+    assert 'resource "google_compute_address" "eip"' in out
+    assert "nat_ip = google_compute_address.eip.address" in out
+
+
+def test_attached_address_of_a_private_instance_is_not_rendered():
+    instance = _instance(external_ip="external_address:eip", target_hints={"external": "none"})
+    out = _render(_network(), _subnet(), _disk(), _address(), instance)
+    assert "google_compute_address" not in out
+
+
+def test_static_without_an_address_is_a_generation_error():
+    instance = _instance(external_ip="ephemeral", target_hints={"external": "static"})
+    with pytest.raises(GenerationError, match="static"):
+        _render(_network(), _subnet(), _disk(), instance)
+
+
+def test_data_disk_follows_its_instances_zone():
+    data = _disk("disk:data", boot=False)
+    instance = _instance(disks=("disk:boot", "disk:data"), target_hints={"zone_letter": "b"})
+    out = _render(_network(), _subnet(), _disk(), data, instance)
+    disk_block = out.split('resource "google_compute_disk" "data"')[1].split("resource")[0]
+    assert "${var.region}-b" in disk_block
+
+
+def test_data_disk_of_an_excluded_instance_is_not_rendered():
+    data = _disk("disk:data", boot=False)
+    instance = _instance(disks=("disk:boot", "disk:data"), excluded="VM-BOOT-IMAGE: manual")
+    assert "google_compute_disk" not in _render(_network(), _subnet(), _disk(), data, instance)

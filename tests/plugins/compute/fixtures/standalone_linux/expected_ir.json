@@ -135,6 +135,26 @@
     },
     {
       "kind": "external_address",
+      "id": "external_address:spare-ip",
+      "name": "spare-ip",
+      "labels": {
+        "name": "spare-ip"
+      },
+      "source": {
+        "cloud": "aws",
+        "type": "elastic-ip",
+        "id": "eipalloc-spare",
+        "region": "ap-south-1"
+      },
+      "target_hints": {},
+      "resolution": [],
+      "excluded": null,
+      "address": "13.2.2.2",
+      "attached": false,
+      "scope": "vpc"
+    },
+    {
+      "kind": "external_address",
       "id": "external_address:web-eip",
       "name": "web-eip",
       "labels": {

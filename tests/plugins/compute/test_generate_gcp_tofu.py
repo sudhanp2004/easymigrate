@@ -31,7 +31,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 # standalone_linux is the testbed shape (boot disk, key pair, Elastic IP, one security
 # group); extra_volumes adds an attached persistent disk and a scratch disk, which is the
 # most block nesting this family emits.
-CASES = ["standalone_linux", "extra_volumes"]
+CASES = ["standalone_linux", "extra_volumes", "spot_instance"]
 
 
 def _normalize(case: str) -> IRDocument:

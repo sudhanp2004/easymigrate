@@ -392,3 +392,87 @@ Both clouds lose the data when the machine stops. GCP local SSD comes in fixed 3
 |---|---|---|---|---|---|
 | `local_ssd` | Attach local SSD | whole 375 GiB local SSD devices are attached, rounded up; the machine type must support local SSD | medium |  | yes |
 | `omit` | Do not attach it | the ephemeral volume is reported and not recreated | low |  |  |
+
+### An EC2 key pair becomes a GCP SSH key, or GCP's own access model (`VM-SSH-KEYS`)
+
+AWS injects one key pair into an instance at launch. GCP reads SSH keys from instance metadata, or delegates access to IAM through OS Login. EasyMigrate never generates a key pair; it carries the public key AWS still holds, or lets you choose another model.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `import_public_key` | Import the key pair's public key | the public key AWS holds becomes an ssh-keys metadata entry for the same login | low |  | yes |
+| `os_login` | Use OS Login | the key pair is ignored and GCP IAM governs who may log in; this changes the access model, so every current user needs an IAM grant | medium |  |  |
+| `user_supplied_key` | Use a public key you supply | the public key you give becomes an ssh-keys metadata entry | low |  |  |
+| `no_ssh_access` | No SSH access | no key is added and project-wide SSH keys are blocked; nobody can log in over SSH until access is configured | medium |  |  |
+
+Params:
+
+- `public_key`: an OpenSSH public key, e.g. 'ssh-ed25519 AAAA… you@host'
+- `username`: login name the key is installed for, e.g. ec2-user
+
+### EC2 user data becomes a GCP startup script, which runs on every boot (`VM-USER-DATA`)
+
+AWS runs user data once, on first boot, through cloud-init. GCP's guest agent runs a startup script on every boot and does not interpret #cloud-config. A script that is not safe to run twice needs a guard before it migrates.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `startup_script` | Run it as a startup script | copied verbatim into the startup-script metadata key; it runs on every boot, not first boot only, and #cloud-config is not interpreted | medium |  | yes |
+| `cloud_init` | Pass it to cloud-init | written to the user-data metadata key, which only images that ship cloud-init honour; GCP's Debian, Rocky and RHEL images do not | medium |  |  |
+| `omit` | Do not carry it | the script is reported in full and not run on the new instance | low |  |  |
+
+### An instance profile's IAM role is not translated (`VM-IAM-PROFILE`)
+
+An EC2 instance profile gives software on the machine AWS credentials. GCP service accounts have different semantics, and translating permissions is out of scope, so whatever the software did with those credentials stops working.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `manual` | Handle manually | the instance is created with no service account; the AWS role is named in the report so you can create and attach a service account with equivalent access | medium | yes | yes |
+
+### AWS Spot and GCP Spot VMs are preempted differently (`VM-SPOT`)
+
+Both clouds reclaim spot capacity at short notice, but AWS gives a two-minute interruption notice through instance metadata while GCP gives thirty seconds through an ACPI shutdown. Handlers written for one do not fire on the other.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `spot_vm` | Create a Spot VM | provisioning model SPOT, stopped rather than deleted on preemption, and never restarted automatically | medium |  | yes |
+| `standard` | Create a standard VM | the instance costs more and is never preempted | low |  |  |
+
+### Dedicated tenancy is not reproduced (`VM-TENANCY`)
+
+GCP's equivalent is sole-tenant nodes, which need a node template, a node group and affinity labels. This family does not generate them.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `manual` | Handle manually | the instance is created on shared hardware; create a sole-tenant node group and set node affinity yourself if isolation or licensing requires it | medium | yes | yes |
+
+### A placement group is not reproduced (`VM-PLACEMENT-GROUP`)
+
+Cluster, spread and partition placement groups correspond to GCP resource policies with different guarantees. This family does not generate them.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `manual` | Handle manually | the instance is created without placement constraints; attach a GCP placement policy yourself if latency or failure isolation depended on the group | medium | yes | yes |
+
+### GCP's metadata server has no IMDSv2 token protocol (`VM-IMDS`)
+
+The source requires IMDSv2 session tokens. GCP's metadata server instead requires a `Metadata-Flavor: Google` header on every request and has no v1/v2 distinction. Software that calls the AWS metadata endpoint needs changing regardless.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `note_only` | Note it | nothing to configure: GCP's header requirement already blocks the SSRF-style requests IMDSv2 was introduced to stop | none |  | yes |
+
+### Termination protection becomes deletion protection (`VM-TERMINATION-PROTECTION`)
+
+GCP's deletion protection refuses a delete exactly as AWS termination protection does.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `deletion_protection` | Enable deletion protection | the instance cannot be deleted until deletion protection is turned off | none |  | yes |
+
+### An unattached Elastic IP becomes a reserved address, with a different IP (`VM-ELASTIC-IP-UNATTACHED`)
+
+An Elastic IP nobody uses is usually kept for a reason — an allow-list entry or a DNS record. GCP can reserve an address, but not the same one, so whatever depended on the old IP needs updating either way.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `reserve_static` | Reserve a static address | a new external address is reserved and billed while unused, as in AWS | low |  | yes |
+| `omit` | Do not reserve it | the address is reported and not created | none |  |  |

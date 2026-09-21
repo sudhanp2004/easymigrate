@@ -11,6 +11,17 @@
           "Value": "web-eip"
         }
       ]
+    },
+    {
+      "PublicIp": "13.2.2.2",
+      "AllocationId": "eipalloc-spare",
+      "Domain": "vpc",
+      "Tags": [
+        {
+          "Key": "Name",
+          "Value": "spare-ip"
+        }
+      ]
     }
   ]
 }

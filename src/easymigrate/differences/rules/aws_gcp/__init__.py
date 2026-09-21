@@ -9,10 +9,19 @@ from easymigrate.differences.rules.aws_gcp.compute import (
     VmDiskEmpty,
     VmDiskEncryption,
     VmDiskType,
+    VmElasticIpUnattached,
+    VmIamProfile,
+    VmImds,
     VmInstanceStore,
     VmMachineType,
+    VmPlacementGroup,
     VmPublicIp,
+    VmSpot,
+    VmSshKeys,
     VmStopped,
+    VmTenancy,
+    VmTerminationProtection,
+    VmUserData,
     VmZoneMapping,
 )
 from easymigrate.differences.rules.aws_gcp.database import (
@@ -97,4 +106,14 @@ AWS_GCP_RULES: tuple[DifferenceRule, ...] = (
     VmDiskEncryption(),
     # After VM-MACHINE-TYPE: local SSD needs a machine type that supports it (spec 4 §5).
     VmInstanceStore(),
+    VmSshKeys(),
+    VmUserData(),
+    VmIamProfile(),
+    VmSpot(),
+    VmTenancy(),
+    VmPlacementGroup(),
+    VmImds(),
+    VmTerminationProtection(),
+    # After VM-PUBLIC-IP: an Elastic IP dropped with private_only must not be reserved (spec 4 §5).
+    VmElasticIpUnattached(),
 )

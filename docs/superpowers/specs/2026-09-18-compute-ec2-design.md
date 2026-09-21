@@ -324,8 +324,9 @@ Every `manual` strategy needs explicit acknowledgement in `resolve`, as in spec 
   rules (§2.1.1).
 
 The generator refuses with `GenerationError` rather than silently reconciling two invalid
-combinations, following spec 2 §5: a `local_ssd` disk on a machine type that cannot carry one, and
-`spot_vm` with `termination_protection`, which GCP rejects.
+combinations, following spec 2 §5: a `local_ssd` disk on a machine type that cannot carry one.
+(Corrected 2026-09-22: `spot_vm` with `termination_protection` was listed here as rejected by GCP;
+Compute Engine documents no such limit, so both are generated.)
 
 ## 6. Generation
 

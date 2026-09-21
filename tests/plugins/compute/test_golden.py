@@ -36,7 +36,8 @@ def _codes(doc: IRDocument) -> set[str]:
 # One key fact per case, so a wrong golden file cannot silently pass review.
 KEY_FACTS: dict[str, Callable[[IRDocument], bool]] = {
     "standalone_linux": lambda doc: (
-        _kinds(doc, "compute_instance")[0].external_ip == _kinds(doc, "external_address")[0].id
+        _kinds(doc, "compute_instance")[0].external_ip == "external_address:web-eip"
+        and [a.attached for a in _kinds(doc, "external_address")] == [False, True]
         and _kinds(doc, "compute_instance")[0].key_material is not None
         and _kinds(doc, "compute_instance")[0].user_data == "#!/bin/bash\necho hello\n"
     ),

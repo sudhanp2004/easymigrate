@@ -4,6 +4,12 @@
 # decision VM-BOOT-IMAGE@compute_instance:spot → stock_image (default)
 # decision VM-MACHINE-TYPE@compute_instance:spot → nearest_predefined (default)
 # decision VM-ZONE-MAPPING@compute_instance:spot → positional (default)
+# decision VM-IAM-PROFILE@compute_instance:spot → manual (default)
+# decision VM-SPOT@compute_instance:spot → spot_vm (default)
+# decision VM-TENANCY@compute_instance:spot → manual (default)
+# decision VM-PLACEMENT-GROUP@compute_instance:spot → manual (default)
+# decision VM-IMDS@compute_instance:spot → note_only (default)
+# decision VM-TERMINATION-PROTECTION@compute_instance:spot → deletion_protection (default)
 resource "google_compute_instance" "spot" {
   name         = "spot"
   machine_type = "c2-standard-4"
@@ -20,8 +26,17 @@ resource "google_compute_instance" "spot" {
     subnetwork = google_compute_subnetwork.subnet_1.id
   }
 
-  tags   = ["fw-web-sg"]
-  labels = {
+  tags                = ["fw-web-sg"]
+  labels              = {
     name = "spot"
+  }
+  deletion_protection = true
+
+  scheduling {
+    provisioning_model          = "SPOT"
+    preemptible                 = true
+    automatic_restart           = false
+    on_host_maintenance         = "TERMINATE"
+    instance_termination_action = "STOP"
   }
 }
