@@ -49,6 +49,20 @@ resource "google_compute_health_check" "web_asg" {
   }
 }
 
+# lets Google's health-check probers reach instance_group:web-asg
+resource "google_compute_firewall" "web_asg_hc" {
+  name          = "web-asg-hc-allow"
+  network       = google_compute_network.migration_test_vpc.id
+  direction     = "INGRESS"
+  source_ranges = ["130.211.0.0/22", "35.191.0.0/16"]
+  target_tags   = ["fw-web-sg"]
+
+  allow {
+    protocol = "tcp"
+    ports    = ["80"]
+  }
+}
+
 # from AWS autoScalingGroup web-asg (web-asg)
 # decision VM-ASG-SHAPE@instance_group:web-asg → regional_mig (default)
 # decision VM-ASG-HEALTHCHECK@instance_group:web-asg → autohealing_http (default)

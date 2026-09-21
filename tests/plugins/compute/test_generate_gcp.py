@@ -448,6 +448,11 @@ def test_health_check_drives_autohealing():
     assert "port         = 8080" in out
     assert "health_check      = google_compute_health_check.web.id" in out
     assert "initial_delay_sec = 120" in out
+    # Without this rule every probe fails and autohealing recreates healthy instances.
+    assert 'resource "google_compute_firewall" "web_hc"' in out
+    assert '"35.191.0.0/16"' in out
+    assert 'ports    = ["8080"]' in out
+    assert "network       = google_compute_network.main.id" in out
 
 
 def test_autoscaler_owns_the_size():

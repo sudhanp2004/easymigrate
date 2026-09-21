@@ -17,7 +17,7 @@ from easymigrate.ir.compute import (
     InstanceGroup,
     InstanceTemplate,
 )
-from easymigrate.ir.network import FirewallPolicy, Subnet
+from easymigrate.ir.network import FirewallPolicy, Network, Subnet
 from easymigrate.plugins.network.generate_gcp import policy_network_tags
 from easymigrate.providers.gcp.hcl import HclFile, Ref
 from easymigrate.providers.gcp.naming import GcpNameAllocator, TfLabelAllocator
@@ -207,9 +207,28 @@ def generate(resolved: IRDocument, ctx: GenerateContext) -> HclFile:
         _generate_template(
             file, names, template, subnet, disks, subnet_labels, tags, live_policies, ctx
         )
+    network_labels = _network_labels(resolved)
     for group in groups:
-        _generate_group(file, names, group, ctx)
+        template = templates[group.template][0]
+        subnet = resolved.get(group.target_hints["subnet"])
+        _generate_group(
+            file,
+            names,
+            group,
+            network_labels[subnet.network],
+            sorted(tags[p] for p in template.firewall_policies if p in live_policies),
+            ctx,
+        )
     return file
+
+
+def _network_labels(resolved: IRDocument) -> dict[str, str]:
+    """The Terraform labels the network generator gave each network, recomputed the same way."""
+    allocator = TfLabelAllocator()
+    return {
+        network.id: allocator.allocate("google_compute_network", network.id)
+        for network in sorted(resolved.of_kind(Network), key=lambda n: n.id)
+    }
 
 
 def _templates_for(
@@ -476,8 +495,18 @@ def _generate_template(
     block.block("lifecycle").attr("create_before_destroy", True)
 
 
+# Google's health-check probers. Without an ingress rule for them every probe fails and
+# autohealing recreates healthy instances in a loop.
+_HEALTH_CHECK_RANGES = ["130.211.0.0/22", "35.191.0.0/16"]
+
+
 def _generate_group(
-    file: HclFile, names: _Names, group: InstanceGroup, ctx: GenerateContext
+    file: HclFile,
+    names: _Names,
+    group: InstanceGroup,
+    network_label: str,
+    target_tags: list[str],
+    ctx: GenerateContext,
 ) -> None:
     hints = group.target_hints
     regional = hints["mig"] == "regional"
@@ -494,6 +523,18 @@ def _generate_group(
         http = check.block("http_health_check")
         http.attr("port", health_check["port"])
         http.attr("request_path", health_check["request_path"])
+
+        probes = file.block("resource", "google_compute_firewall", f"{label}_hc")
+        probes.comment(f"lets Google's health-check probers reach {group.id}")
+        probes.attr("name", f"{name[:54]}-hc-allow")
+        probes.attr("network", Ref(f"google_compute_network.{network_label}.id"))
+        probes.attr("direction", "INGRESS")
+        probes.attr("source_ranges", _HEALTH_CHECK_RANGES)
+        if target_tags:
+            probes.attr("target_tags", target_tags)
+        allow = probes.block("allow")
+        allow.attr("protocol", "tcp")
+        allow.attr("ports", [str(health_check["port"])])
 
     mig_type = (
         "google_compute_region_instance_group_manager"
