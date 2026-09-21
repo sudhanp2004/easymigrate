@@ -19,7 +19,9 @@ from easymigrate.differences.decisions import from_yaml
 from easymigrate.differences.engine import catalogue
 from easymigrate.differences.model import DifferenceRule
 from easymigrate.ir.base import Finding, IRDocument
+from easymigrate.ir.compute import ComputeInstance, Disk
 from easymigrate.ir.database import DatabaseInstance
+from easymigrate.ir.network import FirewallPolicy
 
 _SECTION_ORDER = [
     "Scan gaps",
@@ -65,6 +67,34 @@ class DatabaseRow:
 
 
 @dataclass(frozen=True)
+class ComputeRow:
+    """What `plan` decided for one Compute Engine instance, in the user's terms (spec 4 §7)."""
+
+    id: str
+    machine_type: str
+    machine_source: str
+    image: str
+    ami: str
+    firewall_policies: list[str]
+    reachability: str
+    empty_disks: list[str]
+    service_account_note: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "machine_type": self.machine_type,
+            "machine_source": self.machine_source,
+            "image": self.image,
+            "ami": self.ami,
+            "firewall_policies": list(self.firewall_policies),
+            "reachability": self.reachability,
+            "empty_disks": list(self.empty_disks),
+            "service_account_note": self.service_account_note,
+        }
+
+
+@dataclass(frozen=True)
 class PlanSummaryView:
     add: int
     change: int
@@ -101,6 +131,7 @@ class Report:
     translated: dict[str, int] = field(default_factory=dict)
     info: list[Finding] = field(default_factory=list)
     databases: list[DatabaseRow] = field(default_factory=list)
+    compute: list[ComputeRow] = field(default_factory=list)
     plan: PlanSummaryView | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -118,6 +149,7 @@ class Report:
             "translated": self.translated,
             "info": [f.model_dump(mode="json") for f in self.info],
             "databases": [d.to_dict() for d in self.databases],
+            "compute": [c.to_dict() for c in self.compute],
             "plan": self.plan.to_dict() if self.plan else None,
         }
 
@@ -204,6 +236,30 @@ class Report:
                 "Only the master user was migrated. Other database users, their grants, "
                 "schemas and extensions live inside the database itself, which a read-only "
                 "AWS scan cannot see \u2014 recreate them after cutover."
+            )
+            lines.append("")
+
+        if self.compute:
+            lines.append("## Compute")
+            for vm in self.compute:
+                lines.append(f"### {vm.id}")
+                lines.append(f"- Machine type: {vm.machine_type} (from {vm.machine_source})")
+                lines.append(f"- Boots: {vm.image}; AMI {vm.ami} was not migrated")
+                if vm.firewall_policies:
+                    lines.append(
+                        "- Network tags from security groups: " + ", ".join(vm.firewall_policies)
+                    )
+                else:
+                    lines.append("- Network tags: none; no migrated firewall rule applies to it")
+                lines.append(f"- Reachability: {vm.reachability}")
+                for disk in vm.empty_disks:
+                    lines.append(f"- Disk {disk} is created empty")
+                if vm.service_account_note:
+                    lines.append(f"- {vm.service_account_note}")
+            lines.append("")
+            lines.append(
+                "No disk contents, installed software or running workload were migrated. Every "
+                "instance boots as a blank machine of the right shape on the right network."
             )
             lines.append("")
 
@@ -367,6 +423,64 @@ def _database_rows(resolved: IRDocument | None) -> list[DatabaseRow]:
     return rows
 
 
+def _compute_rows(resolved: IRDocument | None) -> list[ComputeRow]:
+    if resolved is None:
+        return []
+    disks = {disk.id: disk for disk in resolved.of_kind(Disk)}
+    live_policies = {
+        policy.id: policy.name
+        for policy in resolved.of_kind(FirewallPolicy)
+        if policy.excluded is None
+    }
+    rows: list[ComputeRow] = []
+    for instance in sorted(resolved.of_kind(ComputeInstance), key=lambda o: o.id):
+        if instance.excluded is not None or instance.eks_cluster:
+            continue
+        hints = instance.target_hints
+        if instance.vcpus is not None and instance.memory_mib is not None:
+            source = f"{instance.instance_type}, {instance.vcpus} vCPU, {instance.memory_mib} MiB"
+        else:
+            source = f"{instance.instance_type}, size unknown"
+        delta = hints.get("memory_delta_mib")
+        if delta:
+            source += f"; {delta:+d} MiB memory"
+        image = hints.get("boot_image")
+        external = hints.get("external", "none")
+        reachability = {
+            "none": "no external IP; reachable only from inside the VPC",
+            "ephemeral": "reachable from the internet on a new ephemeral IP",
+            "static": "reachable from the internet on a newly reserved static IP",
+        }.get(external, external)
+        rows.append(
+            ComputeRow(
+                id=instance.id,
+                machine_type=str(hints.get("machine_type", "not decided")),
+                machine_source=source,
+                image=f"{image['project']}/{image['family']}" if image else "not decided",
+                ami=instance.image,
+                firewall_policies=sorted(
+                    live_policies[p] for p in instance.firewall_policies if p in live_policies
+                ),
+                reachability=reachability,
+                empty_disks=sorted(
+                    disk_id
+                    for disk_id in instance.disks
+                    if disk_id in disks
+                    and not disks[disk_id].boot
+                    and not disks[disk_id].instance_store
+                    and disks[disk_id].excluded is None
+                ),
+                service_account_note=(
+                    f"No service account attached; the AWS role {instance.iam_profile} "
+                    "was not translated"
+                    if instance.iam_profile
+                    else None
+                ),
+            )
+        )
+    return rows
+
+
 def build_report(project: Project) -> Report:
     config = project.load_config() if project.config_path.exists() else None
     source = config.source.cloud if config and config.source else None
@@ -375,7 +489,9 @@ def build_report(project: Project) -> Report:
     ir = _load_ir(project)
     decisions = _load_decisions(project)
     plan_summary = _load_plan_summary(project)
-    databases = _database_rows(_load_resolved_ir(project))
+    resolved = _load_resolved_ir(project)
+    databases = _database_rows(resolved)
+    compute = _compute_rows(resolved)
     superseded = _load_superseded(project)
 
     rules_by_id: dict[str, DifferenceRule] = {rule.id: rule for rule in catalogue()}
@@ -474,6 +590,7 @@ def build_report(project: Project) -> Report:
         translated=translated,
         info=info,
         databases=databases,
+        compute=compute,
         plan=plan_summary,
     )
 

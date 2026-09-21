@@ -443,3 +443,140 @@ def test_report_json_carries_the_database_facts():
     assert data["id"] == "database_instance:db"
     assert data["tier"] == "db-f1-micro"
     assert data["open_to_world"] is False
+
+
+# --- Compute section (spec 4 §7) ---------------------------------------------------
+
+
+def _vm(**overrides):
+    from easymigrate.ir.compute import ComputeInstance
+
+    defaults = dict(
+        id="compute_instance:web",
+        name="web",
+        source=SourceRef(cloud="aws", type="instance", id="i-1", region="ap-south-1"),
+        instance_type="m5.large",
+        vcpus=2,
+        memory_mib=8192,
+        architecture="x86_64",
+        state="running",
+        zone="ap-south-1a",
+        subnet="subnet:a",
+        image="ami-123",
+        platform="linux",
+        disks=["disk:boot", "disk:data"],
+        firewall_policies=["firewall_policy:web-sg", "firewall_policy:db-only"],
+        iam_profile="arn:aws:iam::1:instance-profile/app",
+        target_hints={
+            "machine_type": "n2-standard-2",
+            "boot_image": {"project": "rocky-linux-cloud", "family": "rocky-linux-9"},
+            "external": "none",
+        },
+    )
+    defaults.update(overrides)
+    return ComputeInstance(**defaults)
+
+
+def _compute_doc(*extra):
+    from easymigrate.ir.compute import Disk
+    from easymigrate.ir.network import FirewallPolicy, Network, Subnet
+
+    def src(t, i):
+        return SourceRef(cloud="aws", type=t, id=i, region="ap-south-1")
+
+    return IRDocument(
+        source={"cloud": "aws"},
+        objects=[
+            Network(
+                id="network:main",
+                name="main",
+                source=src("vpc", "vpc-1"),
+                cidr_blocks=["10.0.0.0/16"],
+                dns_hostnames=True,
+                dns_resolution=True,
+            ),
+            Subnet(
+                id="subnet:a",
+                name="a",
+                source=src("subnet", "s-1"),
+                network="network:main",
+                cidr="10.0.1.0/24",
+                zone="ap-south-1a",
+                internet="public",
+                map_public_ip=False,
+            ),
+            FirewallPolicy(
+                id="firewall_policy:web-sg",
+                name="web-sg",
+                source=src("sg", "sg-1"),
+                network="network:main",
+            ),
+            FirewallPolicy(
+                id="firewall_policy:db-only",
+                name="db-only",
+                source=src("sg", "sg-2"),
+                network="network:main",
+                excluded="DB-SG-FIREWALL: dropped",
+            ),
+            Disk(
+                id="disk:boot",
+                name="boot",
+                source=src("volume", "v-1"),
+                size_gib=20,
+                type="gp3",
+                zone="ap-south-1a",
+                boot=True,
+            ),
+            Disk(
+                id="disk:data",
+                name="data",
+                source=src("volume", "v-2"),
+                size_gib=50,
+                type="gp3",
+                zone="ap-south-1a",
+            ),
+            *extra,
+        ],
+    )
+
+
+def test_compute_row_states_what_plan_decided():
+    from easymigrate.core.report import _compute_rows
+
+    row = _compute_rows(_compute_doc(_vm()))[0]
+    assert row.machine_type == "n2-standard-2"
+    assert row.machine_source == "m5.large, 2 vCPU, 8192 MiB"
+    assert row.image == "rocky-linux-cloud/rocky-linux-9"
+    assert row.ami == "ami-123"
+    assert row.firewall_policies == ["web-sg"]
+    assert "only from inside the VPC" in row.reachability
+    assert row.empty_disks == ["disk:data"]
+    assert "was not translated" in row.service_account_note
+
+
+def test_excluded_and_eks_instances_have_no_compute_row():
+    from easymigrate.core.report import _compute_rows
+
+    doc = _compute_doc(
+        _vm(excluded="VM-BOOT-IMAGE: manual"),
+    )
+    assert _compute_rows(doc) == []
+    assert _compute_rows(_compute_doc(_vm(eks_cluster="prod"))) == []
+
+
+def test_compute_section_states_the_blank_machine_limitation():
+    from easymigrate.core.report import _compute_rows
+
+    report = Report(
+        source="aws", target="gcp", coverage={}, compute=_compute_rows(_compute_doc(_vm()))
+    )
+    markdown = report.to_markdown()
+    assert "## Compute" in markdown
+    assert "AMI ami-123 was not migrated" in markdown
+    assert "Disk disk:data is created empty" in markdown
+    assert "No disk contents, installed software or running workload were migrated" in markdown
+    assert report.to_dict()["compute"][0]["machine_type"] == "n2-standard-2"
+
+
+def test_no_instances_means_no_compute_section():
+    assert "## Compute" not in Report(source="aws", target="gcp", coverage={}).to_markdown()
