@@ -42,6 +42,7 @@ from easymigrate.differences.model import (
 )
 from easymigrate.ir.base import Finding, IntentObject, IRDocument
 from easymigrate.ir.database import DatabaseInstance
+from easymigrate.ir.kubernetes import KubernetesCluster
 
 _SAMPLE_ARNS = 3
 _STATE_BUCKET_SUFFIX = "-easymigrate-tfstate"
@@ -482,13 +483,17 @@ def _resolve_db_passwords(
 def _required_gcp_services(document: IRDocument) -> set[str]:
     """`sqladmin.googleapis.com` when any Cloud SQL instance will be generated, plus
     `servicenetworking.googleapis.com` when any of them uses Private Services Access
-    (spec §6.4)."""
+    (spec §6.4), and `container.googleapis.com` when any GKE cluster will be generated."""
+    services: set[str] = set()
+    # GKE needs the Kubernetes Engine API (spec 5 §6).
+    if any(cluster.excluded is None for cluster in document.of_kind(KubernetesCluster)):
+        services.add("container.googleapis.com")
     instances = [
         instance for instance in document.of_kind(DatabaseInstance) if instance.excluded is None
     ]
     if not instances:
-        return set()
-    services = {"sqladmin.googleapis.com"}
+        return services
+    services.add("sqladmin.googleapis.com")
     if any(instance.target_hints.get("psa") is not None for instance in instances):
         services.add("servicenetworking.googleapis.com")
     return services

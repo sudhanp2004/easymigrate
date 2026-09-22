@@ -385,3 +385,20 @@ def test_apply_tofu_error_exits_one_with_recovery_message(tmp_path):
         apply(project, confirm=lambda s: True, stream=lambda line: None, tofu=tofu)
 
     assert "boom: real tofu stderr" in str(exc_info.value)
+
+
+def test_a_gke_cluster_requires_the_kubernetes_engine_api():
+    from easymigrate.core.pipeline import _required_gcp_services
+    from easymigrate.ir.base import IRDocument, SourceRef
+    from easymigrate.ir.kubernetes import KubernetesCluster
+
+    cluster = KubernetesCluster(
+        id="kubernetes_cluster:prod",
+        name="prod",
+        source=SourceRef(cloud="aws", type="eks-cluster", id="prod", region="ap-south-1"),
+        version="1.31",
+    )
+    doc = IRDocument(source={"cloud": "aws"}, objects=[cluster])
+    assert _required_gcp_services(doc) == {"container.googleapis.com"}
+    excluded = cluster.model_copy(update={"excluded": "manual"})
+    assert _required_gcp_services(IRDocument(source={"cloud": "aws"}, objects=[excluded])) == set()

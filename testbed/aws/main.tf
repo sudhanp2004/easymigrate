@@ -306,7 +306,16 @@ resource "aws_eks_cluster" "main" {
     subnet_ids = [aws_subnet.public_1.id, aws_subnet.public_2.id]
   }
 
+  # K8S-LOGGING: api maps to APISERVER; audit becomes Cloud Audit Logs.
+  enabled_cluster_log_types = ["api", "audit"]
+
   depends_on = [aws_iam_role_policy_attachment.eks_cluster_policy]
+}
+
+# K8S-ADDONS: a managed add-on GKE has built in.
+resource "aws_eks_addon" "vpc_cni" {
+  cluster_name = aws_eks_cluster.main.name
+  addon_name   = "vpc-cni"
 }
 
 # 10. IAM Role for EKS Worker Nodes
@@ -352,6 +361,17 @@ resource "aws_eks_node_group" "nodes" {
     desired_size = 1
     max_size     = 2
     min_size     = 1
+  }
+
+  # Carried exactly to the GKE node pool (spec 5 §4.2).
+  labels = {
+    role = "general"
+  }
+
+  taint {
+    key    = "dedicated"
+    value  = "test"
+    effect = "PREFER_NO_SCHEDULE"
   }
 
   depends_on = [
