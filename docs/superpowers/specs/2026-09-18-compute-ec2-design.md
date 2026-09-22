@@ -463,3 +463,33 @@ branches, and the existing no-instances case must keep its current output exactl
    MIGs, autoscalers and health checks, plus the live testbed run.
 
 Plans 1–4 ship a coherent family on their own: if plan 5 slips, standalone compute still migrates.
+
+## 12. Live run, 2026-09-22 (plans 1–5)
+
+Testbed: `testbed/aws` without EKS and RDS (31 AWS resources) → project
+`project-948483d7-7387-4636-818`, `asia-south1`. `plan`: 27 to add. `apply`: 27 added.
+
+Proven:
+- **Tag seam, end to end** (§9): `curl http://<static ip>/` reached the migrated app VM through a
+  firewall rule targeting `fw-migration-test-app-sg`; port 8080 timed out (default deny).
+- **VM-SSH-KEYS**: `ssh ec2-user@<ip>` with the imported key pair worked on Rocky Linux 9.
+- **VM-USER-DATA**: the startup script ran and served the page. **VM-PUBLIC-IP `static_external`**:
+  reserved address bound through `nat_ip`. **VM-BOOT-DISK-MINIMUM**: boot disk 20 GB from an 8 GiB
+  root. **VM-DISK-EMPTY**: 20 GB data disk attached.
+- **VM-STOPPED**: stopped instance arrived `TERMINATED`.
+- **NET-EGRESS-TAG narrow branch** (§10), never reached before: app→db egress resolved to
+  `10.0.10.0/24`, the stopped instance's subnet, not `10.0.0.0/16`.
+- **Plan 5**: instance template, regional MIG (one instance running), regional autoscaler.
+
+Failures and findings:
+1. **Fixed before scanning** (b50556b): instances an ASG launched were also migrated standalone, so
+   every member would have run twice beside the MIG; EKS node-group ASGs would have become MIGs.
+2. `plan` blocks forever on the state-bucket `typer.confirm` when stdin is not a terminal, with no
+   output — the same class of problem as the UI streaming bugs. Should fail fast off a TTY.
+3. Target-tracking scaling policies create two CloudWatch alarms that the inventory reports as
+   unsupported. They are managed by the policy, which `VM-ASG-SCALING` already translates: noise.
+4. `VM-ZONE-MAPPING`: an instance later excluded by a decision (`trineural`, manual) still consumed
+   a zone letter, and ASG AZs carry no zone id so they sort last — the two-AZ group landed in
+   zones `a` and `c`. Harmless here; with more source AZs than GCP zones it would emit a zone that
+   does not exist. Fix: collect `describe_availability_zones` for ids, and cap letters at the
+   region's zone count.
