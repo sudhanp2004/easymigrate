@@ -51,6 +51,9 @@ resource "google_container_cluster" "prod" {
       enabled = true
     }
   }
+  lifecycle {
+    ignore_changes = [node_config]
+  }
 }
 
 # from AWS eks-nodegroup prod/spot (spot)

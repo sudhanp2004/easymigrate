@@ -45,6 +45,9 @@ resource "google_container_cluster" "prod" {
   logging_config {
     enable_components = ["APISERVER", "SYSTEM_COMPONENTS"]
   }
+  lifecycle {
+    ignore_changes = [node_config]
+  }
 }
 
 # from AWS eks-nodegroup prod/workers (workers)

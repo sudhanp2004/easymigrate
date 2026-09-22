@@ -324,3 +324,6 @@ def _generate_cluster(
     if "filestore_csi" in hints.get("gke_addons", []):
         addons = block.block("addons_config")
         addons.block("gcp_filestore_csi_driver_config").attr("enabled", True)
+    # After the default pool is removed the provider reads node_config back from a surviving
+    # pool, so without this every later plan wants to "update" it (live run, 2026-09-22).
+    block.block("lifecycle").attr("ignore_changes", [Ref("node_config")])

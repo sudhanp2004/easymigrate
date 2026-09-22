@@ -45,6 +45,9 @@ resource "google_container_cluster" "prod" {
   logging_config {
     enable_components = ["APISERVER", "SYSTEM_COMPONENTS"]
   }
+  lifecycle {
+    ignore_changes = [node_config]
+  }
 }
 
 # replaces the Fargate profiles of kubernetes_cluster:prod (K8S-FARGATE)
