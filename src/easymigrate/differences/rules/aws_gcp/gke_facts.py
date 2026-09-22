@@ -12,7 +12,8 @@ import ipaddress
 FACTS_AS_OF = "2026-09-22"
 
 # Kubernetes minors GKE offers for new clusters.
-GKE_MINORS: tuple[str, ...] = ("1.31", "1.32", "1.33", "1.34", "1.35")
+# 1.36 confirmed live 2026-09-22 (1.36.4-gke on the Extended channel).
+GKE_MINORS: tuple[str, ...] = ("1.31", "1.32", "1.33", "1.34", "1.35", "1.36")
 
 # EKS AMI type -> GKE node image type. Container-optimized Linux AMIs map to COS; Windows to the
 # LTSC image. CUSTOM has no equivalent: the custom image and its bootstrap are not carried.

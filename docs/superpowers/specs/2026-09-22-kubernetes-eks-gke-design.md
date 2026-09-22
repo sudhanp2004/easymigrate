@@ -244,3 +244,32 @@ network golden with secondary ranges; compute tests for the §2.2 exclusions; li
    section, goldens and provider-schema tests.
 4. **Live run** — testbed additions (add-ons, logging, a Fargate profile), apply, verify the GKE
    cluster and node pools come up and nodes register, record findings here.
+
+## 11. Live run, 2026-09-22
+
+Testbed: the EKS cluster `test-eks-cluster` (Kubernetes 1.36, public endpoint open to
+`0.0.0.0/0`, `api`+`audit` logging, managed `vpc-cni` add-on) with one managed node group
+(`t3.micro`, 1–2 nodes over two AZs, label `role=general`, taint `dedicated=test:PreferNoSchedule`)
+→ project `project-948483d7-7387-4636-818`, `asia-south1`.
+
+Proven: GKE cluster `RUNNING` on `1.36.4-gke` in the Extended channel with private nodes and the
+pod/service secondary ranges; node pool on `e2-micro` / COS across zones a and b; **both nodes
+registered `Ready`** (queried through the Kubernetes API) carrying the label and taint exactly; nodes
+wore the migrated cluster security group's network tag; the mirrored public endpoint answered from
+outside; a second `plan` showed no changes; teardown succeeded without touching deletion protection.
+
+Found and fixed during the run (each has a regression test):
+1. `ListAccessEntries` raises `InvalidRequestException` on `CONFIG_MAP`-mode clusters and aborted
+   the scan; the call is skipped in that mode and the error is treated as "not applicable".
+2. **GKE refuses no-channel clusters for new customers** (`googleapi 400`). D6 changed: pin the minor
+   on the Extended channel, node auto-upgrade on.
+3. GKE's throwaway default pool (three 100 GB SSD-class disks) exceeded a 250 GB regional SSD quota;
+   it now gets 20 GB `pd-standard` disks.
+4. After the default pool is removed the provider reads `node_config` back from a surviving pool —
+   perpetual drift; the cluster ignores changes to `node_config`.
+5. `plan`'s API preflight did not know about `container.googleapis.com`; it does now.
+6. Private nodes need Private Google Access on the subnet; set explicitly (found while preparing).
+7. Running pods appeared as `eks:pod` "unsupported" resources; the plugin claims them.
+
+Open: EKS-managed ENIs still appear as `ec2:network-interface` "unsupported" (they carry EKS tags);
+the version list in `gke_facts.py` was already one minor behind (1.36 exists on GKE).
