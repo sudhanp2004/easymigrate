@@ -142,6 +142,6 @@ provider-schema validation; a live run.
 ## 10. Plans
 
 1. IR, collection, normalization, plugin registration.
-2. The sixteen `S3-*` rules and `gcs_facts.py`.
+2. The fifteen `S3-*` rules and `gcs_facts.py`.
 3. Generation, report section, goldens, provider-schema tests.
 4. Testbed buckets and live run.

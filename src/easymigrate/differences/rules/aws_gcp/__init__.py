@@ -85,6 +85,23 @@ from easymigrate.differences.rules.aws_gcp.network import (
     NetSgXvpcRef,
     NetZoneRegional,
 )
+from easymigrate.differences.rules.aws_gcp.storage import (
+    S3Acceleration,
+    S3AccessLogging,
+    S3Acls,
+    S3BucketName,
+    S3BucketPolicy,
+    S3Cors,
+    S3EncryptionKms,
+    S3IntelligentTiering,
+    S3Lifecycle,
+    S3Notifications,
+    S3ObjectLock,
+    S3ObjectsNotCopied,
+    S3PublicAccess,
+    S3Replication,
+    S3Website,
+)
 
 AWS_GCP_RULES: tuple[DifferenceRule, ...] = (
     NetZoneRegional(),
@@ -172,4 +189,20 @@ AWS_GCP_RULES: tuple[DifferenceRule, ...] = (
     K8sNodeSpot(),
     K8sNodeScaling(),
     K8sSshKey(),
+    # Storage (spec 6 §5). S3-BUCKET-NAME first: S3-ACCESS-LOGGING names its target by it.
+    S3ObjectsNotCopied(),
+    S3BucketName(),
+    S3PublicAccess(),
+    S3BucketPolicy(),
+    S3Acls(),
+    S3EncryptionKms(),
+    S3Lifecycle(),
+    S3IntelligentTiering(),
+    S3Cors(),
+    S3Website(),
+    S3AccessLogging(),
+    S3ObjectLock(),
+    S3Replication(),
+    S3Notifications(),
+    S3Acceleration(),
 )

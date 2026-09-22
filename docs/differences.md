@@ -702,3 +702,138 @@ GKE nodes are reached with `gcloud compute ssh` and OS Login, not an EC2 key pai
 | Strategy | Title | Effect | Risk | Manual | Default |
 |---|---|---|---|---|---|
 | `note_only` | Understood | the key pair is not installed; use gcloud compute ssh to reach a node | low |  | yes |
+
+## Storage rules
+
+### The bucket is created empty (`S3-OBJECTS-NOT-COPIED`)
+
+EasyMigrate migrates bucket configuration, not data. No object, version or metadata is copied; Storage Transfer Service moves the contents once the bucket exists.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `note_only` | Understood | the bucket exists with its configuration and holds nothing | high |  | yes |
+
+### Bucket names live in a different global namespace (`S3-BUCKET-NAME`)
+
+Cloud Storage bucket names are global, like S3's, but a separate namespace: the same name may already belong to someone else, and dotted names or names mentioning Google are not accepted without extra steps. Applications address the bucket through a new endpoint either way.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `keep_name` | Keep the name | the bucket keeps its S3 name; apply fails clearly if another project owns it | low |  | yes |
+| `rename` | Rename the bucket | the bucket gets the name you give; anything naming the old bucket must change | low |  |  |
+
+Params:
+
+- `name`: Cloud Storage bucket name
+
+### A publicly readable bucket becomes private unless you say otherwise (`S3-PUBLIC-ACCESS`)
+
+The bucket's policy or ACL lets anyone read it. Recreating that exposure without asking would publish data the user may not have reviewed, so the default is private.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `private` | Private | public access prevention is enforced; anonymous readers, including website visitors, lose access | medium |  | yes |
+| `public_read` | Public read | allUsers can read every object, as in the source | high |  |  |
+
+### The bucket policy is not translated (`S3-BUCKET-POLICY`)
+
+S3 bucket policies grant access to AWS principals and conditions that have no direct Cloud Storage equivalent. Public read is handled by S3-PUBLIC-ACCESS; every other statement must be recreated as IAM on the new bucket.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `manual` | Recreate access yourself | no IAM bindings are generated from the policy; grant what each consumer needs | medium | yes | yes |
+
+### ACL-enabled buckets become uniform-access buckets (`S3-ACLS`)
+
+The bucket still honours object ACLs. AWS itself now disables ACLs on new buckets; Cloud Storage's equivalent is uniform bucket-level access. No ACL grant is copied either way.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `uniform_access` | Uniform bucket-level access | access is IAM only; per-object ACLs no longer apply | medium |  | yes |
+| `fine_grained` | Fine-grained ACLs | object ACLs remain possible on the new bucket; none are copied | low |  |  |
+
+### A customer-managed KMS key does not carry to GCP (`S3-ENCRYPTION-KMS`)
+
+Objects were encrypted with the customer's AWS KMS key. Cloud Storage encrypts at rest with Google-managed keys by default; a customer-managed key needs Cloud KMS.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `google_managed` | Google-managed encryption | objects are encrypted at rest with Google-managed keys | low |  | yes |
+| `manual` | Handle manually | create a Cloud KMS key and set the bucket's default encryption yourself | low | yes |  |
+
+### Lifecycle rules map to Cloud Storage lifecycle actions (`S3-LIFECYCLE`)
+
+Transitions, expirations and multipart clean-up carry, with S3 storage classes mapped to the nearest Cloud Storage class. Rules filtered by object tags or size cannot be expressed and are dropped. Cloud Storage bills minimum storage durations of 30, 90 and 365 days for Nearline, Coldline and Archive.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `map_rules` | Map each rule | every expressible rule is generated; the rest are listed in the report | low |  | yes |
+
+### Intelligent-Tiering becomes Autoclass (`S3-INTELLIGENT-TIERING`)
+
+Both move objects between classes by access pattern. Autoclass works per bucket rather than per configuration, and its tiers and pricing differ.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `autoclass` | Enable Autoclass | Cloud Storage moves each object to the class its access pattern warrants | low |  | yes |
+| `standard` | Stay in Standard | objects stay in Standard unless a lifecycle rule moves them | low |  |  |
+
+### CORS request-header allow-lists do not carry (`S3-CORS`)
+
+Cloud Storage CORS has origins, methods, exposed headers and max age, but no allow-list of request headers: any request header is accepted.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `map_cors` | Map the CORS rules | origins, methods, exposed headers and max age carry; allowed headers do not | low |  | yes |
+
+### Static website hosting has no s3-website endpoint on GCP (`S3-WEBSITE`)
+
+Index and error pages carry, but Cloud Storage serves a website only through a load balancer or a bucket named after a verified domain. The bucket-website URL users know stops existing, and routing or redirect rules are not carried.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `website_config` | Carry index and error pages | the bucket gets the same index and error pages; serving it needs a load balancer or a domain-named bucket, which this family does not create | high |  | yes |
+| `omit` | Do not configure | no website settings | medium |  |  |
+
+### Server access logs become Cloud Storage usage logs (`S3-ACCESS-LOGGING`)
+
+Cloud Storage writes hourly usage logs, in its own CSV format, to a bucket you name. The target must be migrated too; log consumers must read the new format.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `usage_logs` | Write usage logs to the migrated target | usage logs go to the migrated target bucket, in Cloud Storage's format | low |  | yes |
+| `omit` | No logging | access is not logged | low |  |  |
+
+### Object Lock default retention becomes a bucket retention policy (`S3-OBJECT-LOCK`)
+
+A Cloud Storage retention policy keeps every object for a minimum period. Unlocked, an admin can remove it — weaker than S3 Compliance mode. Locked, it can never be shortened or removed, and the bucket cannot be deleted until every object ages out.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `retention_unlocked` | Unlocked retention policy | objects are kept for the same period; an admin can still remove the policy | medium |  | yes |
+| `retention_locked` | Locked retention policy | objects are kept for the same period, irreversibly | high |  |  |
+| `omit` | No retention | objects can be deleted at any time | high |  |  |
+
+### Replication is not reproduced (`S3-REPLICATION`)
+
+Cloud Storage has no per-rule replication to another bucket. A dual-region bucket, or a Storage Transfer Service job, covers the same need; neither is generated.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `manual` | Handle manually | no replication exists on the new bucket | medium | yes | yes |
+
+### Event notifications are not reproduced (`S3-NOTIFICATIONS`)
+
+S3 sends events to SNS, SQS, Lambda or EventBridge. Cloud Storage notifications go to Pub/Sub topics this family does not create, and nothing consumes them yet.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `manual` | Handle manually | no notifications are configured; whatever reacted to new objects stops | medium | yes | yes |
+
+### Transfer acceleration has no equivalent (`S3-ACCELERATION`)
+
+Cloud Storage has no accelerated endpoint; its global network serves the same need.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `note_only` | Understood | clients use the standard Cloud Storage endpoint | low |  | yes |
