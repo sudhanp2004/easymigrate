@@ -158,6 +158,8 @@ class InstanceGroup(IntentObject):
     max_size: int = Field(ge=0)
     desired_capacity: int = Field(ge=0)
     zones: list[str] = Field(default_factory=list)
+    # zone name -> AWS zone id, for the zones above; zone mapping sorts by id (spec 4 §5).
+    zone_ids: dict[str, str] = Field(default_factory=dict)
     subnets: list[SubnetRef] = Field(default_factory=list)
     health_check_type: HealthCheckType = "EC2"
     health_check_grace: int | None = None

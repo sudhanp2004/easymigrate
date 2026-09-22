@@ -294,19 +294,28 @@ class VmZoneMapping(DifferenceRule):
     def _letters(ir: IRDocument) -> dict[str, str]:
         """Source zone → destination zone letter, assigned positionally.
 
-        Sorted by the stable `zone_id` where the scan captured one, since that is the only
-        account-independent identifier AWS offers; instances without one sort last by zone
-        name so the mapping stays deterministic.
+        Sorted by the stable zone id, the only account-independent identifier AWS offers;
+        instances carry theirs and groups record theirs from `describe_availability_zones`. A
+        zone with no known id sorts last by name so the mapping stays deterministic.
+
+        Only objects that will be generated take a letter: an instance a decision excluded, or
+        an EKS member, must not push the zones of the ones that remain (live run, 2026-09-22).
+        `apply` therefore recomputes this from the document as resolution has left it, and a
+        letter is an index into the destination region's zones, which generation resolves.
         """
-        zone_ids = {
-            instance.zone: instance.zone_id
-            for instance in ir.of_kind(ComputeInstance)
-            if instance.zone and instance.zone_id
-        }
-        zones = {instance.zone for instance in ir.of_kind(ComputeInstance) if instance.zone}
-        # An Auto Scaling group names its AZs but not their ids; one that shares an AZ with an
-        # instance borrows that instance's id, so the two land in the same GCP zone.
-        zones.update(zone for group in ir.of_kind(InstanceGroup) for zone in group.zones)
+        zone_ids: dict[str, str] = {}
+        zones: set[str] = set()
+        for instance in ir.of_kind(ComputeInstance):
+            if instance.excluded is not None or instance.eks_cluster or not instance.zone:
+                continue
+            zones.add(instance.zone)
+            if instance.zone_id:
+                zone_ids[instance.zone] = instance.zone_id
+        for group in ir.of_kind(InstanceGroup):
+            if group.excluded is not None:
+                continue
+            zones.update(group.zones)
+            zone_ids.update(group.zone_ids)
         keyed = {(zone_ids.get(zone) or "~", zone) for zone in zones}
         letters: dict[str, str] = {}
         for index, (_, zone) in enumerate(sorted(keyed)):
@@ -317,7 +326,8 @@ class VmZoneMapping(DifferenceRule):
         letters = self._letters(ir)
         diffs = []
         for instance in sorted(ir.of_kind(ComputeInstance), key=lambda o: o.id):
-            if not instance.zone:
+            # EKS members are never generated here, so they take no zone (spec 4 §1).
+            if not instance.zone or instance.eks_cluster:
                 continue
             diffs.append(
                 self.difference(
@@ -347,7 +357,10 @@ class VmZoneMapping(DifferenceRule):
             )
         if strategy_id != "positional":
             raise ValueError(f"unknown strategy {strategy_id!r}")
-        return _replace_object(doc, _set_hint(obj, "zone_letter", diff.context["zone_letter"]))
+        # Recomputed rather than read from the detected context: an instance an earlier
+        # decision excluded no longer takes a zone.
+        letter = self._letters(doc).get(obj.zone, diff.context["zone_letter"])
+        return _replace_object(doc, _set_hint(obj, "zone_letter", letter))
 
 
 class VmPublicIp(DifferenceRule):
@@ -1453,7 +1466,8 @@ class VmAsgShape(DifferenceRule):
                     update={"excluded": f"{self.id}: its template is not migrated ({reason})"}
                 ),
             )
-        letters = diff.context.get("zone_letters") or ["a"]
+        current = VmZoneMapping._letters(doc)
+        letters = sorted({current[zone] for zone in group.zones if zone in current}) or ["a"]
         if strategy_id == "zonal_mig":
             letters = letters[:1]
         updated = _set_hint(group, "mig", "regional" if strategy_id == "regional_mig" else "zonal")

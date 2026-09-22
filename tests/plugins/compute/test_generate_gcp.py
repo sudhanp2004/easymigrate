@@ -474,3 +474,32 @@ def test_groups_sharing_a_template_in_different_subnets_is_a_generation_error():
     other = _group("instance_group:other", subnet="subnet:b")
     with pytest.raises(GenerationError, match="different subnets"):
         _render(*_scaling_doc(_group(), _subnet("subnet:b"), other))
+
+
+# ---- zones resolve against the destination region -----------------------------
+
+
+def test_zone_letter_resolves_to_a_zone_the_region_has():
+    ctx = GenerateContext(project="p", region="us-east1", version="0.1.0")
+    out = generate(_doc(_network(), _subnet(), _disk(), _instance()), ctx).render()
+    # us-east1 has no zone a; the first positional zone is us-east1-b.
+    assert '"${var.region}-b"' in out
+    assert '"${var.region}-a"' not in out
+
+
+def test_more_source_zones_than_the_region_has_wraps_with_a_note():
+    ctx = GenerateContext(project="p", region="asia-south1", version="0.1.0")
+    instance = _instance(target_hints={"zone_letter": "d"})
+    out = generate(_doc(_network(), _subnet(), _disk(), instance), ctx).render()
+    assert '"${var.region}-a"' in out
+    assert [f.code for f in ctx.findings] == ["GEN-ZONE-WRAP"]
+
+
+def test_wrapped_distribution_zones_are_not_repeated():
+    ctx = GenerateContext(project="p", region="asia-south1", version="0.1.0")
+    group = _group(zone_letters=["a", "b", "c", "d"])
+    out = generate(_doc(*_scaling_doc(group)), ctx).render()
+    assert (
+        'distribution_policy_zones = ["${var.region}-a", "${var.region}-b", "${var.region}-c"]'
+        in out
+    )

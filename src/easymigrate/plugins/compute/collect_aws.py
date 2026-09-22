@@ -76,6 +76,7 @@ COMPUTE_SNAPSHOT_FILES = (
     "compute.instance_types",
     "compute.launch_templates",
     "compute.lifecycle_hooks",
+    "compute.availability_zones",
 )
 
 # The request names the attribute in camelCase; the response keys it in PascalCase.
@@ -114,6 +115,7 @@ def collect(connection: AwsConnection, ctx: CollectContext) -> dict[str, Any]:
     files["compute.images"] = {"Images": _collect_images(ec2, shapes, ctx)}
     files["compute.key_pairs"] = {"KeyPairs": _collect_key_pairs(ec2, ctx)}
     files["compute.instance_types"] = {"InstanceTypes": _collect_instance_types(ec2, shapes, ctx)}
+    files["compute.availability_zones"] = {"AvailabilityZones": _collect_zones(ec2, ctx)}
     files["compute.lifecycle_hooks"] = _collect_lifecycle_hooks(
         autoscaling, files["compute.autoscaling_groups"]["AutoScalingGroups"], ctx
     )
@@ -132,6 +134,19 @@ def _collect_instances(ec2: Any, ctx: CollectContext) -> list[dict[str, Any]]:
         instance for reservation in reservations for instance in reservation.get("Instances", [])
     ]
     return sorted(instances, key=lambda item: item["InstanceId"])
+
+
+def _collect_zones(ec2: Any, ctx: CollectContext) -> list[dict[str, Any]]:
+    """Zone names are per-account aliases; the ids are what zone mapping sorts by, and an ASG
+    names only its zones, never their ids."""
+    try:
+        zones = ec2.describe_availability_zones().get("AvailabilityZones", [])
+    except Exception as exc:
+        if is_access_denied(exc):
+            ctx.access_denied("DescribeAvailabilityZones", "ec2:DescribeAvailabilityZones")
+            return []
+        raise
+    return sorted(zones, key=lambda zone: zone.get("ZoneName") or "")
 
 
 def _template_data(templates: dict[str, Any]) -> list[dict[str, Any]]:

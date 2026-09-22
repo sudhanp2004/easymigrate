@@ -260,3 +260,23 @@ def test_asg_shape_runs_first_among_the_scaling_rules():
     asg = [i for i in ids if i.startswith("VM-ASG-")]
     assert asg[0] == "VM-ASG-SHAPE"
     assert ids.index("VM-MACHINE-TYPE") < ids.index("VM-ASG-SHAPE")
+
+
+def test_group_zone_ids_sort_with_instance_zone_ids():
+    """Live run, 2026-09-22: without its ids an ASG's AZs sorted last and landed in zone c."""
+    group = _group(zone_ids={"ap-south-1a": "aps1-az1", "ap-south-1b": "aps1-az3"})
+    other = _instance(zone="ap-south-1c", zone_id="aps1-az2")
+    letters = VmZoneMapping._letters(_doc(group, other))
+    assert letters == {"ap-south-1a": "a", "ap-south-1c": "b", "ap-south-1b": "c"}
+
+
+def test_an_excluded_instance_takes_no_zone():
+    """Live run, 2026-09-22: `trineural`, excluded by a manual decision, still took a letter."""
+    excluded = _instance(zone="ap-south-1c", zone_id="aps1-az2").model_copy(
+        update={"excluded": "VM-BOOT-IMAGE: handled manually"}
+    )
+    group = _group(zone_ids={"ap-south-1a": "aps1-az1", "ap-south-1b": "aps1-az3"})
+    doc = _doc(group, excluded)
+    shape = VmAsgShape()
+    result = shape.apply(doc, _only(shape, doc), "regional_mig")
+    assert _hints(result)["zone_letters"] == ["a", "b"]

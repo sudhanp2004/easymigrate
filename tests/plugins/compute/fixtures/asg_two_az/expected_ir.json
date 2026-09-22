@@ -217,6 +217,10 @@
         "ap-south-1a",
         "ap-south-1b"
       ],
+      "zone_ids": {
+        "ap-south-1a": "aps1-az1",
+        "ap-south-1b": "aps1-az3"
+      },
       "subnets": [
         "subnet:subnet-1",
         "subnet:subnet-2"

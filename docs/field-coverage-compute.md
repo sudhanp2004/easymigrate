@@ -85,53 +85,54 @@ Every IR field the compute generator could touch is declared here, so an IR fiel
 
 | Field | Declaration |
 |---|---|
-| `desired_capacity` | not_generated:managed instance groups are spec 4 plan 5 |
+| `desired_capacity` | exact:target_size, unless an autoscaler owns the size |
 | `excluded` | metadata |
-| `health_check_grace` | not_generated:managed instance groups are spec 4 plan 5 |
-| `health_check_type` | not_generated:managed instance groups are spec 4 plan 5 |
+| `health_check_grace` | exact:auto_healing_policies.initial_delay_sec |
+| `health_check_type` | decision:VM-ASG-HEALTHCHECK |
 | `id` | metadata |
 | `kind` | metadata |
 | `labels` | metadata |
-| `lifecycle_hooks` | not_generated:managed instance groups are spec 4 plan 5 |
-| `max_size` | not_generated:managed instance groups are spec 4 plan 5 |
-| `min_size` | not_generated:managed instance groups are spec 4 plan 5 |
-| `mixed_instances` | not_generated:managed instance groups are spec 4 plan 5 |
+| `lifecycle_hooks` | always_excluded:VM-ASG-LIFECYCLE; MIGs have no lifecycle hooks |
+| `max_size` | exact:autoscaler max_replicas |
+| `min_size` | exact:autoscaler min_replicas |
+| `mixed_instances` | always_excluded:VM-ASG-MIXED-INSTANCES; one machine type per template |
 | `name` | metadata |
 | `resolution` | metadata |
-| `scaling_policies` | not_generated:managed instance groups are spec 4 plan 5 |
+| `scaling_policies` | decision:VM-ASG-SCALING |
 | `source` | metadata |
-| `subnets` | not_generated:managed instance groups are spec 4 plan 5 |
-| `target_groups` | not_generated:managed instance groups are spec 4 plan 5 |
+| `subnets` | decision:VM-ASG-SHAPE picks one regional subnet |
+| `target_groups` | always_excluded:VM-ASG-TARGET-GROUPS; load balancers are not migrated |
 | `target_hints` | metadata |
-| `template` | not_generated:managed instance groups are spec 4 plan 5 |
-| `zones` | not_generated:managed instance groups are spec 4 plan 5 |
+| `template` | exact:version.instance_template |
+| `zone_ids` | derived:input to the positional zone mapping |
+| `zones` | decision:VM-ASG-SHAPE maps them positionally to distribution zones |
 
 ## `instance_template`
 
 | Field | Declaration |
 |---|---|
-| `architecture` | not_generated:instance templates are spec 4 plan 5 |
-| `default_version` | not_generated:instance templates are spec 4 plan 5 |
-| `disks` | not_generated:instance templates are spec 4 plan 5 |
+| `architecture` | recorded:captured in the IR and the report; nothing is generated from it |
+| `default_version` | recorded:captured in the IR and the report; nothing is generated from it |
+| `disks` | exact:one disk block per disk, created empty |
 | `excluded` | metadata |
-| `firewall_policies` | not_generated:instance templates are spec 4 plan 5 |
-| `iam_profile` | not_generated:instance templates are spec 4 plan 5 |
+| `firewall_policies` | exact:becomes the template's network tags |
+| `iam_profile` | always_excluded:VM-IAM-PROFILE is manual; no service account is attached |
 | `id` | metadata |
-| `image` | not_generated:instance templates are spec 4 plan 5 |
-| `imds` | not_generated:instance templates are spec 4 plan 5 |
-| `instance_type` | not_generated:instance templates are spec 4 plan 5 |
-| `key_material` | not_generated:instance templates are spec 4 plan 5 |
-| `key_pair` | not_generated:instance templates are spec 4 plan 5 |
+| `image` | derived:VM-BOOT-IMAGE chooses a stock image; the AMI itself is not migrated |
+| `imds` | always_excluded:VM-IMDS; GCP's metadata server has no token protocol to set |
+| `instance_type` | derived:VM-MACHINE-TYPE chooses the GCP machine type |
+| `key_material` | decision:VM-SSH-KEYS imports it as an ssh-keys metadata entry |
+| `key_pair` | decision:VM-SSH-KEYS |
 | `kind` | metadata |
 | `labels` | metadata |
-| `memory_mib` | not_generated:instance templates are spec 4 plan 5 |
+| `memory_mib` | derived:input to VM-MACHINE-TYPE |
 | `name` | metadata |
-| `platform` | not_generated:instance templates are spec 4 plan 5 |
-| `platform_details` | not_generated:instance templates are spec 4 plan 5 |
+| `platform` | derived:input to VM-BOOT-IMAGE |
+| `platform_details` | derived:input to VM-BOOT-IMAGE |
 | `resolution` | metadata |
 | `source` | metadata |
-| `spot` | not_generated:instance templates are spec 4 plan 5 |
+| `spot` | decision:VM-SPOT sets scheduling.provisioning_model |
 | `target_hints` | metadata |
-| `user_data` | not_generated:instance templates are spec 4 plan 5 |
-| `vcpus` | not_generated:instance templates are spec 4 plan 5 |
-| `version` | not_generated:instance templates are spec 4 plan 5 |
+| `user_data` | decision:VM-USER-DATA writes a startup-script or user-data metadata key |
+| `vcpus` | derived:input to VM-MACHINE-TYPE |
+| `version` | derived:only the version a group references is migrated |

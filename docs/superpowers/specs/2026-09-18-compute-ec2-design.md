@@ -493,3 +493,12 @@ Failures and findings:
    zones `a` and `c`. Harmless here; with more source AZs than GCP zones it would emit a zone that
    does not exist. Fix: collect `describe_availability_zones` for ids, and cap letters at the
    region's zone count.
+
+Follow-ups, all fixed 2026-09-22 after the run: (2) `plan --create-state-bucket` and
+`apply --yes`, and both fail fast off a terminal instead of prompting; tofu output now streams
+line by line to the CLI and the UI job log; (3) plugins declare `managed_arns`, and compute claims
+`TargetTracking-*` alarms; (4) AZ ids are collected (`compute.availability_zones.json`) and
+recorded on groups, letters skip excluded and EKS instances and are recomputed at resolve time,
+and generation resolves each letter against the destination region's real zones
+(`providers/gcp/zones.py`), wrapping with a `GEN-ZONE-WRAP` note when the source had more zones.
+That also fixed a latent bug: regions whose zones do not start at `a` (us-east1, europe-west1).

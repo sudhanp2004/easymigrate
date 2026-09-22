@@ -85,6 +85,10 @@ def normalize(snapshot: Snapshot, ctx: NormalizeContext) -> list[IntentObject]:
     policies_raw = (snapshot.get("compute.scaling_policies") or {}).get("ScalingPolicies", [])
     attributes = snapshot.get("compute.instance_attributes") or {}
     hooks_raw = snapshot.get("compute.lifecycle_hooks") or {}
+    zones_raw = (snapshot.get("compute.availability_zones") or {}).get("AvailabilityZones", [])
+    zone_ids = {
+        z["ZoneName"]: z["ZoneId"] for z in zones_raw if z.get("ZoneName") and z.get("ZoneId")
+    }
 
     subnet_ids, policy_ids = _lookups(ctx)
     images = {image["ImageId"]: image for image in images_raw}
@@ -111,6 +115,7 @@ def normalize(snapshot: Snapshot, ctx: NormalizeContext) -> list[IntentObject]:
         attributes=attributes,
         disk_ids_by_instance=disk_ids_by_instance,
         address_by_instance=address_by_instance,
+        zone_ids=zone_ids,
     )
 
     templates, template_disks, template_ids = _templates(
@@ -129,6 +134,7 @@ def normalize(snapshot: Snapshot, ctx: NormalizeContext) -> list[IntentObject]:
         ctx,
         subnet_ids=subnet_ids,
         template_ids=template_ids,
+        zone_ids=zone_ids,
     )
 
     return [
@@ -356,6 +362,7 @@ def _instances(
     attributes: dict[str, Any],
     disk_ids_by_instance: dict[str, list[str]],
     address_by_instance: dict[str, str],
+    zone_ids: dict[str, str],
 ) -> list[ComputeInstance]:
     ids = allocate_ids(
         "compute_instance",
@@ -427,7 +434,8 @@ def _instances(
                 architecture=item.get("Architecture", "x86_64"),
                 state=(item.get("State") or {}).get("Name", "running"),
                 zone=(item.get("Placement") or {}).get("AvailabilityZone", ""),
-                zone_id=(item.get("Placement") or {}).get("AvailabilityZoneId"),
+                zone_id=(item.get("Placement") or {}).get("AvailabilityZoneId")
+                or zone_ids.get((item.get("Placement") or {}).get("AvailabilityZone", "")),
                 subnet=subnet,
                 firewall_policies=policies,
                 disks=disk_ids_by_instance.get(native, []),
@@ -672,6 +680,7 @@ def _groups(
     *,
     subnet_ids: dict[str, str],
     template_ids: dict[tuple[str, str], str],
+    zone_ids: dict[str, str],
 ) -> list[InstanceGroup]:
     ids = allocate_ids(
         "instance_group",
@@ -713,6 +722,11 @@ def _groups(
                 max_size=item.get("MaxSize", 0),
                 desired_capacity=item.get("DesiredCapacity", 0),
                 zones=sorted(item.get("AvailabilityZones") or []),
+                zone_ids={
+                    zone: zone_ids[zone]
+                    for zone in item.get("AvailabilityZones") or []
+                    if zone in zone_ids
+                },
                 subnets=subnets,
                 health_check_type=item.get("HealthCheckType", "EC2"),
                 health_check_grace=item.get("HealthCheckGracePeriod"),
