@@ -13,8 +13,8 @@ from tests.plugins.kubernetes.builders import network_objects
 
 CLUSTER_HINTS = {
     "version": "1.31",
-    "release_channel": "UNSPECIFIED",
-    "node_auto_upgrade": False,
+    "release_channel": "EXTENDED",
+    "node_auto_upgrade": True,
     "subnet": "subnet:private-1",
     "pods_range": "prod-pods",
     "services_range": "prod-services",
@@ -154,7 +154,7 @@ def test_node_pool_renders_zones_autoscaling_and_node_config():
     assert 'node_locations     = ["${var.region}-a", "${var.region}-b"]' in out
     assert "total_max_node_count = 4" in out
     assert 'location_policy      = "BALANCED"' in out
-    assert "auto_upgrade = false" in out
+    assert "auto_upgrade = true" in out
     assert "disk_size_gb = 10" in out  # raised to GKE's minimum
     assert 'effect = "NO_SCHEDULE"' in out
     policy = next(o for o in network_objects() if o.id == "firewall_policy:cluster-sg")

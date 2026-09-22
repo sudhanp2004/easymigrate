@@ -547,11 +547,11 @@ EasyMigrate migrates the cluster, not what runs in it. No Deployments, Services,
 
 ### The Kubernetes version and upgrade policy change hands (`K8S-VERSION`)
 
-EKS keeps a cluster on its minor until the user upgrades it or standard support ends. GKE offers a set of minors and, in a release channel, upgrades automatically.
+EKS keeps a cluster on its minor until the user upgrades it or support ends. Every new GKE cluster is in a release channel and upgrades automatically; the Extended channel is the closest to EKS, holding a minor for longest.
 
 | Strategy | Title | Effect | Risk | Manual | Default |
 |---|---|---|---|---|---|
-| `pin_minor` | Pin the same minor, no release channel | the cluster starts on the source minor (or the nearest newer one GKE offers) and node auto-upgrade is off; GKE still upgrades when the minor reaches end of support, as EKS does | low |  | yes |
+| `pin_minor` | Pin the same minor on the Extended channel | the cluster starts on the source minor (or the nearest newer one GKE offers) in the Extended channel, which keeps a minor longest; patch versions still upgrade automatically, and the extended-support period is billed extra | low |  | yes |
 | `regular_channel` | Enrol in the Regular release channel | GKE picks the version and upgrades control plane and nodes automatically | medium |  |  |
 
 ### The API endpoint's exposure is reproduced, not narrowed (`K8S-ENDPOINT`)

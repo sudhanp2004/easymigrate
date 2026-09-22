@@ -93,8 +93,8 @@ def test_version_pins_the_nearest_offered_minor(version, chosen, risk):
     hints = _hints(rule.apply(doc, diff, "pin_minor"))
     assert hints == {
         "version": chosen,
-        "release_channel": "UNSPECIFIED",
-        "node_auto_upgrade": False,
+        "release_channel": "EXTENDED",
+        "node_auto_upgrade": True,
     }
 
 

@@ -613,7 +613,7 @@ def _k8s_doc():
         access_entries=["arn:aws:iam::1:role/admin"],
         target_hints={
             "version": "1.31",
-            "release_channel": "UNSPECIFIED",
+            "release_channel": "EXTENDED",
             "endpoint": {"private_endpoint": False, "authorized_networks": None},
             "subnet": "subnet:private-1",
             "pods_range": "prod-pods",

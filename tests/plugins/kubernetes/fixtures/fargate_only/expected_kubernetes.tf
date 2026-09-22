@@ -25,7 +25,7 @@ resource "google_container_cluster" "prod" {
   }
 
   release_channel {
-    channel = "UNSPECIFIED"
+    channel = "EXTENDED"
   }
   ip_allocation_policy {
     cluster_secondary_range_name  = "prod-pods"
@@ -52,7 +52,7 @@ resource "google_container_node_pool" "prod_fargate" {
 
   management {
     auto_repair  = true
-    auto_upgrade = false
+    auto_upgrade = true
   }
   node_config {
     machine_type = "e2-standard-4"

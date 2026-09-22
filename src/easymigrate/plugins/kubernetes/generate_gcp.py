@@ -140,8 +140,7 @@ def _zones(letters: list[str], ctx: GenerateContext, subject: str) -> list[Ref]:
 def _management(block, cluster: KubernetesCluster) -> None:
     management = block.block("management")
     management.attr("auto_repair", True)
-    # Off when the minor is pinned, as EKS never upgrades nodes by itself (K8S-VERSION); a
-    # release channel requires it on.
+    # Every release channel requires node auto-upgrade (K8S-VERSION).
     management.attr("auto_upgrade", bool(cluster.target_hints.get("node_auto_upgrade", True)))
 
 
@@ -285,8 +284,8 @@ def _generate_cluster(
     block.attr("initial_node_count", 1)
     # The provider defaults this to true. EKS has no such setting, and true blocks teardown.
     block.attr("deletion_protection", False)
-    if channel == "UNSPECIFIED":
-        block.attr("min_master_version", _require(cluster, "version"))
+    if hints.get("version"):
+        block.attr("min_master_version", hints["version"])
     block.attr("networking_mode", "VPC_NATIVE")
     if cluster.labels:
         block.attr("resource_labels", dict(sorted(cluster.labels.items())))

@@ -84,17 +84,18 @@ class K8sVersion(DifferenceRule):
     family = "kubernetes"
     title = "The Kubernetes version and upgrade policy change hands"
     impact = (
-        "EKS keeps a cluster on its minor until the user upgrades it or standard support ends. "
-        "GKE offers a set of minors and, in a release channel, upgrades automatically."
+        "EKS keeps a cluster on its minor until the user upgrades it or support ends. Every new "
+        "GKE cluster is in a release channel and upgrades automatically; the Extended channel "
+        "is the closest to EKS, holding a minor for longest."
     )
     strategies = (
         Strategy(
             id="pin_minor",
-            title="Pin the same minor, no release channel",
+            title="Pin the same minor on the Extended channel",
             effect=(
-                "the cluster starts on the source minor (or the nearest newer one GKE offers) "
-                "and node auto-upgrade is off; GKE still upgrades when the minor reaches end of "
-                "support, as EKS does"
+                "the cluster starts on the source minor (or the nearest newer one GKE offers) in "
+                "the Extended channel, which keeps a minor longest; patch versions still upgrade "
+                "automatically, and the extended-support period is billed extra"
             ),
             risk="low",
         ),
@@ -132,9 +133,11 @@ class K8sVersion(DifferenceRule):
         if cluster is None:
             return doc
         if strategy_id == "pin_minor":
+            # Not "no channel": GKE refuses UNSPECIFIED for new customers (live run,
+            # 2026-09-22), and every channel requires node auto-upgrade.
             updated = _set_hint(cluster, "version", diff.context["gke_version"])
-            updated = _set_hint(updated, "release_channel", "UNSPECIFIED")
-            return _replace_object(doc, _set_hint(updated, "node_auto_upgrade", False))
+            updated = _set_hint(updated, "release_channel", "EXTENDED")
+            return _replace_object(doc, _set_hint(updated, "node_auto_upgrade", True))
         if strategy_id == "regular_channel":
             updated = _set_hint(cluster, "release_channel", "REGULAR")
             return _replace_object(doc, _set_hint(updated, "node_auto_upgrade", True))

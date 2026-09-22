@@ -151,7 +151,7 @@ pools and `DB-SG-FIREWALL` keeps a policy shared by RDS and a cluster (spec 4 §
 | Rule | Detects | Strategies (**default** first) → hints |
 |---|---|---|
 | `K8S-EMPTY-CLUSTER` | every cluster | **`note_only`** (high): the GKE cluster is created with no workloads, configuration or volumes; nothing running on EKS is copied |
-| `K8S-VERSION` | every cluster | **`pin_minor`** (low when GKE offers the minor; medium when it must move to the nearest newer offered minor, or when the minor is newer than EasyMigrate's dated list) → `version`, `release_channel = "UNSPECIFIED"`, node auto-upgrade off · `regular_channel` (medium) → `release_channel = "REGULAR"`, no pin, auto-upgrade on |
+| `K8S-VERSION` | every cluster | **`pin_minor`** (low when GKE offers the minor; medium when it must move to the nearest newer offered minor, or when the minor is newer than EasyMigrate's dated list) → `version`, `release_channel = "EXTENDED"`, node auto-upgrade on (D6) · `regular_channel` (medium) → `release_channel = "REGULAR"`, no pin, auto-upgrade on |
 | `K8S-ENDPOINT` | every cluster | **`mirror`**: public endpoint with authorized networks = `public_access_cidrs` (**high** when that includes `0.0.0.0/0`, low otherwise), or private endpoint when EKS was private-only · `private_endpoint` (medium): reachable only from inside the VPC |
 | `K8S-POD-RANGES` | every cluster | **`secondary_ranges`** (medium; params `subnet`, `pods_cidr`, `services_cidr`) → subnet hint `secondary_ranges`, cluster hints `subnet`, `pods_range`, `services_range`. Pods stop having VPC addresses; anything that allow-listed pod IPs must change. Defaults: the subnet hosting the most node groups (ties: sorted first); services keep the EKS `service_cidr` when it overlaps nothing in the network (so `kube-dns`'s address survives), else the next free `/20` in `100.96.0.0/16`; pods get the next free `/16` in `100.64.0.0/11` (the two pools are disjoint). Validation: valid CIDRs, no overlap with any subnet or other cluster's ranges, pods ≥ `/21`, services ≥ `/27` |
 | `K8S-PRIVATE-NODES` | every cluster (GKE's primary control is cluster-level) | **`private_nodes`** (medium): nodes have no external IPs; pulls from public registries need Cloud NAT on the subnet · `public_nodes` (high) |
@@ -218,8 +218,10 @@ network golden with secondary ranges; compute tests for the §2.2 exclusions; li
   nodes is what happens anyway once Fargate is gone, and a Fargate-only cluster needs a pool.
 - **D5 Regional clusters.** EKS control planes are multi-AZ; a zonal GKE cluster would reduce
   control-plane availability. Costs the GKE management fee, which the report can name.
-- **D6 Pin the minor, no release channel, by default.** EKS never auto-upgrades except at end of
-  support; `UNSPECIFIED` matches that most closely. The channel is one strategy away.
+- **D6 Pin the minor on the Extended channel.** (Corrected by the live run, 2026-09-22: the draft
+  said "no release channel", but GKE now refuses `UNSPECIFIED` for new customers, and every channel
+  requires node auto-upgrade.) Extended holds a minor longest, which is closest to EKS; patch
+  upgrades are automatic and the extended-support period is billed.
 - **D7 Private nodes by default**, consistent with `VM-PUBLIC-IP` and `DB-PUBLIC-ACCESS`.
 - **D8 Endpoint mirrors the source** rather than defaulting private: a private-only default would
   lock the user's kubectl out of a cluster that was reachable before. A world-open endpoint is
