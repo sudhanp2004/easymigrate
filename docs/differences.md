@@ -535,6 +535,115 @@ An ASG lifecycle hook pauses a launch or termination until something calls back.
 |---|---|---|---|---|---|
 | `note_only` | Note it | the hooks are named in the report; nothing pauses instance changes | medium |  | yes |
 
+## Loadbalancing rules
+
+### Load balancers created for Kubernetes are left to the cluster (`LB-KUBERNETES-OWNED`)
+
+The AWS Load Balancer Controller made this load balancer for a Kubernetes Service or Ingress. It belongs to the workload, which is not migrated; a GKE Service or Ingress recreates it once the workload is redeployed.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `exclude` | Leave it to the cluster | nothing is generated; redeploying the workload on GKE recreates it | low |  | yes |
+
+### Each load balancer maps to its closest Cloud Load Balancing type (`LB-SHAPE`)
+
+Internet-facing ALBs become global external Application Load Balancers, internal ALBs regional internal ones (which need a proxy-only subnet), and NLBs passthrough Network Load Balancers, which keep client source addresses as NLBs do.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `map` | Use the closest type | the load balancer is recreated as the matching Cloud Load Balancing type | low |  | yes |
+
+### The load balancer gets a new address; DNS must follow (`LB-NEW-ADDRESS`)
+
+AWS load balancers are reached through a DNS name (and NLBs sometimes through Elastic IPs). The migrated one has a new IP address. Nothing sends it traffic until DNS or clients are repointed, which is the cutover step EasyMigrate leaves to the user.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `reserve_ip` | Reserve a new address | a static address is reserved; repoint DNS at it when you cut over | high |  | yes |
+
+### Target groups become backend services over instance groups (`LB-BACKENDS`)
+
+A target group registers instances; a backend service names instance groups. Standalone instances join one unmanaged instance group per zone — GCP allows an instance in only one load-balanced group — and each target group is a named port on it. Auto Scaling targets use their managed instance group. Target types other than instance are not migrated.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `instance_groups` | Back it with instance groups | the target group becomes a backend service over the migrated instances' groups | low |  | yes |
+| `manual` | Handle manually | this target group is not generated, and actions forwarding only to it are dropped | medium | yes |  |
+
+### Health checks carry, but only HTTP 200 counts as healthy (`LB-HEALTH-CHECK`)
+
+A target group can treat a range of status codes as healthy. A Google Cloud health check passes only on 200, so a backend answering 204 or a redirect is marked unhealthy.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `map_health_check` | Map the health check | protocol, port, path, interval, timeout and thresholds carry | low |  | yes |
+
+### Target-group stickiness becomes session affinity (`LB-STICKINESS`)
+
+ALB cookies become Google-generated or application cookies on the backend service.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `cookie_affinity` | Cookie-based session affinity | clients stick to one backend by cookie, as before | low |  | yes |
+
+### ACM certificates cannot leave AWS (`LB-CERTIFICATES`)
+
+ACM does not export private keys. A Google-managed certificate for the same domains is issued automatically, but only once those domains resolve to the new load balancer, so HTTPS is unavailable between cutover and issuance. Wildcard domains need a certificate you bring.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `google_managed` | Google-managed certificate | a certificate for the same domains is issued after DNS points at the new address | medium |  | yes |
+| `manual` | Bring your own certificate | this HTTPS listener is not generated until you supply a certificate | high | yes |  |
+
+### ELB security policies map to Google Cloud SSL policies (`LB-SSL-POLICY`)
+
+AWS security policies name exact cipher lists; Google Cloud SSL policies are profiles with a minimum TLS version. The nearest profile keeps the same minimum version.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `map_policy` | Nearest SSL policy | a Google Cloud SSL policy with the same minimum TLS version | low |  | yes |
+
+### An ALB's security group becomes a Cloud Armor allow-list (`LB-SOURCE-RESTRICTION`)
+
+A global external Application Load Balancer has no security group. The ALB admitted only some source ranges; a Cloud Armor policy allowing exactly those ranges keeps it restricted. Sources given as security groups or prefix lists cannot be expressed.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `cloud_armor_allowlist` | Cloud Armor allow-list | only the listed source ranges reach the load balancer; everything else gets 403 | low |  | yes |
+| `open` | Leave it open | the load balancer accepts traffic from anywhere | high |  |  |
+
+### Some listener-rule conditions cannot be expressed (`LB-RULE-CONDITIONS`)
+
+Host and path routing carries to the URL map. Rules that also match headers, query strings, methods or source addresses, or use wildcards other than a trailing '*', are not generated, so their traffic falls to the next matching rule or the default.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `drop_rule` | Drop the rule | the rule is not generated and is named in the report | medium |  | yes |
+
+### Fixed-response and authenticate actions have no URL-map equivalent (`LB-UNSUPPORTED-ACTIONS`)
+
+A URL map forwards or redirects; it cannot answer with a fixed body or run OIDC/Cognito authentication. Rules using those actions are dropped. A default fixed-response is replaced by the lowest-priority forwarding rule's target, so unmatched requests reach a backend instead of getting the canned response.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `drop_rule` | Drop those actions | rules with these actions are not generated; the report names each | medium |  | yes |
+
+### A passthrough Network Load Balancer cannot translate ports (`LB-NLB-PORT-TRANSLATION`)
+
+The NLB listened on one port and sent traffic to another. A passthrough load balancer delivers packets to the port they arrived on, so that listener is not generated.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `manual` | Handle manually | the listener is not generated; move the service to the listener port or use a proxy Network Load Balancer | high | yes | yes |
+
+### S3 access logs become Cloud Logging request logs (`LB-ACCESS-LOGS`)
+
+Requests are logged to Cloud Logging instead of an S3 bucket, in a different format.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `cloud_logging` | Log to Cloud Logging | every backend service logs requests to Cloud Logging | low |  | yes |
+
 ## Kubernetes rules
 
 ### The GKE cluster is created empty (`K8S-EMPTY-CLUSTER`)

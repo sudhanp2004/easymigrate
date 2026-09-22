@@ -72,6 +72,21 @@ from easymigrate.differences.rules.aws_gcp.kubernetes import (
     K8sSshKey,
     K8sVersion,
 )
+from easymigrate.differences.rules.aws_gcp.loadbalancing import (
+    LbAccessLogs,
+    LbBackends,
+    LbCertificates,
+    LbHealthCheck,
+    LbKubernetesOwned,
+    LbNewAddress,
+    LbNlbPortTranslation,
+    LbRuleConditions,
+    LbShape,
+    LbSourceRestriction,
+    LbSslPolicy,
+    LbStickiness,
+    LbUnsupportedActions,
+)
 from easymigrate.differences.rules.aws_gcp.network import (
     NetCidrOverlap,
     NetCustomRoute,
@@ -167,6 +182,21 @@ AWS_GCP_RULES: tuple[DifferenceRule, ...] = (
     VmAsgMixedInstances(),
     VmAsgTargetGroups(),
     VmAsgLifecycle(),
+    # Load balancing (spec 7 §5), after compute: LB-BACKENDS writes named ports onto managed
+    # instance groups. Kubernetes-owned first, so excluded load balancers take no other decision.
+    LbKubernetesOwned(),
+    LbShape(),
+    LbNewAddress(),
+    LbBackends(),
+    LbHealthCheck(),
+    LbStickiness(),
+    LbCertificates(),
+    LbSslPolicy(),
+    LbSourceRestriction(),
+    LbRuleConditions(),
+    LbUnsupportedActions(),
+    LbNlbPortTranslation(),
+    LbAccessLogs(),
     # Kubernetes (spec 5 §5). Cluster rules first: K8S-VERSION before node rules, because node
     # versions follow the control plane; K8S-POD-RANGES chooses the subnet node pools use.
     K8sEmptyCluster(),
