@@ -1,0 +1,46 @@
+{
+  "prod": {
+    "accessConfig": {
+      "authenticationMode": "API_AND_CONFIG_MAP"
+    },
+    "identity": {
+      "oidc": {
+        "issuer": "https://oidc.eks.ap-south-1.amazonaws.com/id/ABC"
+      }
+    },
+    "kubernetesNetworkConfig": {
+      "ipFamily": "ipv4",
+      "serviceIpv4Cidr": "172.20.0.0/16"
+    },
+    "logging": {
+      "clusterLogging": [
+        {
+          "enabled": true,
+          "types": [
+            "api",
+            "audit"
+          ]
+        }
+      ]
+    },
+    "name": "prod",
+    "resourcesVpcConfig": {
+      "clusterSecurityGroupId": "sg-web",
+      "endpointPrivateAccess": false,
+      "endpointPublicAccess": true,
+      "publicAccessCidrs": [
+        "0.0.0.0/0"
+      ],
+      "securityGroupIds": [],
+      "subnetIds": [
+        "subnet-a",
+        "subnet-b"
+      ]
+    },
+    "status": "ACTIVE",
+    "tags": {
+      "team": "platform"
+    },
+    "version": "1.31"
+  }
+}

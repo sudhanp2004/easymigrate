@@ -1,0 +1,19 @@
+{
+  "lt-nodes": {
+    "3": {
+      "BlockDeviceMappings": [
+        {
+          "DeviceName": "/dev/xvda",
+          "Ebs": {
+            "VolumeSize": 80
+          }
+        }
+      ],
+      "InstanceType": "c5.xlarge",
+      "KeyName": "ops",
+      "SecurityGroupIds": [
+        "sg-web"
+      ]
+    }
+  }
+}

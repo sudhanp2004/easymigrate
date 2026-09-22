@@ -1,0 +1,5 @@
+{
+  "prod": [
+    "arn:aws:iam::123456789012:role/admin"
+  ]
+}

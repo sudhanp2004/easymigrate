@@ -37,30 +37,30 @@ Every IR field the kubernetes generator could touch is declared here, so an IR f
 
 | Field | Declaration |
 |---|---|
-| `ami_type` | not_generated:node pools are spec 5 plan 3 |
-| `capacity` | not_generated:node pools are spec 5 plan 3 |
-| `cluster` | not_generated:node pools are spec 5 plan 3 |
-| `desired_size` | not_generated:node pools are spec 5 plan 3 |
-| `disk_size_gib` | not_generated:node pools are spec 5 plan 3 |
+| `ami_type` | decision:K8S-NODE-IMAGE |
+| `capacity` | decision:K8S-NODE-SPOT |
+| `cluster` | exact:the node pool's cluster |
+| `desired_size` | decision:K8S-NODE-SCALING divides it across zones |
+| `disk_size_gib` | exact:node_config.disk_size_gb, at least 10 |
 | `excluded` | metadata |
-| `firewall_policies` | not_generated:node pools are spec 5 plan 3 |
+| `firewall_policies` | exact:node_config.tags, the policies' network tags |
 | `id` | metadata |
-| `instance_types` | not_generated:node pools are spec 5 plan 3 |
+| `instance_types` | decision:K8S-NODE-MACHINE-TYPE uses the first |
 | `kind` | metadata |
 | `labels` | metadata |
-| `max_size` | not_generated:node pools are spec 5 plan 3 |
-| `max_unavailable` | not_generated:node pools are spec 5 plan 3 |
-| `max_unavailable_percent` | not_generated:node pools are spec 5 plan 3 |
-| `memory_mib` | not_generated:node pools are spec 5 plan 3 |
-| `min_size` | not_generated:node pools are spec 5 plan 3 |
+| `max_size` | decision:K8S-NODE-SCALING total_max_node_count |
+| `max_unavailable` | exact:upgrade_settings.max_unavailable |
+| `max_unavailable_percent` | always_excluded:GKE surge upgrades take counts, not percents |
+| `memory_mib` | derived:input to K8S-NODE-MACHINE-TYPE |
+| `min_size` | decision:K8S-NODE-SCALING total_min_node_count |
 | `name` | metadata |
-| `node_labels` | not_generated:node pools are spec 5 plan 3 |
-| `origin` | not_generated:node pools are spec 5 plan 3 |
+| `node_labels` | exact:node_config.labels |
+| `origin` | decision:K8S-SELF-MANAGED-NODES for self-managed groups |
 | `resolution` | metadata |
 | `source` | metadata |
-| `ssh_key` | not_generated:node pools are spec 5 plan 3 |
-| `subnets` | not_generated:node pools are spec 5 plan 3 |
-| `taints` | not_generated:node pools are spec 5 plan 3 |
+| `ssh_key` | always_excluded:K8S-SSH-KEY; GKE nodes use gcloud compute ssh |
+| `subnets` | decision:K8S-NODE-SCALING maps their AZs to node_locations |
+| `taints` | exact:node_config.taint |
 | `target_hints` | metadata |
-| `vcpus` | not_generated:node pools are spec 5 plan 3 |
-| `version` | not_generated:node pools are spec 5 plan 3 |
+| `vcpus` | derived:input to K8S-NODE-MACHINE-TYPE |
+| `version` | derived:nodes follow the control plane version |

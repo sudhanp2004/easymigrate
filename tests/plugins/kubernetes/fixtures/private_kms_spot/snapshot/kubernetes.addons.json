@@ -1,0 +1,12 @@
+{
+  "prod": [
+    {
+      "addonName": "aws-efs-csi-driver",
+      "addonVersion": "v2"
+    },
+    {
+      "addonName": "adot",
+      "addonVersion": "v0"
+    }
+  ]
+}

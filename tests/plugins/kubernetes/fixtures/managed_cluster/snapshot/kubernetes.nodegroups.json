@@ -1,0 +1,39 @@
+{
+  "prod": [
+    {
+      "amiType": "AL2023_x86_64_STANDARD",
+      "capacityType": "ON_DEMAND",
+      "clusterName": "prod",
+      "diskSize": 50,
+      "instanceTypes": [
+        "m5.large"
+      ],
+      "labels": {
+        "role": "general"
+      },
+      "nodegroupName": "workers",
+      "scalingConfig": {
+        "desiredSize": 2,
+        "maxSize": 4,
+        "minSize": 1
+      },
+      "status": "ACTIVE",
+      "subnets": [
+        "subnet-a",
+        "subnet-b"
+      ],
+      "tags": {},
+      "taints": [
+        {
+          "effect": "NO_SCHEDULE",
+          "key": "dedicated",
+          "value": "batch"
+        }
+      ],
+      "updateConfig": {
+        "maxUnavailable": 1
+      },
+      "version": "1.31"
+    }
+  ]
+}

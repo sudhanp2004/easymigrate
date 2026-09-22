@@ -580,3 +580,86 @@ def test_compute_section_states_the_blank_machine_limitation():
 
 def test_no_instances_means_no_compute_section():
     assert "## Compute" not in Report(source="aws", target="gcp", coverage={}).to_markdown()
+
+
+# --- Kubernetes section (spec 5 §7) -------------------------------------------------
+
+
+def _k8s_doc():
+    from easymigrate.ir.kubernetes import KubernetesCluster, NodePool, PodIdentity
+    from tests.plugins.kubernetes.builders import network_objects
+
+    network = [
+        o.model_copy(
+            update={
+                "target_hints": {
+                    "secondary_ranges": [
+                        {"name": "prod-pods", "cidr": "100.64.0.0/16"},
+                        {"name": "prod-services", "cidr": "172.20.0.0/16"},
+                    ]
+                }
+            }
+        )
+        if o.id == "subnet:private-1"
+        else o
+        for o in network_objects()
+    ]
+    cluster = KubernetesCluster(
+        id="kubernetes_cluster:prod",
+        name="prod",
+        source=SourceRef(cloud="aws", type="eks-cluster", id="prod", region="ap-south-1"),
+        version="1.31",
+        pod_identities=[PodIdentity(namespace="app", service_account="api")],
+        access_entries=["arn:aws:iam::1:role/admin"],
+        target_hints={
+            "version": "1.31",
+            "release_channel": "UNSPECIFIED",
+            "endpoint": {"private_endpoint": False, "authorized_networks": None},
+            "subnet": "subnet:private-1",
+            "pods_range": "prod-pods",
+            "services_range": "prod-services",
+        },
+    )
+    pool = NodePool(
+        id="node_pool:workers",
+        name="workers",
+        source=SourceRef(cloud="aws", type="eks-nodegroup", id="prod/workers", region="x"),
+        cluster=cluster.id,
+        origin="self_managed",
+        min_size=1,
+        max_size=4,
+        desired_size=2,
+        ami_type="CUSTOM",
+        target_hints={
+            "machine_type": "n2-standard-2",
+            "image_type": "COS_CONTAINERD",
+            "zone_letters": ["a", "b"],
+            "autoscaling": {"total_min": 1, "total_max": 4, "initial_per_zone": 1},
+        },
+    )
+    return IRDocument(source={"cloud": "aws"}, objects=[*network, cluster, pool])
+
+
+def test_kubernetes_row_states_what_plan_decided():
+    from easymigrate.core.report import _kubernetes_rows
+
+    row = _kubernetes_rows(_k8s_doc())[0]
+    assert row.version == "1.31, pinned (EKS ran 1.31)"
+    assert "open to every address" in row.endpoint
+    assert row.ranges == "pods 100.64.0.0/16, services 172.20.0.0/16 on subnet:private-1"
+    assert "autoscaling 1–4 nodes in total" in row.node_pools[0]
+    assert "custom AMI and bootstrap not carried" in row.node_pools[0]
+    assert row.iam_bindings == ["app/api"]
+
+
+def test_kubernetes_section_says_the_cluster_is_empty():
+    from easymigrate.core.report import _kubernetes_rows
+
+    report = Report(
+        source="aws", target="gcp", coverage={}, kubernetes=_kubernetes_rows(_k8s_doc())
+    )
+    markdown = report.to_markdown()
+    assert "## Kubernetes" in markdown
+    assert "Every cluster is created empty" in markdown
+    assert "arn:aws:iam::1:role/admin" in markdown
+    assert report.to_dict()["kubernetes"][0]["id"] == "kubernetes_cluster:prod"

@@ -61,9 +61,15 @@ from easymigrate.differences.rules.aws_gcp.kubernetes import (
     K8sIamForPods,
     K8sIpv6,
     K8sLogging,
+    K8sNodeImage,
+    K8sNodeMachineType,
+    K8sNodeScaling,
+    K8sNodeSpot,
     K8sPodRanges,
     K8sPrivateNodes,
     K8sSecretsEncryption,
+    K8sSelfManagedNodes,
+    K8sSshKey,
     K8sVersion,
 )
 from easymigrate.differences.rules.aws_gcp.network import (
@@ -158,4 +164,12 @@ AWS_GCP_RULES: tuple[DifferenceRule, ...] = (
     K8sClusterAccess(),
     K8sIpv6(),
     K8sFargate(),
+    # Node pools. Self-managed first, since `omit` excludes the pool before other rules shape it;
+    # machine type before image, since a Windows image constrains machine types.
+    K8sSelfManagedNodes(),
+    K8sNodeMachineType(),
+    K8sNodeImage(),
+    K8sNodeSpot(),
+    K8sNodeScaling(),
+    K8sSshKey(),
 )

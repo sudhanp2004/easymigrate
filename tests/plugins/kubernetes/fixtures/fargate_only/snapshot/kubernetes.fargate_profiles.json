@@ -1,0 +1,15 @@
+{
+  "prod": [
+    {
+      "fargateProfileName": "default",
+      "selectors": [
+        {
+          "namespace": "default"
+        },
+        {
+          "namespace": "kube-system"
+        }
+      ]
+    }
+  ]
+}

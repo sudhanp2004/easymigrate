@@ -7,6 +7,7 @@ renders it. GKE facts live in `gke_facts.py` beside this module.
 from __future__ import annotations
 
 import ipaddress
+import math
 from collections import Counter
 from typing import Any
 
@@ -17,9 +18,11 @@ from easymigrate.differences.rules.aws_gcp.compute import (
     _set_hint,
     _subject,
 )
+from easymigrate.differences.rules.aws_gcp.gce_facts import nearest_predefined
 from easymigrate.differences.rules.aws_gcp.gke_facts import (
     ADDON_MAP,
     GKE_MINORS,
+    LINUX_IMAGE,
     LOG_COMPONENTS,
     MIN_PODS_PREFIX,
     MIN_SERVICES_PREFIX,
@@ -27,6 +30,8 @@ from easymigrate.differences.rules.aws_gcp.gke_facts import (
     PODS_PREFIX,
     SERVICES_POOL,
     SERVICES_PREFIX,
+    UBUNTU_IMAGE,
+    WINDOWS_IMAGE,
     nearest_minor,
 )
 from easymigrate.ir.base import IRDocument
@@ -188,11 +193,13 @@ class K8sEndpoint(DifferenceRule):
         doc, cluster = _subject(ir, diff)
         if cluster is None:
             return doc
+        # A private endpoint renders no authorized-networks block: an empty one would enable the
+        # allow-list with nothing on it.
         if strategy_id == "private_endpoint":
-            endpoint = {"private_endpoint": True, "authorized_networks": []}
+            endpoint = {"private_endpoint": True, "authorized_networks": None}
         elif strategy_id == "mirror":
             if not diff.context["public"]:
-                endpoint = {"private_endpoint": True, "authorized_networks": []}
+                endpoint = {"private_endpoint": True, "authorized_networks": None}
             elif diff.context["world_open"]:
                 # No authorized-networks block: the endpoint accepts every source, as it did.
                 endpoint = {"private_endpoint": False, "authorized_networks": None}
@@ -656,3 +663,373 @@ class K8sFargate(DifferenceRule):
         self.validate_params(diff, strategy_id, params)
         pool = {"machine_type": params["machine_type"], "nodes_per_zone": params["nodes_per_zone"]}
         return _replace_object(doc, _set_hint(cluster, "default_pool", pool))
+
+
+# --- Node pools (spec 5 plan 3) --------------------------------------------------------------
+
+_MEMORY_DELTA_MEDIUM = 0.25
+
+
+def _pools(ir: IRDocument) -> list[NodePool]:
+    return sorted(ir.of_kind(NodePool), key=lambda p: p.id)
+
+
+def node_zone_letters(ir: IRDocument) -> dict[str, str]:
+    """AWS AZ -> positional letter across every node pool's subnets.
+
+    Positional like `VM-ZONE-MAPPING`: pools that shared an AZ share a GCP zone, pools spread
+    apart stay spread, and generation resolves each letter against the region's real zones.
+    """
+    subnets = {s.id: s for s in ir.of_kind(Subnet)}
+    zones = sorted(
+        {
+            subnets[s].zone
+            for p in ir.of_kind(NodePool)
+            if p.excluded is None
+            for s in p.subnets
+            if s in subnets
+        }
+    )
+    return {zone: chr(ord("a") + index) for index, zone in enumerate(zones)}
+
+
+def _pool_zones(ir: IRDocument, pool: NodePool) -> list[str]:
+    subnets = {s.id: s for s in ir.of_kind(Subnet)}
+    return sorted({subnets[s].zone for s in pool.subnets if s in subnets})
+
+
+class K8sNodeMachineType(DifferenceRule):
+    id = "K8S-NODE-MACHINE-TYPE"
+    family = "kubernetes"
+    title = "A node group's instance type becomes one GKE machine type"
+    impact = (
+        "GKE node pools use one machine type, from fixed memory-per-vCPU ratios. A node group "
+        "listing several instance types loses the others, and a ratio GCP has no type for gains "
+        "memory rather than losing it."
+    )
+    strategies = (
+        Strategy(
+            id="nearest_predefined",
+            title="Nearest predefined machine type",
+            effect=(
+                "same vCPU count, the smallest predefined type with at least the source's "
+                "memory, chosen from the first instance type"
+            ),
+            risk="low",
+        ),
+        Strategy(
+            id="custom_machine_type",
+            title="Custom machine type",
+            effect="exact vCPU and memory, at a higher per-unit price",
+            risk="medium",
+        ),
+        Strategy(
+            id="manual",
+            title="Handle manually",
+            effect="this node pool is not generated",
+            risk="low",
+            manual=True,
+        ),
+    )
+    default = "nearest_predefined"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        diffs = []
+        for pool in _pools(ir):
+            primary = pool.instance_types[0] if pool.instance_types else ""
+            chosen = nearest_predefined(pool.vcpus, pool.memory_mib, primary)
+            diffs.append(
+                self.difference(
+                    [pool.id],
+                    instance_types=pool.instance_types,
+                    vcpus=pool.vcpus,
+                    memory_mib=pool.memory_mib,
+                    machine_type=chosen.name if chosen else None,
+                    memory_delta_mib=(
+                        chosen.memory_mib - pool.memory_mib if chosen and pool.memory_mib else None
+                    ),
+                )
+            )
+        return diffs
+
+    def allowed_strategies(self, diff: Difference) -> tuple[Strategy, ...]:
+        if diff.context.get("machine_type") is None:
+            return (self.strategy("manual"),)
+        return self.strategies
+
+    def default_strategy(self, diff: Difference) -> str:
+        return "manual" if diff.context.get("machine_type") is None else self.default
+
+    def risk_for(self, diff: Difference, strategy_id: str) -> Risk:
+        if strategy_id != "nearest_predefined":
+            return self.strategy(strategy_id).risk
+        if len(diff.context.get("instance_types") or []) > 1:
+            return "medium"
+        source, delta = diff.context.get("memory_mib"), diff.context.get("memory_delta_mib")
+        if not source or delta is None:
+            return "medium"
+        return "medium" if delta / source >= _MEMORY_DELTA_MEDIUM else "low"
+
+    def apply(self, ir, diff, strategy_id, params=None) -> IRDocument:
+        doc, pool = _subject(ir, diff)
+        if pool is None:
+            return doc
+        if strategy_id == "manual":
+            return _replace_object(
+                doc, pool.model_copy(update={"excluded": f"{self.id}: handled manually"})
+            )
+        if strategy_id == "custom_machine_type":
+            if pool.vcpus is None or pool.memory_mib is None:
+                raise ValueError("custom_machine_type needs vCPU and memory")
+            return _replace_object(
+                doc, _set_hint(pool, "machine_type", f"custom-{pool.vcpus}-{pool.memory_mib}")
+            )
+        if strategy_id != "nearest_predefined" or diff.context.get("machine_type") is None:
+            raise ValueError(f"strategy {strategy_id!r} is not offered for {pool.id}")
+        return _replace_object(doc, _set_hint(pool, "machine_type", diff.context["machine_type"]))
+
+
+class K8sNodeImage(DifferenceRule):
+    id = "K8S-NODE-IMAGE"
+    family = "kubernetes"
+    title = "EKS node AMIs become GKE node images"
+    impact = (
+        "EKS optimized AMIs (Amazon Linux, Bottlerocket) have no GKE counterpart; GKE nodes run "
+        "Container-Optimized OS or Ubuntu. A custom AMI, and anything its bootstrap script "
+        "configured, does not carry."
+    )
+    strategies = (
+        Strategy(
+            id="cos",
+            title="Container-Optimized OS",
+            effect="nodes run COS with containerd, GKE's default and most locked-down image",
+            risk="low",
+        ),
+        Strategy(
+            id="ubuntu",
+            title="Ubuntu",
+            effect="nodes run Ubuntu with containerd, for workloads that need a general distro",
+            risk="low",
+        ),
+        Strategy(
+            id="windows",
+            title="Windows Server LTSC",
+            effect="nodes run Windows Server with containerd; the cluster still needs a Linux pool",
+            risk="medium",
+        ),
+    )
+    default = "cos"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [
+            self.difference(
+                [p.id],
+                ami_type=p.ami_type,
+                windows=p.ami_type.upper().startswith("WINDOWS"),
+                custom=p.ami_type.upper() == "CUSTOM",
+            )
+            for p in _pools(ir)
+        ]
+
+    def allowed_strategies(self, diff: Difference) -> tuple[Strategy, ...]:
+        if diff.context.get("windows"):
+            return (self.strategy("windows"),)
+        return tuple(s for s in self.strategies if s.id != "windows")
+
+    def default_strategy(self, diff: Difference) -> str:
+        return "windows" if diff.context.get("windows") else self.default
+
+    def risk_for(self, diff: Difference, strategy_id: str) -> Risk:
+        if diff.context.get("custom"):
+            return "medium"
+        return self.strategy(strategy_id).risk
+
+    def apply(self, ir, diff, strategy_id, params=None) -> IRDocument:
+        doc, pool = _subject(ir, diff)
+        if pool is None:
+            return doc
+        image = {"cos": LINUX_IMAGE, "ubuntu": UBUNTU_IMAGE, "windows": WINDOWS_IMAGE}.get(
+            strategy_id
+        )
+        if image is None or strategy_id not in {s.id for s in self.allowed_strategies(diff)}:
+            raise ValueError(f"strategy {strategy_id!r} is not offered for {pool.id}")
+        return _replace_object(doc, _set_hint(pool, "image_type", image))
+
+
+class K8sNodeScaling(DifferenceRule):
+    id = "K8S-NODE-SCALING"
+    family = "kubernetes"
+    title = "Node counts are per zone in GKE, and its autoscaler is built in"
+    impact = (
+        "An EKS node group's sizes are totals, and it scales only if cluster-autoscaler or "
+        "Karpenter is installed. A regional GKE node pool counts nodes per zone and has the "
+        "cluster autoscaler built in, so the same bounds can behave differently."
+    )
+    strategies = (
+        Strategy(
+            id="autoscale_totals",
+            title="Autoscale within the same totals",
+            effect=(
+                "GKE's autoscaler keeps the pool between the source minimum and maximum in "
+                "total; it is on even if nothing scaled the node group on EKS"
+            ),
+            risk="medium",
+        ),
+        Strategy(
+            id="fixed_size",
+            title="Fixed size",
+            effect="each zone runs a fixed number of nodes; nothing scales",
+            risk="low",
+        ),
+    )
+    default = "autoscale_totals"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        letters = node_zone_letters(ir)
+        diffs = []
+        for pool in _pools(ir):
+            zones = _pool_zones(ir, pool)
+            per_zone = math.ceil(pool.desired_size / len(zones)) if zones else pool.desired_size
+            diffs.append(
+                self.difference(
+                    [pool.id],
+                    zones=zones,
+                    zone_letters=sorted({letters[z] for z in zones if z in letters}),
+                    min_size=pool.min_size,
+                    max_size=pool.max_size,
+                    desired_size=pool.desired_size,
+                    per_zone=per_zone,
+                    # A regional pool runs at least `per_zone` nodes in every zone.
+                    resulting_total=per_zone * max(len(zones), 1),
+                )
+            )
+        return diffs
+
+    def allowed_strategies(self, diff: Difference) -> tuple[Strategy, ...]:
+        if diff.context["min_size"] == diff.context["max_size"]:
+            return (self.strategy("fixed_size"),)
+        return self.strategies
+
+    def default_strategy(self, diff: Difference) -> str:
+        if diff.context["min_size"] == diff.context["max_size"]:
+            return "fixed_size"
+        return self.default
+
+    def apply(self, ir, diff, strategy_id, params=None) -> IRDocument:
+        doc, pool = _subject(ir, diff)
+        if pool is None:
+            return doc
+        if strategy_id not in {s.id for s in self.allowed_strategies(diff)}:
+            raise ValueError(f"strategy {strategy_id!r} is not offered for {pool.id}")
+        # Recomputed: a pool excluded by an earlier decision takes no zone.
+        letters = node_zone_letters(doc)
+        zone_letters = sorted({letters[z] for z in diff.context["zones"] if z in letters})
+        updated = _set_hint(pool, "zone_letters", zone_letters)
+        if strategy_id == "fixed_size":
+            updated = _set_hint(updated, "node_count_per_zone", diff.context["per_zone"])
+        else:
+            updated = _set_hint(
+                updated,
+                "autoscaling",
+                {
+                    "total_min": pool.min_size,
+                    "total_max": pool.max_size,
+                    "initial_per_zone": diff.context["per_zone"],
+                },
+            )
+        return _replace_object(doc, updated)
+
+
+class K8sNodeSpot(DifferenceRule):
+    id = "K8S-NODE-SPOT"
+    family = "kubernetes"
+    title = "Spot node groups become Spot node pools, preempted differently"
+    impact = (
+        "AWS gives Spot nodes a two-minute interruption notice; GKE Spot nodes get about thirty "
+        "seconds. Handlers tuned for AWS may not finish draining."
+    )
+    strategies = (
+        Strategy(id="spot", title="Spot node pool", effect="nodes are GKE Spot VMs", risk="medium"),
+        Strategy(
+            id="standard",
+            title="Standard node pool",
+            effect="nodes cost more and are never preempted",
+            risk="low",
+        ),
+    )
+    default = "spot"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [self.difference([p.id]) for p in _pools(ir) if p.capacity == "spot"]
+
+    def apply(self, ir, diff, strategy_id, params=None) -> IRDocument:
+        doc, pool = _subject(ir, diff)
+        if pool is None:
+            return doc
+        if strategy_id == "standard":
+            return doc
+        if strategy_id != "spot":
+            raise ValueError(f"unknown strategy {strategy_id!r}")
+        return _replace_object(doc, _set_hint(pool, "spot", True))
+
+
+class K8sSelfManagedNodes(DifferenceRule):
+    id = "K8S-SELF-MANAGED-NODES"
+    family = "kubernetes"
+    title = "A self-managed node group becomes a node pool, without its bootstrap"
+    impact = (
+        "A self-managed node group joins the cluster through its own AMI and bootstrap script, "
+        "which often set node labels and taints with --kubelet-extra-args. EasyMigrate reads "
+        "none of that: the node pool gets the launch template's shape and nothing else, so "
+        "workloads selecting those labels will not schedule until they are added."
+    )
+    strategies = (
+        Strategy(
+            id="node_pool",
+            title="Create a node pool",
+            effect=(
+                "a GKE-managed node pool with the launch template's machine shape; custom AMI, "
+                "bootstrap script and kubelet labels or taints are not carried"
+            ),
+            risk="high",
+        ),
+        Strategy(
+            id="omit",
+            title="Do not create it",
+            effect="the capacity is reported and not created",
+            risk="medium",
+        ),
+    )
+    default = "node_pool"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [self.difference([p.id]) for p in _pools(ir) if p.origin == "self_managed"]
+
+    def apply(self, ir, diff, strategy_id, params=None) -> IRDocument:
+        doc, pool = _subject(ir, diff)
+        if pool is None:
+            return doc
+        if strategy_id == "omit":
+            return _replace_object(doc, pool.model_copy(update={"excluded": f"{self.id}: omitted"}))
+        if strategy_id != "node_pool":
+            raise ValueError(f"unknown strategy {strategy_id!r}")
+        return doc
+
+
+class K8sSshKey(_AcknowledgeOnly, DifferenceRule):
+    id = "K8S-SSH-KEY"
+    family = "kubernetes"
+    title = "Node SSH keys do not carry"
+    impact = "GKE nodes are reached with `gcloud compute ssh` and OS Login, not an EC2 key pair."
+    strategies = (
+        Strategy(
+            id="note_only",
+            title="Understood",
+            effect="the key pair is not installed; use gcloud compute ssh to reach a node",
+            risk="low",
+        ),
+    )
+    default = "note_only"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        return [self.difference([p.id], ssh_key=p.ssh_key) for p in _pools(ir) if p.ssh_key]

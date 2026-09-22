@@ -1,0 +1,9 @@
+{
+  "prod": [
+    {
+      "namespace": "app",
+      "roleArn": "arn:aws:iam::123456789012:role/api",
+      "serviceAccount": "api"
+    }
+  ]
+}

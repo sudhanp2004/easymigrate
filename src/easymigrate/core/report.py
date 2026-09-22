@@ -21,6 +21,7 @@ from easymigrate.differences.model import DifferenceRule
 from easymigrate.ir.base import Finding, IRDocument
 from easymigrate.ir.compute import ComputeInstance, Disk
 from easymigrate.ir.database import DatabaseInstance
+from easymigrate.ir.kubernetes import KubernetesCluster, NodePool
 from easymigrate.ir.network import FirewallPolicy
 
 _SECTION_ORDER = [
@@ -95,6 +96,30 @@ class ComputeRow:
 
 
 @dataclass(frozen=True)
+class KubernetesRow:
+    """What `plan` decided for one GKE cluster, in the user's terms (spec 5 §7)."""
+
+    id: str
+    version: str
+    endpoint: str
+    ranges: str
+    node_pools: list[str]
+    iam_bindings: list[str]
+    access_entries: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "version": self.version,
+            "endpoint": self.endpoint,
+            "ranges": self.ranges,
+            "node_pools": list(self.node_pools),
+            "iam_bindings": list(self.iam_bindings),
+            "access_entries": list(self.access_entries),
+        }
+
+
+@dataclass(frozen=True)
 class PlanSummaryView:
     add: int
     change: int
@@ -132,6 +157,7 @@ class Report:
     info: list[Finding] = field(default_factory=list)
     databases: list[DatabaseRow] = field(default_factory=list)
     compute: list[ComputeRow] = field(default_factory=list)
+    kubernetes: list[KubernetesRow] = field(default_factory=list)
     plan: PlanSummaryView | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -150,6 +176,7 @@ class Report:
             "info": [f.model_dump(mode="json") for f in self.info],
             "databases": [d.to_dict() for d in self.databases],
             "compute": [c.to_dict() for c in self.compute],
+            "kubernetes": [k.to_dict() for k in self.kubernetes],
             "plan": self.plan.to_dict() if self.plan else None,
         }
 
@@ -260,6 +287,33 @@ class Report:
             lines.append(
                 "No disk contents, installed software or running workload were migrated. Every "
                 "instance boots as a blank machine of the right shape on the right network."
+            )
+            lines.append("")
+
+        if self.kubernetes:
+            lines.append("## Kubernetes")
+            for cluster in self.kubernetes:
+                lines.append(f"### {cluster.id}")
+                lines.append(f"- Version: {cluster.version}")
+                lines.append(f"- API endpoint: {cluster.endpoint}")
+                lines.append(f"- Pod and service ranges: {cluster.ranges}")
+                for pool in cluster.node_pools:
+                    lines.append(f"- Node pool {pool}")
+                if cluster.iam_bindings:
+                    lines.append(
+                        "- IAM for pods to recreate as Workload Identity bindings: "
+                        + ", ".join(cluster.iam_bindings)
+                    )
+                if cluster.access_entries:
+                    lines.append(
+                        "- Access to re-grant (was an EKS access entry): "
+                        + ", ".join(cluster.access_entries)
+                    )
+            lines.append("")
+            lines.append(
+                "Every cluster is created empty. No workloads, manifests, secrets, custom "
+                "resources, Helm releases or persistent volumes were read or migrated; redeploy "
+                "them from their source of truth."
             )
             lines.append("")
 
@@ -481,6 +535,85 @@ def _compute_rows(resolved: IRDocument | None) -> list[ComputeRow]:
     return rows
 
 
+def _kubernetes_rows(resolved: IRDocument | None) -> list[KubernetesRow]:
+    if resolved is None:
+        return []
+    rows: list[KubernetesRow] = []
+    pools = sorted(resolved.of_kind(NodePool), key=lambda p: p.id)
+    for cluster in sorted(resolved.of_kind(KubernetesCluster), key=lambda c: c.id):
+        if cluster.excluded is not None:
+            continue
+        hints = cluster.target_hints
+        if hints.get("release_channel") == "REGULAR":
+            version = "GKE Regular release channel (auto-upgrading)"
+        else:
+            version = f"{hints.get('version', cluster.version)}, pinned (EKS ran {cluster.version})"
+        endpoint_hint = hints.get("endpoint") or {}
+        if endpoint_hint.get("private_endpoint"):
+            endpoint = "private, reachable only from inside the VPC"
+        elif endpoint_hint.get("authorized_networks") is None:
+            endpoint = "public and open to every address, as it was on EKS"
+        else:
+            endpoint = "public, limited to " + ", ".join(endpoint_hint["authorized_networks"])
+        subnet_ranges = {}
+        if hints.get("subnet"):
+            subnet = next((o for o in resolved.objects if o.id == hints["subnet"]), None)
+            if subnet is not None:
+                subnet_ranges = {
+                    e["name"]: e["cidr"] for e in subnet.target_hints.get("secondary_ranges", [])
+                }
+        ranges = (
+            f"pods {subnet_ranges.get(hints.get('pods_range'), '?')}, services "
+            f"{subnet_ranges.get(hints.get('services_range'), '?')} on {hints.get('subnet', '?')}"
+        )
+        pool_lines = []
+        for pool in pools:
+            if pool.cluster != cluster.id:
+                continue
+            if pool.excluded is not None:
+                pool_lines.append(f"{pool.id}: not created ({pool.excluded})")
+                continue
+            ph = pool.target_hints
+            scaling = ph.get("autoscaling")
+            zones = len(ph.get("zone_letters") or [])
+            if scaling:
+                size = (
+                    f"autoscaling {scaling['total_min']}–{scaling['total_max']} nodes in total, "
+                    f"starting at {scaling['initial_per_zone']} per zone across {zones} zones"
+                )
+            else:
+                size = f"{ph.get('node_count_per_zone', '?')} per zone across {zones} zones"
+            carried = (
+                "; custom AMI and bootstrap not carried" if pool.origin == "self_managed" else ""
+            )
+            pool_lines.append(
+                f"{pool.id}: {ph.get('machine_type', '?')} on {ph.get('image_type', '?')}, "
+                f"{size}{carried}"
+            )
+        if hints.get("default_pool"):
+            spec = hints["default_pool"]
+            pool_lines.append(
+                f"added for Fargate pods: {spec['machine_type']}, {spec['nodes_per_zone']} per zone"
+            )
+        rows.append(
+            KubernetesRow(
+                id=cluster.id,
+                version=version,
+                endpoint=endpoint,
+                ranges=ranges,
+                node_pools=pool_lines,
+                iam_bindings=[f"{p.namespace}/{p.service_account}" for p in cluster.pod_identities]
+                or (
+                    ["IRSA service accounts (OIDC provider was enabled)"]
+                    if cluster.oidc_issuer
+                    else []
+                ),
+                access_entries=list(cluster.access_entries),
+            )
+        )
+    return rows
+
+
 def build_report(project: Project) -> Report:
     config = project.load_config() if project.config_path.exists() else None
     source = config.source.cloud if config and config.source else None
@@ -492,6 +625,7 @@ def build_report(project: Project) -> Report:
     resolved = _load_resolved_ir(project)
     databases = _database_rows(resolved)
     compute = _compute_rows(resolved)
+    kubernetes = _kubernetes_rows(resolved)
     superseded = _load_superseded(project)
 
     rules_by_id: dict[str, DifferenceRule] = {rule.id: rule for rule in catalogue()}
@@ -591,6 +725,7 @@ def build_report(project: Project) -> Report:
         info=info,
         databases=databases,
         compute=compute,
+        kubernetes=kubernetes,
         plan=plan_summary,
     )
 

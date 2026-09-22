@@ -1,0 +1,20 @@
+{
+  "prod": [
+    {
+      "addonName": "coredns",
+      "addonVersion": "v1"
+    },
+    {
+      "addonName": "kube-proxy",
+      "addonVersion": "v1"
+    },
+    {
+      "addonName": "vpc-cni",
+      "addonVersion": "v1"
+    },
+    {
+      "addonName": "aws-ebs-csi-driver",
+      "addonVersion": "v1"
+    }
+  ]
+}

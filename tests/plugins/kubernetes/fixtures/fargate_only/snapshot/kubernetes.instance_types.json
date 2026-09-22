@@ -1,0 +1,22 @@
+{
+  "InstanceTypes": [
+    {
+      "InstanceType": "m5.large",
+      "MemoryInfo": {
+        "SizeInMiB": 8192
+      },
+      "VCpuInfo": {
+        "DefaultVCpus": 2
+      }
+    },
+    {
+      "InstanceType": "c5.xlarge",
+      "MemoryInfo": {
+        "SizeInMiB": 8192
+      },
+      "VCpuInfo": {
+        "DefaultVCpus": 4
+      }
+    }
+  ]
+}

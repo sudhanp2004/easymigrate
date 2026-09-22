@@ -111,3 +111,81 @@ def test_subnet_renders_the_secondary_ranges_a_cluster_chose():
     block = out.split('resource "google_compute_subnetwork" "private_1"')[1].split("resource")[0]
     assert block.index("prod-pods") < block.index("prod-services")
     assert 'ip_cidr_range = "100.64.0.0/16"' in block
+
+
+# ---- node pools ------------------------------------------------------------------
+
+from easymigrate.ir.kubernetes import NodePool, Taint  # noqa: E402
+
+POOL_HINTS = {
+    "machine_type": "n2-standard-2",
+    "image_type": "COS_CONTAINERD",
+    "zone_letters": ["a", "b"],
+    "autoscaling": {"total_min": 1, "total_max": 4, "initial_per_zone": 2},
+}
+
+
+def _pool(**hints):
+    return NodePool(
+        id="node_pool:workers",
+        name="workers",
+        source=SourceRef(cloud="aws", type="eks-nodegroup", id="prod/workers", region="x"),
+        cluster="kubernetes_cluster:prod",
+        origin="managed",
+        min_size=1,
+        max_size=4,
+        desired_size=3,
+        ami_type="AL2_x86_64",
+        disk_size_gib=8,
+        node_labels={"role": "general"},
+        taints=[Taint(key="dedicated", value="gpu", effect="NO_SCHEDULE")],
+        firewall_policies=["firewall_policy:cluster-sg"],
+        max_unavailable=1,
+        target_hints={**POOL_HINTS, **hints},
+    )
+
+
+def test_node_pool_renders_zones_autoscaling_and_node_config():
+    from easymigrate.plugins.network.generate_gcp import policy_network_tags
+
+    out = _render(_cluster(), _pool())
+    assert 'resource "google_container_node_pool" "workers"' in out
+    assert "cluster            = google_container_cluster.prod.id" in out
+    assert 'node_locations     = ["${var.region}-a", "${var.region}-b"]' in out
+    assert "total_max_node_count = 4" in out
+    assert 'location_policy      = "BALANCED"' in out
+    assert "auto_upgrade = false" in out
+    assert "disk_size_gb = 10" in out  # raised to GKE's minimum
+    assert 'effect = "NO_SCHEDULE"' in out
+    policy = next(o for o in network_objects() if o.id == "firewall_policy:cluster-sg")
+    assert policy_network_tags([policy])[0][policy.id] in out
+
+
+def test_fixed_size_pool_renders_node_count():
+    pool = _pool(autoscaling=None, node_count_per_zone=1)
+    hints = {k: v for k, v in pool.target_hints.items() if v is not None}
+    out = _render(_cluster(), pool.model_copy(update={"target_hints": hints}))
+    assert "node_count     = 1" in out
+    assert "autoscaling" not in out
+
+
+def test_spot_pool_renders_spot():
+    assert "spot         = true" in _render(_cluster(), _pool(spot=True))
+
+
+def test_fargate_default_pool_renders_for_a_cluster_with_no_node_groups():
+    cluster = _cluster(default_pool={"machine_type": "e2-standard-4", "nodes_per_zone": 1})
+    out = _render(cluster)
+    assert 'resource "google_container_node_pool" "prod_fargate"' in out
+    assert 'machine_type = "e2-standard-4"' in out
+
+
+def test_pool_whose_cluster_is_excluded_is_a_generation_error():
+    cluster = _cluster().model_copy(update={"excluded": "manual"})
+    with pytest.raises(GenerationError, match="cannot exist without its cluster"):
+        _render(cluster, _pool())
+
+
+def test_pool_without_zones_is_a_generation_error():
+    with pytest.raises(GenerationError, match="no zones"):
+        _render(_cluster(), _pool(zone_letters=[]))

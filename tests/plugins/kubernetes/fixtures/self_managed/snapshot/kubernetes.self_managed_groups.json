@@ -1,0 +1,21 @@
+{
+  "AutoScalingGroups": [
+    {
+      "AutoScalingGroupName": "legacy-nodes",
+      "DesiredCapacity": 1,
+      "LaunchTemplate": {
+        "LaunchTemplateId": "lt-nodes",
+        "Version": "3"
+      },
+      "MaxSize": 3,
+      "MinSize": 1,
+      "Tags": [
+        {
+          "Key": "kubernetes.io/cluster/prod",
+          "Value": "owned"
+        }
+      ],
+      "VPCZoneIdentifier": "subnet-a,subnet-b"
+    }
+  ]
+}

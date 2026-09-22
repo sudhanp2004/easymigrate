@@ -647,3 +647,58 @@ Params:
 
 - `machine_type`: machine type of the default node pool, e.g. e2-standard-4
 - `nodes_per_zone`: nodes per zone in the default node pool
+
+### A self-managed node group becomes a node pool, without its bootstrap (`K8S-SELF-MANAGED-NODES`)
+
+A self-managed node group joins the cluster through its own AMI and bootstrap script, which often set node labels and taints with --kubelet-extra-args. EasyMigrate reads none of that: the node pool gets the launch template's shape and nothing else, so workloads selecting those labels will not schedule until they are added.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `node_pool` | Create a node pool | a GKE-managed node pool with the launch template's machine shape; custom AMI, bootstrap script and kubelet labels or taints are not carried | high |  | yes |
+| `omit` | Do not create it | the capacity is reported and not created | medium |  |  |
+
+### A node group's instance type becomes one GKE machine type (`K8S-NODE-MACHINE-TYPE`)
+
+GKE node pools use one machine type, from fixed memory-per-vCPU ratios. A node group listing several instance types loses the others, and a ratio GCP has no type for gains memory rather than losing it.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `nearest_predefined` | Nearest predefined machine type | same vCPU count, the smallest predefined type with at least the source's memory, chosen from the first instance type | low |  | yes |
+| `custom_machine_type` | Custom machine type | exact vCPU and memory, at a higher per-unit price | medium |  |  |
+| `manual` | Handle manually | this node pool is not generated | low | yes |  |
+
+### EKS node AMIs become GKE node images (`K8S-NODE-IMAGE`)
+
+EKS optimized AMIs (Amazon Linux, Bottlerocket) have no GKE counterpart; GKE nodes run Container-Optimized OS or Ubuntu. A custom AMI, and anything its bootstrap script configured, does not carry.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `cos` | Container-Optimized OS | nodes run COS with containerd, GKE's default and most locked-down image | low |  | yes |
+| `ubuntu` | Ubuntu | nodes run Ubuntu with containerd, for workloads that need a general distro | low |  |  |
+| `windows` | Windows Server LTSC | nodes run Windows Server with containerd; the cluster still needs a Linux pool | medium |  |  |
+
+### Spot node groups become Spot node pools, preempted differently (`K8S-NODE-SPOT`)
+
+AWS gives Spot nodes a two-minute interruption notice; GKE Spot nodes get about thirty seconds. Handlers tuned for AWS may not finish draining.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `spot` | Spot node pool | nodes are GKE Spot VMs | medium |  | yes |
+| `standard` | Standard node pool | nodes cost more and are never preempted | low |  |  |
+
+### Node counts are per zone in GKE, and its autoscaler is built in (`K8S-NODE-SCALING`)
+
+An EKS node group's sizes are totals, and it scales only if cluster-autoscaler or Karpenter is installed. A regional GKE node pool counts nodes per zone and has the cluster autoscaler built in, so the same bounds can behave differently.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `autoscale_totals` | Autoscale within the same totals | GKE's autoscaler keeps the pool between the source minimum and maximum in total; it is on even if nothing scaled the node group on EKS | medium |  | yes |
+| `fixed_size` | Fixed size | each zone runs a fixed number of nodes; nothing scales | low |  |  |
+
+### Node SSH keys do not carry (`K8S-SSH-KEY`)
+
+GKE nodes are reached with `gcloud compute ssh` and OS Login, not an EC2 key pair.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `note_only` | Understood | the key pair is not installed; use gcloud compute ssh to reach a node | low |  | yes |
