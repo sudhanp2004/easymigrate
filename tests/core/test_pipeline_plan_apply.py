@@ -402,3 +402,54 @@ def test_a_gke_cluster_requires_the_kubernetes_engine_api():
     assert _required_gcp_services(doc) == {"container.googleapis.com"}
     excluded = cluster.model_copy(update={"excluded": "manual"})
     assert _required_gcp_services(IRDocument(source={"cloud": "aws"}, objects=[excluded])) == set()
+
+
+def test_cloud_armor_quota_shortfall_stops_plan_with_a_way_out():
+    """Live run, 2026-09-22: the test project's SECURITY_POLICIES limit was 0."""
+    import pytest
+
+    from easymigrate.core.errors import EasyMigrateError
+    from easymigrate.core.pipeline import _check_security_policy_quota
+    from easymigrate.ir.base import IRDocument, SourceRef
+    from easymigrate.ir.loadbalancing import LoadBalancer
+
+    lb = LoadBalancer(
+        id="load_balancer:web",
+        name="web",
+        source=SourceRef(cloud="aws", type="load-balancer", id="arn", region="ap-south-1"),
+        lb_type="application",
+        scheme="internet-facing",
+        target_hints={"allowlist": ["203.0.113.0/24"]},
+    )
+    doc = IRDocument(source={"cloud": "aws"}, objects=[lb])
+
+    class Gcp:
+        def __init__(self, headroom):
+            self.headroom = headroom
+
+        def quota_headroom(self, project, metric):
+            assert metric == "SECURITY_POLICIES"
+            return self.headroom
+
+    with pytest.raises(EasyMigrateError, match="choose LB-SOURCE-RESTRICTION 'open'"):
+        _check_security_policy_quota(doc, Gcp(0), "p")
+    _check_security_policy_quota(doc, Gcp(3), "p")
+    _check_security_policy_quota(doc, Gcp(None), "p")  # unknown quota never blocks
+
+
+def test_quota_headroom_reads_compute_project_quotas():
+    from easymigrate.providers.gcp.services import quota_headroom
+
+    class Response:
+        status_code = 200
+
+        def json(self):
+            return {"quotas": [{"metric": "SECURITY_POLICIES", "limit": 2.0, "usage": 1.0}]}
+
+    class Session:
+        def get(self, url):
+            assert url.endswith("/projects/p")
+            return Response()
+
+    assert quota_headroom("p", "SECURITY_POLICIES", session=Session()) == 1
+    assert quota_headroom("p", "MISSING", session=Session()) is None

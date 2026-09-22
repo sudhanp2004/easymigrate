@@ -74,6 +74,10 @@ class GcpTarget(Protocol):
         not block a user whose APIs are already on)."""
         ...
 
+    def quota_headroom(self, gcp_project: str, metric: str) -> int | None:
+        """How many more of a Compute Engine quota `gcp_project` can use, or None if unknown."""
+        ...
+
 
 class _GcpTarget:
     def credentials_ok(self) -> bool:
@@ -90,6 +94,9 @@ class _GcpTarget:
         except gcp_services.ServiceUsageCheckFailed:
             return None
         return required - enabled
+
+    def quota_headroom(self, gcp_project: str, metric: str) -> int | None:
+        return gcp_services.quota_headroom(gcp_project, metric)
 
 
 def gcp_target() -> GcpTarget:

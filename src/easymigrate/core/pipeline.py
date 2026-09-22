@@ -43,6 +43,7 @@ from easymigrate.differences.model import (
 from easymigrate.ir.base import Finding, IntentObject, IRDocument
 from easymigrate.ir.database import DatabaseInstance
 from easymigrate.ir.kubernetes import KubernetesCluster
+from easymigrate.ir.loadbalancing import LoadBalancer
 
 _SAMPLE_ARNS = 3
 _STATE_BUCKET_SUFFIX = "-easymigrate-tfstate"
@@ -499,6 +500,27 @@ def _required_gcp_services(document: IRDocument) -> set[str]:
     return services
 
 
+def _check_security_policy_quota(document: IRDocument, gcp: Any, gcp_project: str) -> None:
+    """Cloud Armor allow-lists (LB-SOURCE-RESTRICTION) need security-policy quota, which new
+    projects often have none of; failing here beats failing half-way through apply."""
+    needed = sum(
+        1
+        for lb in document.of_kind(LoadBalancer)
+        if lb.excluded is None and lb.target_hints.get("allowlist")
+    )
+    check = getattr(gcp, "quota_headroom", None)
+    if not needed or check is None:
+        return
+    headroom = check(gcp_project, "SECURITY_POLICIES")
+    if headroom is not None and headroom < needed:
+        raise EasyMigrateError(
+            f"{needed} Cloud Armor security polic{'y' if needed == 1 else 'ies'} needed for "
+            f"LB-SOURCE-RESTRICTION, but {gcp_project} can create {max(headroom, 0)} more.\n"
+            "Request SECURITY_POLICIES quota, or choose LB-SOURCE-RESTRICTION 'open' for those "
+            "load balancers."
+        )
+
+
 def plan(
     project: Project,
     *,
@@ -575,6 +597,8 @@ def plan(
                 f"Run: gcloud services enable {' '.join(sorted(missing_services))} "
                 f"--project {gcp_project}"
             )
+
+    _check_security_policy_quota(resolved.document, gcp, gcp_project)
 
     # Passwords (spec §2.2, plan 4): resolved before anything touches GCP or OpenTofu,
     # so a missing/invalid password fails fast without creating a state bucket.
