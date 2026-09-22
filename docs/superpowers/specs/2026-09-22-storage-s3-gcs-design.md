@@ -145,3 +145,26 @@ provider-schema validation; a live run.
 2. The fifteen `S3-*` rules and `gcs_facts.py`.
 3. Generation, report section, goldens, provider-schema tests.
 4. Testbed buckets and live run.
+
+## 11. Live run, 2026-09-22
+
+Testbed: three S3 buckets in ap-south-1 — a public-policy website bucket with CORS (restricted
+request headers) logging to a second bucket, and an Object Lock bucket (versioning, Governance
+1-day retention, a lifecycle rule with IA transition / expiry / noncurrent expiry / multipart abort,
+Intelligent-Tiering) → `project-948483d7-7387-4636-818`, `asia-south1`. `plan`: 11 to add; `apply`
+succeeded first time.
+
+Proven: all three buckets created with the S3 names, uniform access and public access prevention
+enforced; an object uploaded to the formerly public bucket returns **403 to an anonymous reader**
+(D3 holds); CORS, website pages, usage logging to the migrated logs bucket, labels, the retention
+policy and four lifecycle actions all present; a second `plan` showed no changes; teardown clean.
+
+Findings:
+1. **The draft assumed a retention policy and Object Versioning are mutually exclusive on Cloud
+   Storage. A direct check disproved it** — both set on one bucket without error. `S3-OBJECT-LOCK`
+   no longer turns versioning off; re-applied live, the records bucket kept versioning and gained
+   the retention policy.
+2. The Autoclass / `SetStorageClass` conflict was **confirmed** (`HTTP 400: Autoclass cannot be
+   enabled on a bucket with SET_STORAGE_CLASS lifecycle rules`), so `S3-INTELLIGENT-TIERING` keeps
+   defaulting to `standard` when lifecycle rules move classes.
+3. No S3-ACLS difference fired: buckets created since 2023 are `BucketOwnerEnforced`, as expected.
