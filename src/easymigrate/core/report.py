@@ -677,7 +677,8 @@ def _storage_rows(resolved: IRDocument | None) -> list[StorageRow]:
         if bucket.lifecycle_rules:
             kept = len(hints.get("lifecycle", []))
             notes.append(
-                f"{kept} lifecycle action(s) generated from {len(bucket.lifecycle_rules)} S3 rule(s)"
+                f"{kept} lifecycle action(s) generated from "
+                f"{len(bucket.lifecycle_rules)} S3 rule(s)"
             )
         if hints.get("retention"):
             lock = "locked" if hints["retention"]["locked"] else "unlocked"
