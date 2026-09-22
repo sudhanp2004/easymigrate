@@ -683,3 +683,109 @@ resource "aws_s3_bucket_intelligent_tiering_configuration" "records" {
     days        = 90
   }
 }
+
+# --- Spec 7: load balancers in front of the app instance ------------------------------------
+# The ALB admits only the admin IP, so LB-SOURCE-RESTRICTION becomes a Cloud Armor allow-list.
+resource "aws_security_group" "alb" {
+  name        = "migration-test-alb-sg"
+  description = "ALB, admin only"
+  vpc_id      = aws_vpc.main.id
+
+  ingress {
+    from_port   = 80
+    to_port     = 80
+    protocol    = "tcp"
+    cidr_blocks = [var.admin_cidr]
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+
+resource "aws_security_group_rule" "app_http_from_alb" {
+  type                     = "ingress"
+  security_group_id        = aws_security_group.app.id
+  from_port                = 80
+  to_port                  = 80
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.alb.id
+}
+
+resource "aws_lb" "web" {
+  name               = "migration-test-alb"
+  load_balancer_type = "application"
+  subnets            = [aws_subnet.public_1.id, aws_subnet.public_2.id]
+  security_groups    = [aws_security_group.alb.id]
+}
+
+resource "aws_lb_target_group" "web" {
+  name     = "migration-test-web-tg"
+  port     = 80
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main.id
+  health_check {
+    path = "/"
+  }
+}
+
+resource "aws_lb_target_group_attachment" "web" {
+  target_group_arn = aws_lb_target_group.web.arn
+  target_id        = aws_instance.app.id
+}
+
+resource "aws_lb_listener" "web" {
+  load_balancer_arn = aws_lb.web.arn
+  port              = 80
+  protocol          = "HTTP"
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.web.arn
+  }
+}
+
+resource "aws_lb_listener_rule" "api" {
+  listener_arn = aws_lb_listener.web.arn
+  priority     = 10
+  condition {
+    path_pattern {
+      values = ["/api/*"]
+    }
+  }
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.web.arn
+  }
+}
+
+# NLB passthrough on SSH: logging in through it proves the passthrough path end to end.
+resource "aws_lb" "ssh" {
+  name               = "migration-test-nlb"
+  load_balancer_type = "network"
+  subnets            = [aws_subnet.public_1.id, aws_subnet.public_2.id]
+}
+
+resource "aws_lb_target_group" "ssh" {
+  name     = "migration-test-ssh-tg"
+  port     = 22
+  protocol = "TCP"
+  vpc_id   = aws_vpc.main.id
+}
+
+resource "aws_lb_target_group_attachment" "ssh" {
+  target_group_arn = aws_lb_target_group.ssh.arn
+  target_id        = aws_instance.app.id
+}
+
+resource "aws_lb_listener" "ssh" {
+  load_balancer_arn = aws_lb.ssh.arn
+  port              = 22
+  protocol          = "TCP"
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.ssh.arn
+  }
+}

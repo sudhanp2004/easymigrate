@@ -181,10 +181,12 @@ class LbBackends(DifferenceRule):
     family = "loadbalancing"
     title = "Target groups become backend services over instance groups"
     impact = (
-        "A target group registers instances; a backend service names instance groups. Standalone "
-        "instances join one unmanaged instance group per zone — GCP allows an instance in only one "
-        "load-balanced group — and each target group is a named port on it. Auto Scaling targets "
-        "use their managed instance group. Target types other than instance are not migrated."
+        "A target group registers instances; a backend service names groups of them. Behind an "
+        "Application Load Balancer, standalone instances become zonal network endpoint groups; "
+        "behind a Network Load Balancer, one unmanaged instance group per zone, because GCP "
+        "allows an instance in only one load-balanced instance group and one group cannot serve "
+        "both kinds. Auto Scaling targets use their managed instance group. Target types other "
+        "than instance are not migrated."
     )
     strategies = (
         Strategy(

@@ -35,7 +35,7 @@ Every IR field the loadbalancing generator could touch is declared here, so an I
 | `groups` | exact:the managed instance groups (LB-BACKENDS) |
 | `health_check` | decision:LB-HEALTH-CHECK |
 | `id` | metadata |
-| `instances` | exact:unmanaged instance groups per zone (LB-BACKENDS) |
+| `instances` | exact:zonal endpoint groups (Application LBs) or unmanaged instance groups per zone (Network LBs) (LB-BACKENDS) |
 | `kind` | metadata |
 | `labels` | metadata |
 | `name` | metadata |

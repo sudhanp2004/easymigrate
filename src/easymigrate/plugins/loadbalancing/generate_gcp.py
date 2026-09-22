@@ -63,7 +63,8 @@ FIELD_COVERAGE: dict[str, dict[str, str]] = {
         "health_check": "decision:LB-HEALTH-CHECK",
         "stickiness": "decision:LB-STICKINESS",
         "deregistration_delay": "exact:connection_draining_timeout_sec",
-        "instances": "exact:unmanaged instance groups per zone (LB-BACKENDS)",
+        "instances": "exact:zonal endpoint groups (Application LBs) or unmanaged instance groups "
+        "per zone (Network LBs) (LB-BACKENDS)",
         "groups": "exact:the managed instance groups (LB-BACKENDS)",
         "unresolved_targets": _RECORDED,
     },
@@ -114,8 +115,8 @@ class _Context:
     ctx: GenerateContext
     labels: TfLabelAllocator = field(default_factory=TfLabelAllocator)
     tgs: dict[str, TargetGroup] = field(default_factory=dict)
-    # target group id -> Terraform expressions of its backend instance groups
-    backends: dict[str, list[str]] = field(default_factory=dict)
+    # (target group id, "proxy" | "passthrough") -> Terraform refs of its backend groups
+    backends: dict[tuple[str, str], list[str]] = field(default_factory=dict)
     # target group id -> network tags of its backend instances
     tags: dict[str, list[str]] = field(default_factory=dict)
     network_labels: dict[str, str] = field(default_factory=dict)
@@ -137,7 +138,7 @@ def generate(resolved: IRDocument, ctx: GenerateContext) -> HclFile:
         network_labels=network_tf_labels(resolved),
         subnet_labels=subnet_tf_labels(resolved),
     )
-    _instance_groups(file, state, lbs)
+    _backends(file, state, lbs)
     for lb in lbs:
         shape = _require(lb, "shape")
         if shape == "global_external_alb":
@@ -161,9 +162,19 @@ def _used_target_groups(lb: LoadBalancer, tgs: dict[str, TargetGroup]) -> list[s
     return sorted(used)
 
 
-def _instance_groups(file: HclFile, state: _Context, lbs: list[LoadBalancer]) -> None:
-    """One unmanaged group per (network, zone) holding every targeted standalone instance: GCP
-    lets an instance belong to only one load-balanced group (spec 7 D5)."""
+_PROXY_SHAPES = {"global_external_alb", "regional_internal_alb"}
+# A rate target for endpoint-group backends: it steers balancing, it is not a hard cap.
+_MAX_RATE_PER_ENDPOINT = 10000
+
+
+def _backends(file: HclFile, state: _Context, lbs: list[LoadBalancer]) -> None:
+    """Backend groups for every used target group, per load-balancer family.
+
+    GCP allows an instance in only one load-balanced instance group, and one instance group cannot
+    serve a proxy load balancer and a passthrough one (their balancing modes differ; found by the
+    2026-09-22 live run). So standalone instances behind Application LBs become zonal network
+    endpoint groups, and behind Network LBs one unmanaged instance group per zone (spec 7 D5).
+    """
     resolved, ctx = state.resolved, state.ctx
     instance_labels = instance_tf_labels(resolved)
     group_refs = group_tf_refs(resolved)
@@ -174,14 +185,18 @@ def _instance_groups(file: HclFile, state: _Context, lbs: list[LoadBalancer]) ->
     policy_tags, _ = policy_network_tags(resolved.of_kind(FirewallPolicy))
     live_policies = {p.id for p in resolved.of_kind(FirewallPolicy) if p.excluded is None}
 
-    used = sorted({tg for lb in lbs for tg in _used_target_groups(lb, state.tgs)})
-    members: dict[tuple[str, str], set[str]] = {}
-    ports: dict[tuple[str, str], dict[str, int]] = {}
-    tg_zones: dict[str, set[tuple[str, str]]] = {}
-    for tg_id in used:
+    families: dict[str, set[str]] = {}
+    for lb in lbs:
+        family = "proxy" if lb.target_hints.get("shape") in _PROXY_SHAPES else "passthrough"
+        for tg_id in _used_target_groups(lb, state.tgs):
+            families.setdefault(tg_id, set()).add(family)
+
+    group_members: dict[tuple[str, str], set[str]] = {}
+    group_users: dict[tuple[str, str], set[str]] = {}
+    for tg_id in sorted(families):
         tg = state.tgs[tg_id]
-        named = tg.target_hints.get("named_port")
         tags: set[str] = set()
+        placed: list[tuple[ComputeInstance, str]] = []
         for instance_id in tg.instances:
             instance = instances.get(instance_id)
             if instance_id not in instance_labels or instance is None:
@@ -194,33 +209,49 @@ def _instance_groups(file: HclFile, state: _Context, lbs: list[LoadBalancer]) ->
             letter = instance.target_hints.get("zone_letter")
             if letter is None:
                 raise GenerationError(f"{instance_id} has no zone; VM-ZONE-MAPPING did not run")
-            suffix, _ = zone_suffix(ctx.region, letter)
-            key = (subnets[instance.subnet].network, suffix)
-            members.setdefault(key, set()).add(instance_id)
-            if named:
-                ports.setdefault(key, {})[named["name"]] = named["port"]
-            tg_zones.setdefault(tg_id, set()).add(key)
+            placed.append((instance, zone_suffix(ctx.region, letter)[0]))
             tags |= {policy_tags[p] for p in instance.firewall_policies if p in live_policies}
-        refs: list[str] = []
+
+        if "proxy" in families[tg_id]:
+            refs: list[str] = []
+            by_neg: dict[tuple[str, str], list[ComputeInstance]] = {}
+            for instance, suffix in placed:
+                by_neg.setdefault((suffix, instance.subnet), []).append(instance)
+            for (suffix, subnet_id), members in sorted(by_neg.items()):
+                refs.append(
+                    _endpoint_group(
+                        file, state, tg, suffix, subnet_id, members, instance_labels, subnets
+                    )
+                )
+            state.backends[(tg_id, "proxy")] = refs
+        if "passthrough" in families[tg_id]:
+            for instance, suffix in placed:
+                key = (subnets[instance.subnet].network, suffix)
+                group_members.setdefault(key, set()).add(instance.id)
+                group_users.setdefault(key, set()).add(tg_id)
+
         for group_id in tg.groups:
             if group_id not in group_refs:
                 continue
-            refs.append(group_refs[group_id])
+            if families[tg_id] == {"proxy", "passthrough"}:
+                raise GenerationError(
+                    f"{group_id} backs both an Application and a Network load balancer through "
+                    f"{tg_id}; a managed instance group cannot serve both balancing modes"
+                )
+            for family in families[tg_id]:
+                state.backends.setdefault((tg_id, family), []).append(group_refs[group_id])
             template = templates.get(groups[group_id].template)
             if template is not None:
                 tags |= {policy_tags[p] for p in template.firewall_policies if p in live_policies}
-        state.backends[tg_id] = refs
         state.tags[tg_id] = sorted(tags)
 
-    group_labels: dict[tuple[str, str], str] = {}
-    for key in sorted(members):
+    for key in sorted(group_members):
         network, suffix = key
         label = state.labels.allocate(
             "google_compute_instance_group", f"lb_{_slug(network)}_{suffix}"
         )
-        group_labels[key] = label
         block = file.block("resource", "google_compute_instance_group", label)
-        block.comment("migrated instances behind load balancers, one group per zone (LB-BACKENDS)")
+        block.comment("migrated instances behind Network Load Balancers, one group per zone")
         block.attr("name", _name("lb", _slug(network), suffix))
         block.attr("zone", Ref(f'"${{var.region}}-{suffix}"'))
         block.attr("network", Ref(f"google_compute_network.{state.network_labels[network]}.id"))
@@ -228,18 +259,55 @@ def _instance_groups(file: HclFile, state: _Context, lbs: list[LoadBalancer]) ->
             "instances",
             [
                 Ref(f"google_compute_instance.{instance_labels[i]}.self_link")
-                for i in sorted(members[key])
+                for i in sorted(group_members[key])
             ],
         )
-        for name, port in sorted(ports.get(key, {}).items()):
-            named = block.block("named_port")
-            named.attr("name", name)
-            named.attr("port", port)
-    for tg_id, keys in tg_zones.items():
-        state.backends[tg_id] = [
-            *(f"google_compute_instance_group.{group_labels[k]}.id" for k in sorted(keys)),
-            *state.backends.get(tg_id, []),
-        ]
+        for tg_id in sorted(group_users[key]):
+            state.backends.setdefault((tg_id, "passthrough"), []).insert(
+                0, f"google_compute_instance_group.{label}.id"
+            )
+
+
+def _endpoint_group(
+    file: HclFile,
+    state: _Context,
+    tg: TargetGroup,
+    suffix: str,
+    subnet_id: str,
+    members: list[ComputeInstance],
+    instance_labels: dict[str, str],
+    subnets: dict[str, Subnet],
+) -> str:
+    network = subnets[subnet_id].network
+    label = state.labels.allocate(
+        "google_compute_network_endpoint_group", f"{_slug(tg.id)}_{suffix}"
+    )
+    block = file.block("resource", "google_compute_network_endpoint_group", label)
+    block.comment(f"targets of {tg.name} in zone {suffix} (LB-BACKENDS)")
+    block.attr("name", _name(_slug(tg.id), suffix))
+    block.attr("zone", Ref(f'"${{var.region}}-{suffix}"'))
+    block.attr("network", Ref(f"google_compute_network.{state.network_labels[network]}.id"))
+    block.attr("subnetwork", Ref(f"google_compute_subnetwork.{state.subnet_labels[subnet_id]}.id"))
+    block.attr("network_endpoint_type", "GCE_VM_IP_PORT")
+    block.attr("default_port", tg.port or 80)
+    for instance in sorted(members, key=lambda i: i.id):
+        instance_ref = f"google_compute_instance.{instance_labels[instance.id]}"
+        endpoint = file.block(
+            "resource",
+            "google_compute_network_endpoint",
+            state.labels.allocate(
+                "google_compute_network_endpoint", f"{label}_{_slug(instance.id)}"
+            ),
+        )
+        endpoint.attr(
+            "network_endpoint_group",
+            Ref(f"google_compute_network_endpoint_group.{label}.name"),
+        )
+        endpoint.attr("zone", Ref(f'"${{var.region}}-{suffix}"'))
+        endpoint.attr("instance", Ref(f"{instance_ref}.name"))
+        endpoint.attr("port", tg.port or 80)
+        endpoint.attr("ip_address", Ref(f"{instance_ref}.network_interface[0].network_ip"))
+    return f"google_compute_network_endpoint_group.{label}.id"
 
 
 def _health_check(
@@ -315,7 +383,7 @@ def _backend_service(
         log = block.block("log_config")
         log.attr("enable", True)
         log.attr("sample_rate", 1.0)
-    backends = state.backends.get(tg.id, [])
+    backends = state.backends.get((tg.id, "passthrough" if passthrough else "proxy"), [])
     if not backends:
         state.ctx.info(
             "GEN-LB-NO-BACKENDS",
@@ -327,6 +395,10 @@ def _backend_service(
         backend.attr("group", Ref(ref))
         if passthrough:
             backend.attr("balancing_mode", "CONNECTION")
+        elif "network_endpoint_group" in ref:
+            backend.attr("balancing_mode", "RATE")
+            backend.attr("max_rate_per_endpoint", _MAX_RATE_PER_ENDPOINT)
+            backend.attr("capacity_scaler", 1.0)
         else:
             backend.attr("balancing_mode", "UTILIZATION")
             backend.attr("capacity_scaler", 1.0)
