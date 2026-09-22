@@ -1,0 +1,22 @@
+{
+  "Volumes": [
+    {
+      "Attachments": [
+        {
+          "InstanceId": "i-1"
+        }
+      ],
+      "AvailabilityZone": "ap-south-1a",
+      "Encrypted": false,
+      "Size": 20,
+      "Tags": [
+        {
+          "Key": "Name",
+          "Value": "web-root"
+        }
+      ],
+      "VolumeId": "vol-web-root",
+      "VolumeType": "gp3"
+    }
+  ]
+}

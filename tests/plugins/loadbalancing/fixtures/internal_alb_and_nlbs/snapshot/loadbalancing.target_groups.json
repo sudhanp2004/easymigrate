@@ -1,0 +1,107 @@
+[
+  {
+    "Attributes": [
+      {
+        "Key": "deregistration_delay.timeout_seconds",
+        "Value": "30"
+      }
+    ],
+    "Tags": [],
+    "TargetGroup": {
+      "HealthCheckIntervalSeconds": 10,
+      "HealthCheckPath": "/health",
+      "HealthCheckPort": "traffic-port",
+      "HealthCheckProtocol": "HTTP",
+      "HealthCheckTimeoutSeconds": 5,
+      "HealthyThresholdCount": 3,
+      "Matcher": {
+        "HttpCode": "200"
+      },
+      "Port": 80,
+      "Protocol": "HTTP",
+      "TargetGroupArn": "arn:aws:elasticloadbalancing:ap-south-1:123456789012:targetgroup/app-tg/1",
+      "TargetGroupName": "app-tg",
+      "TargetType": "instance",
+      "UnhealthyThresholdCount": 2,
+      "VpcId": "vpc-fixture"
+    },
+    "Targets": [
+      {
+        "Target": {
+          "Id": "i-web",
+          "Port": 80
+        }
+      }
+    ]
+  },
+  {
+    "Attributes": [
+      {
+        "Key": "deregistration_delay.timeout_seconds",
+        "Value": "30"
+      }
+    ],
+    "Tags": [],
+    "TargetGroup": {
+      "HealthCheckIntervalSeconds": 10,
+      "HealthCheckPath": null,
+      "HealthCheckPort": "traffic-port",
+      "HealthCheckProtocol": "TCP",
+      "HealthCheckTimeoutSeconds": 5,
+      "HealthyThresholdCount": 3,
+      "Matcher": {
+        "HttpCode": "200"
+      },
+      "Port": 22,
+      "Protocol": "TCP",
+      "TargetGroupArn": "arn:aws:elasticloadbalancing:ap-south-1:123456789012:targetgroup/ssh-tg/1",
+      "TargetGroupName": "ssh-tg",
+      "TargetType": "instance",
+      "UnhealthyThresholdCount": 2,
+      "VpcId": "vpc-fixture"
+    },
+    "Targets": [
+      {
+        "Target": {
+          "Id": "i-web",
+          "Port": 22
+        }
+      }
+    ]
+  },
+  {
+    "Attributes": [
+      {
+        "Key": "deregistration_delay.timeout_seconds",
+        "Value": "30"
+      }
+    ],
+    "Tags": [],
+    "TargetGroup": {
+      "HealthCheckIntervalSeconds": 10,
+      "HealthCheckPath": null,
+      "HealthCheckPort": "traffic-port",
+      "HealthCheckProtocol": "TCP",
+      "HealthCheckTimeoutSeconds": 5,
+      "HealthyThresholdCount": 3,
+      "Matcher": {
+        "HttpCode": "200"
+      },
+      "Port": 8443,
+      "Protocol": "TCP",
+      "TargetGroupArn": "arn:aws:elasticloadbalancing:ap-south-1:123456789012:targetgroup/tls-tg/1",
+      "TargetGroupName": "tls-tg",
+      "TargetType": "instance",
+      "UnhealthyThresholdCount": 2,
+      "VpcId": "vpc-fixture"
+    },
+    "Targets": [
+      {
+        "Target": {
+          "Id": "i-web",
+          "Port": 8443
+        }
+      }
+    ]
+  }
+]

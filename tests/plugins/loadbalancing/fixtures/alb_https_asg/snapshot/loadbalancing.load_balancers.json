@@ -1,0 +1,104 @@
+[
+  {
+    "Attributes": [
+      {
+        "Key": "idle_timeout.timeout_seconds",
+        "Value": "60"
+      },
+      {
+        "Key": "access_logs.s3.enabled",
+        "Value": "true"
+      }
+    ],
+    "Listeners": [
+      {
+        "Listener": {
+          "Certificates": [
+            {
+              "CertificateArn": "arn:aws:acm:ap-south-1:123456789012:certificate/c"
+            }
+          ],
+          "DefaultActions": [
+            {
+              "TargetGroupArn": "arn:aws:elasticloadbalancing:ap-south-1:123456789012:targetgroup/web-tg/1",
+              "Type": "forward"
+            }
+          ],
+          "Port": 443,
+          "Protocol": "HTTPS",
+          "SslPolicy": "ELBSecurityPolicy-TLS13-1-2-2021-06"
+        },
+        "Rules": [
+          {
+            "Actions": [
+              {
+                "TargetGroupArn": "arn:aws:elasticloadbalancing:ap-south-1:123456789012:targetgroup/api-tg/1",
+                "Type": "forward"
+              }
+            ],
+            "Conditions": [
+              {
+                "Field": "path-pattern",
+                "Values": [
+                  "/api/*"
+                ]
+              }
+            ],
+            "Priority": "10"
+          },
+          {
+            "Actions": [
+              {
+                "Type": "fixed-response"
+              }
+            ],
+            "Conditions": [
+              {
+                "Field": "host-header",
+                "Values": [
+                  "admin.example.com"
+                ]
+              }
+            ],
+            "Priority": "20"
+          }
+        ]
+      },
+      {
+        "Listener": {
+          "DefaultActions": [
+            {
+              "RedirectConfig": {
+                "Port": "443",
+                "Protocol": "HTTPS",
+                "StatusCode": "HTTP_301"
+              },
+              "Type": "redirect"
+            }
+          ],
+          "Port": 80,
+          "Protocol": "HTTP"
+        },
+        "Rules": []
+      }
+    ],
+    "LoadBalancer": {
+      "AvailabilityZones": [
+        {
+          "SubnetId": "subnet-a"
+        },
+        {
+          "SubnetId": "subnet-b"
+        }
+      ],
+      "LoadBalancerArn": "arn:aws:elasticloadbalancing:ap-south-1:123456789012:loadbalancer/web",
+      "LoadBalancerName": "web",
+      "Scheme": "internet-facing",
+      "SecurityGroups": [
+        "sg-web"
+      ],
+      "Type": "application"
+    },
+    "Tags": []
+  }
+]

@@ -1,0 +1,11 @@
+[
+  {
+    "InstanceId": "i-asg-1",
+    "Tags": [
+      {
+        "Key": "aws:autoscaling:groupName",
+        "Value": "web-asg"
+      }
+    ]
+  }
+]

@@ -1,0 +1,8 @@
+{
+  "KeyPairs": [
+    {
+      "KeyName": "web-key",
+      "PublicKey": "ssh-rsa AAAAB3NzaC1 web-key"
+    }
+  ]
+}

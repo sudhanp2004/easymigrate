@@ -1,0 +1,9 @@
+{
+  "web-asg": [
+    {
+      "AutoScalingGroupName": "web-asg",
+      "LifecycleHookName": "drain",
+      "LifecycleTransition": "autoscaling:EC2_INSTANCE_TERMINATING"
+    }
+  ]
+}

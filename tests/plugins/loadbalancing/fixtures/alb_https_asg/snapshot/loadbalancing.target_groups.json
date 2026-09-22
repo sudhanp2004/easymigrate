@@ -1,0 +1,72 @@
+[
+  {
+    "Attributes": [
+      {
+        "Key": "deregistration_delay.timeout_seconds",
+        "Value": "30"
+      }
+    ],
+    "Tags": [],
+    "TargetGroup": {
+      "HealthCheckIntervalSeconds": 10,
+      "HealthCheckPath": "/health",
+      "HealthCheckPort": "traffic-port",
+      "HealthCheckProtocol": "HTTP",
+      "HealthCheckTimeoutSeconds": 5,
+      "HealthyThresholdCount": 3,
+      "Matcher": {
+        "HttpCode": "200"
+      },
+      "Port": 80,
+      "Protocol": "HTTP",
+      "TargetGroupArn": "arn:aws:elasticloadbalancing:ap-south-1:123456789012:targetgroup/web-tg/1",
+      "TargetGroupName": "web-tg",
+      "TargetType": "instance",
+      "UnhealthyThresholdCount": 2,
+      "VpcId": "vpc-fixture"
+    },
+    "Targets": [
+      {
+        "Target": {
+          "Id": "i-asg-1",
+          "Port": 80
+        }
+      }
+    ]
+  },
+  {
+    "Attributes": [
+      {
+        "Key": "deregistration_delay.timeout_seconds",
+        "Value": "30"
+      }
+    ],
+    "Tags": [],
+    "TargetGroup": {
+      "HealthCheckIntervalSeconds": 10,
+      "HealthCheckPath": "/health",
+      "HealthCheckPort": "traffic-port",
+      "HealthCheckProtocol": "HTTP",
+      "HealthCheckTimeoutSeconds": 5,
+      "HealthyThresholdCount": 3,
+      "Matcher": {
+        "HttpCode": "200"
+      },
+      "Port": 8080,
+      "Protocol": "HTTP",
+      "TargetGroupArn": "arn:aws:elasticloadbalancing:ap-south-1:123456789012:targetgroup/api-tg/1",
+      "TargetGroupName": "api-tg",
+      "TargetType": "instance",
+      "UnhealthyThresholdCount": 2,
+      "VpcId": "vpc-fixture"
+    },
+    "Targets": [
+      {
+        "Target": {
+          "Id": "i-asg-1",
+          "Port": 8080
+        }
+      }
+    ]
+  }
+]

@@ -1,0 +1,51 @@
+{
+  "Instances": [
+    {
+      "Architecture": "x86_64",
+      "BlockDeviceMappings": [
+        {
+          "DeviceName": "/dev/xvda",
+          "Ebs": {
+            "VolumeId": "vol-web-root"
+          }
+        }
+      ],
+      "ImageId": "ami-1111",
+      "InstanceId": "i-web",
+      "InstanceType": "t3.micro",
+      "KeyName": "web-key",
+      "Monitoring": {
+        "State": "disabled"
+      },
+      "NetworkInterfaces": [
+        {
+          "NetworkInterfaceId": "eni-1",
+          "SubnetId": "subnet-a"
+        }
+      ],
+      "Placement": {
+        "AvailabilityZone": "ap-south-1a",
+        "AvailabilityZoneId": "aps1-az1",
+        "Tenancy": "default"
+      },
+      "PrivateIpAddress": "10.0.1.10",
+      "PublicIpAddress": "13.1.1.1",
+      "RootDeviceName": "/dev/xvda",
+      "SecurityGroups": [
+        {
+          "GroupId": "sg-web"
+        }
+      ],
+      "State": {
+        "Name": "running"
+      },
+      "SubnetId": "subnet-a",
+      "Tags": [
+        {
+          "Key": "Name",
+          "Value": "web"
+        }
+      ]
+    }
+  ]
+}

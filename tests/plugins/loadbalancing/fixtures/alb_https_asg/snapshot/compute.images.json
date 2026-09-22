@@ -1,0 +1,20 @@
+{
+  "Images": [
+    {
+      "ImageId": "ami-1111",
+      "Name": "amzn2-x86_64",
+      "PlatformDetails": "Linux/UNIX",
+      "RootDeviceName": "/dev/xvda",
+      "BlockDeviceMappings": [
+        {
+          "DeviceName": "/dev/xvda",
+          "Ebs": {
+            "VolumeSize": 8,
+            "VolumeType": "gp3",
+            "SnapshotId": "snap-1"
+          }
+        }
+      ]
+    }
+  ]
+}

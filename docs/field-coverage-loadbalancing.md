@@ -8,43 +8,43 @@ Every IR field the loadbalancing generator could touch is declared here, so an I
 
 | Field | Declaration |
 |---|---|
-| `access_logs` | not_generated:load balancer generation is spec 7 plan 3 |
-| `deletion_protection` | not_generated:load balancer generation is spec 7 plan 3 |
+| `access_logs` | decision:LB-ACCESS-LOGS |
+| `deletion_protection` | recorded:captured in the IR and the report; nothing is generated from it |
 | `excluded` | metadata |
-| `firewall_policies` | not_generated:load balancer generation is spec 7 plan 3 |
+| `firewall_policies` | decision:LB-SOURCE-RESTRICTION |
 | `id` | metadata |
-| `idle_timeout` | not_generated:load balancer generation is spec 7 plan 3 |
+| `idle_timeout` | exact:backend service timeout_sec on proxy load balancers |
 | `kind` | metadata |
-| `kubernetes_owned` | not_generated:load balancer generation is spec 7 plan 3 |
+| `kubernetes_owned` | decision:LB-KUBERNETES-OWNED |
 | `labels` | metadata |
-| `lb_type` | not_generated:load balancer generation is spec 7 plan 3 |
-| `listeners` | not_generated:load balancer generation is spec 7 plan 3 |
+| `lb_type` | decision:LB-SHAPE |
+| `listeners` | exact:forwarding rules, proxies and URL maps (LB-RULE-CONDITIONS etc.) |
 | `name` | metadata |
 | `resolution` | metadata |
-| `scheme` | not_generated:load balancer generation is spec 7 plan 3 |
+| `scheme` | decision:LB-SHAPE |
 | `source` | metadata |
-| `subnets` | not_generated:load balancer generation is spec 7 plan 3 |
+| `subnets` | decision:LB-SHAPE picks the subnet for internal addresses |
 | `target_hints` | metadata |
 
 ## `target_group`
 
 | Field | Declaration |
 |---|---|
-| `deregistration_delay` | not_generated:load balancer generation is spec 7 plan 3 |
+| `deregistration_delay` | exact:connection_draining_timeout_sec |
 | `excluded` | metadata |
-| `groups` | not_generated:load balancer generation is spec 7 plan 3 |
-| `health_check` | not_generated:load balancer generation is spec 7 plan 3 |
+| `groups` | exact:the managed instance groups (LB-BACKENDS) |
+| `health_check` | decision:LB-HEALTH-CHECK |
 | `id` | metadata |
-| `instances` | not_generated:load balancer generation is spec 7 plan 3 |
+| `instances` | exact:unmanaged instance groups per zone (LB-BACKENDS) |
 | `kind` | metadata |
 | `labels` | metadata |
 | `name` | metadata |
-| `network` | not_generated:load balancer generation is spec 7 plan 3 |
-| `port` | not_generated:load balancer generation is spec 7 plan 3 |
-| `protocol` | not_generated:load balancer generation is spec 7 plan 3 |
+| `network` | derived:backends are in the migrated network |
+| `port` | exact:named port on the backend instance groups |
+| `protocol` | exact:backend service protocol |
 | `resolution` | metadata |
 | `source` | metadata |
-| `stickiness` | not_generated:load balancer generation is spec 7 plan 3 |
+| `stickiness` | decision:LB-STICKINESS |
 | `target_hints` | metadata |
-| `target_type` | not_generated:load balancer generation is spec 7 plan 3 |
-| `unresolved_targets` | not_generated:load balancer generation is spec 7 plan 3 |
+| `target_type` | decision:LB-BACKENDS |
+| `unresolved_targets` | recorded:captured in the IR and the report; nothing is generated from it |

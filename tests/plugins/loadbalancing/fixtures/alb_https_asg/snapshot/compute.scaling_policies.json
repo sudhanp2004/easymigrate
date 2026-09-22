@@ -1,0 +1,15 @@
+{
+  "ScalingPolicies": [
+    {
+      "AutoScalingGroupName": "web-asg",
+      "PolicyName": "cpu",
+      "PolicyType": "TargetTrackingScaling",
+      "TargetTrackingConfiguration": {
+        "PredefinedMetricSpecification": {
+          "PredefinedMetricType": "ASGAverageCPUUtilization"
+        },
+        "TargetValue": 60.0
+      }
+    }
+  ]
+}

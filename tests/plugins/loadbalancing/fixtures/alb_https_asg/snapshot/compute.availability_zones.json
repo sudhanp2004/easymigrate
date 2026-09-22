@@ -1,0 +1,16 @@
+{
+  "AvailabilityZones": [
+    {
+      "ZoneName": "ap-south-1a",
+      "ZoneId": "aps1-az1"
+    },
+    {
+      "ZoneName": "ap-south-1b",
+      "ZoneId": "aps1-az3"
+    },
+    {
+      "ZoneName": "ap-south-1c",
+      "ZoneId": "aps1-az2"
+    }
+  ]
+}

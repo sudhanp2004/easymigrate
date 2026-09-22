@@ -1,0 +1,27 @@
+{
+  "Addresses": [
+    {
+      "AllocationId": "eipalloc-1",
+      "Domain": "vpc",
+      "InstanceId": "i-web",
+      "PublicIp": "13.1.1.1",
+      "Tags": [
+        {
+          "Key": "Name",
+          "Value": "web-eip"
+        }
+      ]
+    },
+    {
+      "PublicIp": "13.2.2.2",
+      "AllocationId": "eipalloc-spare",
+      "Domain": "vpc",
+      "Tags": [
+        {
+          "Key": "Name",
+          "Value": "spare-ip"
+        }
+      ]
+    }
+  ]
+}

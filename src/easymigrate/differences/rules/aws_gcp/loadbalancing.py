@@ -384,7 +384,8 @@ class LbCertificates(DifferenceRule):
                         port=listener.port,
                         domains=domains,
                         wildcard=any(d.startswith("*") for d in domains) or not domains,
-                        nlb=lb.lb_type == "network",
+                        # Google-managed certificates attach only to global load balancers.
+                        nlb=lb.lb_type == "network" or lb.scheme == "internal",
                     )
                 )
         return diffs

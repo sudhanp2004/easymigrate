@@ -1,0 +1,8 @@
+{
+  "arn:aws:acm:ap-south-1:123456789012:certificate/c": {
+    "DomainName": "example.com",
+    "SubjectAlternativeNames": [
+      "www.example.com"
+    ]
+  }
+}

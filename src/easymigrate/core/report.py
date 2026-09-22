@@ -22,6 +22,7 @@ from easymigrate.ir.base import Finding, IRDocument
 from easymigrate.ir.compute import ComputeInstance, Disk
 from easymigrate.ir.database import DatabaseInstance
 from easymigrate.ir.kubernetes import KubernetesCluster, NodePool
+from easymigrate.ir.loadbalancing import LoadBalancer
 from easymigrate.ir.network import FirewallPolicy
 from easymigrate.ir.storage import StorageBucket
 
@@ -141,6 +142,24 @@ class StorageRow:
 
 
 @dataclass(frozen=True)
+class LoadBalancerRow:
+    """What `plan` decided for one load balancer, in the user's terms (spec 7 §7)."""
+
+    id: str
+    shape: str
+    listeners: list[str]
+    dropped: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "shape": self.shape,
+            "listeners": list(self.listeners),
+            "dropped": list(self.dropped),
+        }
+
+
+@dataclass(frozen=True)
 class PlanSummaryView:
     add: int
     change: int
@@ -180,6 +199,7 @@ class Report:
     compute: list[ComputeRow] = field(default_factory=list)
     kubernetes: list[KubernetesRow] = field(default_factory=list)
     storage: list[StorageRow] = field(default_factory=list)
+    load_balancers: list[LoadBalancerRow] = field(default_factory=list)
     plan: PlanSummaryView | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -200,6 +220,7 @@ class Report:
             "compute": [c.to_dict() for c in self.compute],
             "kubernetes": [k.to_dict() for k in self.kubernetes],
             "storage": [b.to_dict() for b in self.storage],
+            "load_balancers": [lb.to_dict() for lb in self.load_balancers],
             "plan": self.plan.to_dict() if self.plan else None,
         }
 
@@ -352,6 +373,22 @@ class Report:
             lines.append(
                 "Every bucket is created empty. No objects, versions or metadata were copied; "
                 "move the data with Storage Transfer Service."
+            )
+            lines.append("")
+
+        if self.load_balancers:
+            lines.append("## Load balancers")
+            for lb in self.load_balancers:
+                lines.append(f"### {lb.id}")
+                lines.append(f"- Becomes: {lb.shape}")
+                for listener in lb.listeners:
+                    lines.append(f"- Listener {listener}")
+                for item in lb.dropped:
+                    lines.append(f"- Not carried: {item}")
+            lines.append("")
+            lines.append(
+                "Every load balancer has a new IP address. Nothing reaches it until DNS or clients "
+                "are repointed at cutover; Google-managed certificates are issued only after that."
             )
             lines.append("")
 
@@ -696,6 +733,52 @@ def _storage_rows(resolved: IRDocument | None) -> list[StorageRow]:
     return rows
 
 
+_SHAPES = {
+    "global_external_alb": "global external Application Load Balancer",
+    "regional_internal_alb": "regional internal Application Load Balancer",
+    "external_passthrough_nlb": "external passthrough Network Load Balancer",
+    "internal_passthrough_nlb": "internal passthrough Network Load Balancer",
+}
+
+
+def _load_balancer_rows(resolved: IRDocument | None) -> list[LoadBalancerRow]:
+    if resolved is None:
+        return []
+    rows: list[LoadBalancerRow] = []
+    for lb in sorted(resolved.of_kind(LoadBalancer), key=lambda o: o.id):
+        if lb.excluded is not None:
+            continue
+        hints = lb.target_hints
+        skipped = set(hints.get("skipped_listeners", []))
+        listeners = []
+        for listener in lb.listeners:
+            state = "not created" if listener.port in skipped else "created"
+            action = listener.default_action
+            target = (
+                f"redirects to {action.redirect.protocol or 'same protocol'}"
+                if action.type == "redirect" and action.redirect
+                else ", ".join(t.target_group for t in action.target_groups) or action.type
+            )
+            listeners.append(f"{listener.protocol} {listener.port} → {target} ({state})")
+        dropped = [
+            f"listener {d['port']} rule priority {d['priority']}"
+            for d in hints.get("dropped_rules", [])
+        ]
+        if hints.get("allowlist"):
+            dropped.append(
+                "security groups → Cloud Armor allow-list " + ", ".join(hints["allowlist"])
+            )
+        rows.append(
+            LoadBalancerRow(
+                id=lb.id,
+                shape=_SHAPES.get(hints.get("shape", ""), "not decided"),
+                listeners=listeners,
+                dropped=dropped,
+            )
+        )
+    return rows
+
+
 def build_report(project: Project) -> Report:
     config = project.load_config() if project.config_path.exists() else None
     source = config.source.cloud if config and config.source else None
@@ -709,6 +792,7 @@ def build_report(project: Project) -> Report:
     compute = _compute_rows(resolved)
     kubernetes = _kubernetes_rows(resolved)
     storage = _storage_rows(resolved)
+    load_balancers = _load_balancer_rows(resolved)
     superseded = _load_superseded(project)
 
     rules_by_id: dict[str, DifferenceRule] = {rule.id: rule for rule in catalogue()}
@@ -810,6 +894,7 @@ def build_report(project: Project) -> Report:
         compute=compute,
         kubernetes=kubernetes,
         storage=storage,
+        load_balancers=load_balancers,
         plan=plan_summary,
     )
 

@@ -691,3 +691,20 @@ def test_renamed_bucket_names_its_origin():
     document, _ = resolved_case("plain_and_dotted")
     names = [row.name for row in _storage_rows(document)]
     assert "www-example-com (renamed from www.example.com)" in names
+
+
+# --- Load balancers section (spec 7 §7) ---------------------------------------------
+
+
+def test_load_balancer_rows_name_the_type_listeners_and_what_was_dropped():
+    from easymigrate.core.report import _load_balancer_rows
+    from tests.plugins.loadbalancing.test_generate_gcp_golden import resolved_case
+
+    document, _ = resolved_case("alb_https_asg")
+    row = _load_balancer_rows(document)[0]
+    assert row.shape == "global external Application Load Balancer"
+    assert "HTTP 80 → redirects to HTTPS (created)" in row.listeners
+    assert "listener 443 rule priority 20" in row.dropped
+    markdown = Report(source="aws", target="gcp", coverage={}, load_balancers=[row]).to_markdown()
+    assert "## Load balancers" in markdown
+    assert "repointed at cutover" in markdown

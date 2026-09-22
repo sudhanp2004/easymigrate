@@ -1,0 +1,106 @@
+[
+  {
+    "Attributes": [],
+    "Listeners": [
+      {
+        "Listener": {
+          "DefaultActions": [
+            {
+              "TargetGroupArn": "arn:aws:elasticloadbalancing:ap-south-1:123456789012:targetgroup/app-tg/1",
+              "Type": "forward"
+            }
+          ],
+          "Port": 80,
+          "Protocol": "HTTP"
+        },
+        "Rules": []
+      }
+    ],
+    "LoadBalancer": {
+      "AvailabilityZones": [
+        {
+          "SubnetId": "subnet-a"
+        },
+        {
+          "SubnetId": "subnet-b"
+        }
+      ],
+      "LoadBalancerArn": "arn:aws:elasticloadbalancing:ap-south-1:123456789012:loadbalancer/internal-app",
+      "LoadBalancerName": "internal-app",
+      "Scheme": "internal",
+      "SecurityGroups": [
+        "sg-web"
+      ],
+      "Type": "application"
+    },
+    "Tags": []
+  },
+  {
+    "Attributes": [],
+    "Listeners": [
+      {
+        "Listener": {
+          "DefaultActions": [
+            {
+              "TargetGroupArn": "arn:aws:elasticloadbalancing:ap-south-1:123456789012:targetgroup/ssh-tg/1",
+              "Type": "forward"
+            }
+          ],
+          "Port": 22,
+          "Protocol": "TCP"
+        },
+        "Rules": []
+      }
+    ],
+    "LoadBalancer": {
+      "AvailabilityZones": [
+        {
+          "SubnetId": "subnet-a"
+        },
+        {
+          "SubnetId": "subnet-b"
+        }
+      ],
+      "LoadBalancerArn": "arn:aws:elasticloadbalancing:ap-south-1:123456789012:loadbalancer/ssh",
+      "LoadBalancerName": "ssh",
+      "Scheme": "internet-facing",
+      "SecurityGroups": [],
+      "Type": "network"
+    },
+    "Tags": []
+  },
+  {
+    "Attributes": [],
+    "Listeners": [
+      {
+        "Listener": {
+          "DefaultActions": [
+            {
+              "TargetGroupArn": "arn:aws:elasticloadbalancing:ap-south-1:123456789012:targetgroup/tls-tg/1",
+              "Type": "forward"
+            }
+          ],
+          "Port": 443,
+          "Protocol": "TCP"
+        },
+        "Rules": []
+      }
+    ],
+    "LoadBalancer": {
+      "AvailabilityZones": [
+        {
+          "SubnetId": "subnet-a"
+        },
+        {
+          "SubnetId": "subnet-b"
+        }
+      ],
+      "LoadBalancerArn": "arn:aws:elasticloadbalancing:ap-south-1:123456789012:loadbalancer/tls-internal",
+      "LoadBalancerName": "tls-internal",
+      "Scheme": "internal",
+      "SecurityGroups": [],
+      "Type": "network"
+    },
+    "Tags": []
+  }
+]
