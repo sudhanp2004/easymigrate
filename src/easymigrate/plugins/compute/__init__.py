@@ -25,6 +25,10 @@ class ComputePlugin:
         }
     )
 
+    # A target-tracking scaling policy creates and owns two CloudWatch alarms; VM-ASG-SCALING
+    # translates the policy, and the GCP autoscaler needs no alarms (live run, 2026-09-22).
+    managed_arns = (("cloudwatch:alarm", r":alarm:TargetTracking-"),)
+
     def collect_aws(self, connection: Any, ctx: CollectContext) -> dict[str, Any]:
         return collect(connection, ctx)
 

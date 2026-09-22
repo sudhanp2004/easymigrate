@@ -128,6 +128,10 @@ class Plugin(Protocol):
     # `core.pipeline.check_plugin_order` validates this; it does not reorder.
     requires: frozenset[str]
     aws_resource_types: frozenset[str]
+    # (resource type, ARN regex) for resources AWS creates on behalf of something this plugin
+    # already migrates — e.g. the CloudWatch alarms a target-tracking policy owns. The
+    # inventory sweep leaves them out of "not yet supported". Optional; read with getattr.
+    managed_arns: tuple[tuple[str, str], ...]
 
     def collect_aws(self, connection: Any, ctx: CollectContext) -> dict[str, Any]: ...
 

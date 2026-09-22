@@ -151,6 +151,28 @@ def test_inventory_findings_for_unsupported_types(tmp_path):
     assert "function:f3" not in finding.message
 
 
+def test_inventory_skips_resources_a_plugin_manages(tmp_path):
+    plugin = FakePlugin()
+    plugin.managed_arns = (("cloudwatch:alarm", r":alarm:TargetTracking-"),)
+    arns = {
+        "cloudwatch:alarm": [
+            "arn:aws:cloudwatch:ap-south-1:1:alarm:TargetTracking-web-asg-AlarmHigh-1",
+            "arn:aws:cloudwatch:ap-south-1:1:alarm:TargetTracking-web-asg-AlarmLow-2",
+        ]
+    }
+    summary = scan(
+        Project(tmp_path), region="ap-south-1", plugins=[plugin], source=FakeSource(arns)
+    )
+    assert [f for f in summary.findings if f.level == "unsupported"] == []
+
+    arns["cloudwatch:alarm"].append("arn:aws:cloudwatch:ap-south-1:1:alarm:disk-full")
+    summary = scan(
+        Project(tmp_path), region="ap-south-1", plugins=[plugin], source=FakeSource(arns)
+    )
+    unsupported = [f for f in summary.findings if f.level == "unsupported"]
+    assert [f.message.split(" found")[0] for f in unsupported] == ["1 cloudwatch:alarm resource(s)"]
+
+
 def test_inventory_access_denied_is_a_scan_gap(tmp_path):
     summary = scan(
         Project(tmp_path),

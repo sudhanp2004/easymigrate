@@ -120,11 +120,22 @@ def _inventory_findings(source: Any, connection: Any, plugins: Sequence[Plugin])
             )
         ]
     supported: set[str] = set()
+    managed: list[tuple[str, re.Pattern[str]]] = []
     for plugin in plugins:
         supported |= plugin.aws_resource_types
+        managed += [
+            (kind, re.compile(pattern)) for kind, pattern in getattr(plugin, "managed_arns", ())
+        ]
     findings = []
-    for resource_type, arns in arns_by_type.items():
+    for resource_type, all_arns in arns_by_type.items():
         if resource_type in supported:
+            continue
+        arns = [
+            arn
+            for arn in all_arns
+            if not any(kind == resource_type and pattern.search(arn) for kind, pattern in managed)
+        ]
+        if not arns:
             continue
         sample = ", ".join(arns[:_SAMPLE_ARNS])
         if len(arns) > _SAMPLE_ARNS:
