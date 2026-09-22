@@ -28,6 +28,7 @@ from easymigrate.ir.compute import (
 )
 from easymigrate.ir.naming import allocate_ids, clean_labels
 from easymigrate.plugins.compute.aws_values import (
+    ASG_MEMBER_TAG,
     EKS_CLUSTER_TAG,
     FALLBACK_INSTANCE_TYPES,
     TRANSIENT_STATES,
@@ -92,6 +93,7 @@ def normalize(snapshot: Snapshot, ctx: NormalizeContext) -> list[IntentObject]:
     volumes = {volume["VolumeId"]: volume for volume in volumes_raw}
 
     _report_unsupported(snapshot, ctx)
+    groups_raw = _standalone_groups(groups_raw, ctx)
 
     translatable = _translatable_instances(instances_raw, ctx)
 
@@ -174,7 +176,38 @@ def _translatable_instances(
                 subject=instance["InstanceId"],
             )
             continue
+        instance_tags = tags(instance)
+        group = instance_tags.get(ASG_MEMBER_TAG)
+        if group and EKS_CLUSTER_TAG not in instance_tags:
+            ctx.info(
+                "VM-ASG-MEMBER",
+                f"{instance['InstanceId']} was launched by Auto Scaling group {group}; the group "
+                "migrates as a managed instance group that launches its own instances, so this "
+                "instance is not migrated on its own.",
+                subject=instance["InstanceId"],
+            )
+            continue
         keep.append(instance)
+    return keep
+
+
+def _standalone_groups(
+    groups_raw: list[dict[str, Any]], ctx: NormalizeContext
+) -> list[dict[str, Any]]:
+    """Groups an EKS managed node group created belong to the EKS family (spec 4 §1)."""
+    keep = []
+    for group in groups_raw:
+        group_tags = {tag["Key"]: tag.get("Value", "") for tag in group.get("Tags") or []}
+        cluster = group_tags.get(EKS_CLUSTER_TAG)
+        if cluster:
+            ctx.info(
+                "VM-ASG-EKS",
+                f"Auto Scaling group {group['AutoScalingGroupName']} belongs to EKS cluster "
+                f"{cluster}; it is left to the EKS family and not migrated here.",
+                subject=group["AutoScalingGroupName"],
+            )
+            continue
+        keep.append(group)
     return keep
 
 

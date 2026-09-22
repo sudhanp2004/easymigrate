@@ -26,6 +26,11 @@ FALLBACK_INSTANCE_TYPES: dict[str, tuple[int, int]] = {
 # inventory and leaves it for the EKS family.
 EKS_CLUSTER_TAG = "eks:cluster-name"
 
+# AWS stamps this on every instance an Auto Scaling group launches. The group migrates as a
+# managed instance group, which launches its own instances, so a member is not migrated on its
+# own — doing so would run every group member twice.
+ASG_MEMBER_TAG = "aws:autoscaling:groupName"
+
 # States that are neither `running` nor `stopped`: the user may be looking at a half-built or
 # half-destroyed environment, so they are reported rather than translated (spec 4 §4.3).
 TRANSIENT_STATES = frozenset({"pending", "shutting-down", "stopping", "terminated"})

@@ -8,6 +8,11 @@ variable "db_password" {
   sensitive   = true
 }
 
+variable "admin_cidr" {
+  description = "Your public IP as a /32; the app accepts HTTP and SSH from it only (TF_VAR_admin_cidr)"
+  type        = string
+}
+
 variable "ssh_public_key" {
   description = "OpenSSH public key for the test key pair; VM-SSH-KEYS imports it (TF_VAR_ssh_public_key)"
   type        = string
@@ -375,10 +380,13 @@ resource "aws_instance" "app" {
 
   # VM-USER-DATA: becomes a GCP startup script. Serves a page so the tag seam can be proven
   # by reaching port 80 through the migrated firewall rules.
+  # python3 ships with both AL2023 and the GCP stock image, so this needs no internet access —
+  # a migrated VM in a public subnet has no NAT, because GCP gives it no external route by default.
   user_data = <<-EOT
     #!/bin/bash
-    dnf install -y nginx || apt-get install -y nginx
-    systemctl enable --now nginx
+    mkdir -p /srv/www
+    echo "easymigrate app on $(hostname)" > /srv/www/index.html
+    cd /srv/www && nohup python3 -m http.server 80 > /var/log/http.log 2>&1 &
   EOT
 
   root_block_device {
@@ -428,6 +436,26 @@ resource "aws_eip" "app" {
   }
 
   depends_on = [aws_internet_gateway.gw]
+}
+
+# The tag-seam proof (spec 4 §9): the migrated firewall rules carry these to GCP, targeting the
+# app group's network tag, so reaching the migrated VM on 80 and 22 proves the tag matches.
+resource "aws_security_group_rule" "app_http_from_admin" {
+  type              = "ingress"
+  security_group_id = aws_security_group.app.id
+  from_port         = 80
+  to_port           = 80
+  protocol          = "tcp"
+  cidr_blocks       = [var.admin_cidr]
+}
+
+resource "aws_security_group_rule" "app_ssh_from_admin" {
+  type              = "ingress"
+  security_group_id = aws_security_group.app.id
+  from_port         = 22
+  to_port           = 22
+  protocol          = "tcp"
+  cidr_blocks       = [var.admin_cidr]
 }
 
 # VM-SSH-KEYS: AWS still holds this public key, so import_public_key is the default.

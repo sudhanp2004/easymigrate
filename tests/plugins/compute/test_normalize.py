@@ -449,3 +449,45 @@ def test_normalizing_twice_is_identical():
     assert [obj.model_dump(mode="json") for obj in first] == [
         obj.model_dump(mode="json") for obj in second
     ]
+
+
+def test_asg_member_instance_is_not_migrated_on_its_own():
+    """Found by the 2026-09-22 live run: the MIG launches its own instances, so migrating the
+    ASG's current members too would run every member twice."""
+    files = b.snapshot_files(
+        instances=[b.instance(extra_tags={"aws:autoscaling:groupName": "web-asg"})]
+    )
+    objects, ctx = run(files)
+
+    assert only(objects, ComputeInstance) == []
+    assert "VM-ASG-MEMBER" in codes(ctx)
+
+
+def test_eks_member_is_still_captured_even_though_an_asg_launched_it():
+    files = b.snapshot_files(
+        instances=[
+            b.instance(
+                extra_tags={
+                    "aws:autoscaling:groupName": "eks-nodes",
+                    "eks:cluster-name": "prod",
+                }
+            )
+        ]
+    )
+    objects, ctx = run(files)
+
+    assert only(objects, ComputeInstance)[0].eks_cluster == "prod"
+    assert "VM-ASG-MEMBER" not in codes(ctx)
+
+
+def test_eks_node_group_asg_is_left_to_the_eks_family():
+    from easymigrate.ir.compute import InstanceGroup, InstanceTemplate
+
+    files = _asg_files()
+    group = files["compute.autoscaling_groups"]["AutoScalingGroups"][0]
+    group["Tags"] = [{"Key": "eks:cluster-name", "Value": "prod"}]
+    objects, ctx = run(files)
+
+    assert only(objects, InstanceGroup) == []
+    assert only(objects, InstanceTemplate) == []
+    assert "VM-ASG-EKS" in codes(ctx)
