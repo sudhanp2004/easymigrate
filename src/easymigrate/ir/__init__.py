@@ -4,6 +4,7 @@ from easymigrate.ir import (  # registers kinds; import order does not matter
     compute,
     database,
     kubernetes,
+    loadbalancing,
     network,
     storage,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "database",
     "intent_class",
     "kubernetes",
+    "loadbalancing",
     "network",
     "storage",
 ]

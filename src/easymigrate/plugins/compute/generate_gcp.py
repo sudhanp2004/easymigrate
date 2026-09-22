@@ -263,6 +263,34 @@ def _templates_for(
     return result
 
 
+def instance_tf_labels(resolved: IRDocument) -> dict[str, str]:
+    """Instance IR id -> the Terraform label `generate` gives it, for families that reference
+    migrated instances (spec 7 §2). Labels are allocated per resource type, so recomputing
+    them over the same sorted live instances gives the same answer."""
+    allocator = TfLabelAllocator()
+    return {
+        instance.id: allocator.allocate("google_compute_instance", instance.id)
+        for instance in _live(resolved, ComputeInstance)
+        if not instance.eks_cluster
+    }
+
+
+def group_tf_refs(resolved: IRDocument) -> dict[str, str]:
+    """Instance-group IR id -> the Terraform expression for its managed instance group's
+    `instance_group` URL, which a backend service takes as a backend."""
+    allocator = TfLabelAllocator()
+    refs: dict[str, str] = {}
+    for group in _live(resolved, InstanceGroup):
+        label = allocator.allocate("google_compute_instance_group_manager", group.id)
+        kind = (
+            "google_compute_region_instance_group_manager"
+            if group.target_hints.get("mig") == "regional"
+            else "google_compute_instance_group_manager"
+        )
+        refs[group.id] = f"{kind}.{label}.instance_group"
+    return refs
+
+
 def _addresses(resolved: IRDocument, instances: list[ComputeInstance]) -> list[ExternalAddress]:
     """Unattached addresses VM-ELASTIC-IP-UNATTACHED chose to reserve, plus the Elastic IP of
     every instance whose VM-PUBLIC-IP decision was `static`."""
@@ -559,6 +587,11 @@ def _generate_group(
     # An autoscaler owns the group's size; a fixed target_size would fight it.
     if not autoscaler:
         mig.attr("target_size", group.desired_capacity)
+    # Load balancers address a group's instances by named port (spec 7 LB-BACKENDS).
+    for named in sorted(hints.get("named_ports", []), key=lambda n: n["name"]):
+        port = mig.block("named_port")
+        port.attr("name", named["name"])
+        port.attr("port", named["port"])
     version = mig.block("version")
     version.attr(
         "instance_template",

@@ -1690,20 +1690,21 @@ class VmAsgMixedInstances(_AcknowledgeOnly, DifferenceRule):
 class VmAsgTargetGroups(_AcknowledgeOnly, DifferenceRule):
     id = "VM-ASG-TARGET-GROUPS"
     family = "compute"
-    title = "The group's load-balancer attachment is not migrated"
+    title = "The group's load-balancer attachment moves with its load balancer"
     impact = (
-        "Load balancers are outside this family. The managed instance group will look healthy "
-        "while receiving no traffic until a load balancer points at it."
+        "An Auto Scaling group registers its instances with target groups. On GCP the load "
+        "balancer names the managed instance group as a backend instead, so the attachment exists "
+        "only if the target group's load balancer is migrated too (spec 7)."
     )
     strategies = (
         Strategy(
             id="drop_with_note",
-            title="Drop the attachment",
+            title="Attach through the migrated load balancer",
             effect=(
-                "the migrated instances receive no load-balanced traffic until a GCP load "
-                "balancer is created with this group as its backend"
+                "the group becomes a backend of each migrated load balancer that targeted it; a "
+                "target group whose load balancer is not migrated sends it no traffic"
             ),
-            risk="high",
+            risk="medium",
         ),
     )
     default = "drop_with_note"

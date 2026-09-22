@@ -519,13 +519,13 @@ An instance template declares one machine type. A weighted mix of types and purc
 |---|---|---|---|---|---|
 | `manual` | Handle manually | the group is created with the launch template's single machine type; reproduce the mix yourself if it mattered for cost or capacity | medium | yes | yes |
 
-### The group's load-balancer attachment is not migrated (`VM-ASG-TARGET-GROUPS`)
+### The group's load-balancer attachment moves with its load balancer (`VM-ASG-TARGET-GROUPS`)
 
-Load balancers are outside this family. The managed instance group will look healthy while receiving no traffic until a load balancer points at it.
+An Auto Scaling group registers its instances with target groups. On GCP the load balancer names the managed instance group as a backend instead, so the attachment exists only if the target group's load balancer is migrated too (spec 7).
 
 | Strategy | Title | Effect | Risk | Manual | Default |
 |---|---|---|---|---|---|
-| `drop_with_note` | Drop the attachment | the migrated instances receive no load-balanced traffic until a GCP load balancer is created with this group as its backend | high |  | yes |
+| `drop_with_note` | Attach through the migrated load balancer | the group becomes a backend of each migrated load balancer that targeted it; a target group whose load balancer is not migrated sends it no traffic | medium |  | yes |
 
 ### Lifecycle hooks have no managed-instance-group equivalent (`VM-ASG-LIFECYCLE`)
 

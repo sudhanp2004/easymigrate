@@ -234,10 +234,11 @@ def test_no_policies_means_no_scaling_difference():
 # ---- note and acknowledge rules -------------------------------------------------
 
 
-def test_target_groups_are_dropped_at_high_risk():
+def test_target_group_attachment_moves_with_the_load_balancer():
     rule = VmAsgTargetGroups()
     diff = _only(rule, _doc(_group(target_groups=["arn:tg"])))
-    assert rule.risk_for(diff, "drop_with_note") == "high"
+    assert rule.risk_for(diff, "drop_with_note") == "medium"
+    assert "backend of each migrated load balancer" in rule.strategy("drop_with_note").effect
 
 
 def test_mixed_instances_needs_acknowledgement_and_keeps_the_group():
