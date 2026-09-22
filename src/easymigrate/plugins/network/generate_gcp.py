@@ -173,6 +173,8 @@ def _generate_subnets(file, names, subnets, findings, decided_by, ctx) -> None:
         block.attr("ip_cidr_range", subnet.cidr)
         block.attr("region", Ref("var.region"))
         block.attr("network", Ref(f"google_compute_network.{names.label[subnet.network]}.id"))
+        if subnet.target_hints.get("private_google_access"):
+            block.attr("private_ip_google_access", True)
         # Pod and service ranges a GKE cluster on this subnet needs (spec 5 §2.1), decided by
         # K8S-POD-RANGES and carried as a hint so the subnet stays this family's object.
         for entry in sorted(

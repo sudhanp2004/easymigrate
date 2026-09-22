@@ -73,3 +73,4 @@ def test_network_carries_the_clusters_secondary_ranges(case):
     network_tf = generate_network(document, ctx).render()
     assert 'range_name    = "prod-pods"' in network_tf
     assert 'range_name    = "prod-services"' in network_tf
+    assert "private_ip_google_access = true" in network_tf

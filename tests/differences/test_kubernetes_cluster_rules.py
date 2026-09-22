@@ -155,6 +155,7 @@ def test_pod_ranges_keep_the_service_cidr_and_use_the_busiest_subnet():
         "pods_range": "prod-pods",
         "services_range": "prod-services",
     }
+    assert _hints(result, "subnet:private-2")["private_google_access"] is True
     assert _hints(result, "subnet:private-2")["secondary_ranges"] == [
         {"name": "prod-pods", "cidr": "100.64.0.0/16"},
         {"name": "prod-services", "cidr": "172.20.0.0/16"},

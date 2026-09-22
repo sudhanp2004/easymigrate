@@ -384,7 +384,10 @@ class K8sPodRanges(DifferenceRule):
             {"name": pods_name, "cidr": params["pods_cidr"]},
             {"name": services_name, "cidr": params["services_cidr"]},
         ]
-        return _replace_object(doc, _set_hint(subnet, "secondary_ranges", ranges))
+        subnet = _set_hint(subnet, "secondary_ranges", ranges)
+        # Nodes without external IPs reach Google's registries and APIs only this way; GKE
+        # would otherwise switch it on itself and Terraform would see drift.
+        return _replace_object(doc, _set_hint(subnet, "private_google_access", True))
 
 
 class K8sLogging(DifferenceRule):
