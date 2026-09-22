@@ -810,9 +810,9 @@ A Cloud Storage retention policy keeps every object for a minimum period. Unlock
 
 | Strategy | Title | Effect | Risk | Manual | Default |
 |---|---|---|---|---|---|
-| `retention_unlocked` | Unlocked retention policy | objects are kept for the same period and an admin can still remove the policy; Object Versioning is turned off, because Cloud Storage does not allow a retention policy on a versioned bucket | medium |  | yes |
-| `retention_locked` | Locked retention policy | objects are kept for the same period, irreversibly; Object Versioning is turned off | high |  |  |
-| `object_retention` | Per-object retention | versioning stays on and objects can be locked one by one, but nothing sets a default period: every writer must set retention on upload | high |  |  |
+| `retention_unlocked` | Unlocked retention policy | objects are kept for the same period and versioning stays as it was; an admin can still remove the policy | medium |  | yes |
+| `retention_locked` | Locked retention policy | objects are kept for the same period, irreversibly | high |  |  |
+| `object_retention` | Per-object retention | objects can be locked one by one, but nothing sets a default period: every writer must set retention on upload | high |  |  |
 | `omit` | No retention | objects can be deleted at any time | high |  |  |
 
 ### Replication is not reproduced (`S3-REPLICATION`)

@@ -36,5 +36,5 @@ Every IR field the storage generator could touch is declared here, so an IR fiel
 | `resolution` | metadata |
 | `source` | metadata |
 | `target_hints` | metadata |
-| `versioning` | exact:versioning.enabled (suspended becomes disabled; S3-OBJECT-LOCK) |
+| `versioning` | exact:versioning.enabled (suspended becomes disabled) |
 | `website` | decision:S3-WEBSITE |

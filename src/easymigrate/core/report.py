@@ -669,10 +669,7 @@ def _storage_rows(resolved: IRDocument | None) -> list[StorageRow]:
             if hints.get("public")
             else "private; public access prevention enforced"
         )
-        versioned = bucket.versioning == "enabled" and not hints.get("versioning_off")
-        versioning = "on" if versioned else "off"
-        if bucket.versioning == "enabled" and not versioned:
-            versioning += " (a retention policy replaced it; Cloud Storage allows only one)"
+        versioning = "on" if bucket.versioning == "enabled" else "off"
         notes: list[str] = []
         if bucket.lifecycle_rules:
             kept = len(hints.get("lifecycle", []))

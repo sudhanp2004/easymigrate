@@ -276,7 +276,7 @@ def test_bucket_name_runs_before_access_logging():
     assert ids.index("S3-BUCKET-NAME") < ids.index("S3-ACCESS-LOGGING")
 
 
-def test_object_lock_retention_turns_versioning_off_and_per_object_keeps_it():
+def test_object_lock_retention_keeps_versioning_and_per_object_is_offered():
     rule = S3ObjectLock()
     doc = _doc(
         _bucket(
@@ -286,7 +286,7 @@ def test_object_lock_retention_turns_versioning_off_and_per_object_keeps_it():
         )
     )
     diff = _only(rule, doc)
-    assert _hints(rule.apply(doc, diff, "retention_unlocked"))["versioning_off"] is True
+    assert "versioning_off" not in _hints(rule.apply(doc, diff, "retention_unlocked"))
     assert _hints(rule.apply(doc, diff, "object_retention")) == {"object_retention": True}
 
 

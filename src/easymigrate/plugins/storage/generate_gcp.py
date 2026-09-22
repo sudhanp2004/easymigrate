@@ -34,7 +34,7 @@ FIELD_COVERAGE: dict[str, dict[str, str]] = {
         **_METADATA_FIELDS,
         "bucket_name": "decision:S3-BUCKET-NAME",
         "region": "derived:the bucket is created in the destination region",
-        "versioning": "exact:versioning.enabled (suspended becomes disabled; S3-OBJECT-LOCK)",
+        "versioning": "exact:versioning.enabled (suspended becomes disabled)",
         "encryption": "derived:Cloud Storage always encrypts at rest",
         "kms_key": "decision:S3-ENCRYPTION-KMS; an AWS KMS key cannot be used by GCP",
         "public_access_blocked": "exact:public_access_prevention = enforced",
@@ -126,10 +126,7 @@ def _generate_bucket(
     if bucket.labels:
         block.attr("labels", dict(sorted(bucket.labels.items())))
 
-    # S3-OBJECT-LOCK turns versioning off when it adds a retention policy: GCS allows only one.
-    versioned = bucket.versioning == "enabled" and not hints.get("versioning_off")
-    if hints.get("retention") and versioned:
-        raise GenerationError(f"{bucket.id} has both a retention policy and versioning")
+    versioned = bucket.versioning == "enabled"
     if hints.get("object_retention"):
         block.attr("enable_object_retention", True)
     block.block("versioning").attr("enabled", versioned)

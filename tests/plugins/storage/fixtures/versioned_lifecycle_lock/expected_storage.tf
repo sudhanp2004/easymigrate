@@ -19,7 +19,7 @@ resource "google_storage_bucket" "records" {
   requester_pays              = true
 
   versioning {
-    enabled = false
+    enabled = true
   }
   lifecycle_rule {
     action {

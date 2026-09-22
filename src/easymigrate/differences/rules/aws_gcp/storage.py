@@ -599,27 +599,23 @@ class S3ObjectLock(DifferenceRule):
             id="retention_unlocked",
             title="Unlocked retention policy",
             effect=(
-                "objects are kept for the same period and an admin can still remove the policy; "
-                "Object Versioning is turned off, because Cloud Storage does not allow a retention "
-                "policy on a versioned bucket"
+                "objects are kept for the same period and versioning stays as it was; an admin "
+                "can still remove the policy"
             ),
             risk="medium",
         ),
         Strategy(
             id="retention_locked",
             title="Locked retention policy",
-            effect=(
-                "objects are kept for the same period, irreversibly; "
-                "Object Versioning is turned off"
-            ),
+            effect="objects are kept for the same period, irreversibly",
             risk="high",
         ),
         Strategy(
             id="object_retention",
             title="Per-object retention",
             effect=(
-                "versioning stays on and objects can be locked one by one, but nothing sets a "
-                "default period: every writer must set retention on upload"
+                "objects can be locked one by one, but nothing sets a default period: every "
+                "writer must set retention on upload"
             ),
             risk="high",
         ),
@@ -650,8 +646,8 @@ class S3ObjectLock(DifferenceRule):
         if strategy_id not in {"retention_unlocked", "retention_locked"}:
             raise ValueError(f"unknown strategy {strategy_id!r}")
         retention = {"days": diff.context["days"], "locked": strategy_id == "retention_locked"}
-        updated = _set_hint(bucket, "retention", retention)
-        return _replace_object(doc, _set_hint(updated, "versioning_off", True))
+        # A retention policy and versioning coexist on Cloud Storage (checked live 2026-09-22).
+        return _replace_object(doc, _set_hint(bucket, "retention", retention))
 
 
 class S3Replication(_AcknowledgeOnly, DifferenceRule):

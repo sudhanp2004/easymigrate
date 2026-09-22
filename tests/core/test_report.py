@@ -675,7 +675,8 @@ def test_storage_rows_state_access_versioning_and_what_did_not_carry():
     document, _ = resolved_case("versioned_lifecycle_lock")
     row = _storage_rows(document)[0]
     assert row.access.startswith("private")
-    assert "retention policy replaced it" in row.versioning
+    assert row.versioning == "on"
+    assert any("retention policy of 30 days" in note for note in row.notes)
     assert "replication not reproduced" in row.notes
     report = Report(source="aws", target="gcp", coverage={}, storage=[row])
     markdown = report.to_markdown()

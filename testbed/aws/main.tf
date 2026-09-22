@@ -555,3 +555,131 @@ resource "aws_autoscaling_policy" "web_cpu" {
     target_value = 50
   }
 }
+
+# --- Spec 6: S3 buckets (configuration only; they stay empty) -------------------------------
+data "aws_caller_identity" "current" {}
+
+locals {
+  bucket_suffix = data.aws_caller_identity.current.account_id
+}
+
+# Public website bucket: S3-PUBLIC-ACCESS (defaults private), S3-WEBSITE, S3-CORS, S3-BUCKET-POLICY,
+# S3-ACCESS-LOGGING to the logs bucket below.
+resource "aws_s3_bucket" "site" {
+  bucket = "easymigrate-test-site-${local.bucket_suffix}"
+  tags = {
+    team = "web"
+  }
+}
+
+resource "aws_s3_bucket_public_access_block" "site" {
+  bucket                  = aws_s3_bucket.site.id
+  block_public_acls       = true
+  ignore_public_acls      = true
+  block_public_policy     = false
+  restrict_public_buckets = false
+}
+
+resource "aws_s3_bucket_policy" "site" {
+  bucket = aws_s3_bucket.site.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = "*"
+      Action    = "s3:GetObject"
+      Resource  = "${aws_s3_bucket.site.arn}/*"
+    }]
+  })
+  depends_on = [aws_s3_bucket_public_access_block.site]
+}
+
+resource "aws_s3_bucket_website_configuration" "site" {
+  bucket = aws_s3_bucket.site.id
+  index_document {
+    suffix = "index.html"
+  }
+  error_document {
+    key = "404.html"
+  }
+}
+
+resource "aws_s3_bucket_cors_configuration" "site" {
+  bucket = aws_s3_bucket.site.id
+  cors_rule {
+    allowed_origins = ["https://example.com"]
+    allowed_methods = ["GET", "HEAD"]
+    allowed_headers = ["Authorization"]
+    expose_headers  = ["ETag"]
+    max_age_seconds = 3600
+  }
+}
+
+resource "aws_s3_bucket" "logs" {
+  bucket = "easymigrate-test-logs-${local.bucket_suffix}"
+}
+
+resource "aws_s3_bucket_logging" "site" {
+  bucket        = aws_s3_bucket.site.id
+  target_bucket = aws_s3_bucket.logs.id
+  target_prefix = "access/"
+}
+
+# Object Lock bucket: S3-OBJECT-LOCK (retention policy replaces versioning), S3-LIFECYCLE,
+# S3-INTELLIGENT-TIERING (defaults standard because lifecycle moves classes).
+resource "aws_s3_bucket" "records" {
+  bucket              = "easymigrate-test-records-${local.bucket_suffix}"
+  object_lock_enabled = true
+}
+
+resource "aws_s3_bucket_versioning" "records" {
+  bucket = aws_s3_bucket.records.id
+  versioning_configuration {
+    status = "Enabled"
+  }
+}
+
+resource "aws_s3_bucket_object_lock_configuration" "records" {
+  bucket = aws_s3_bucket.records.id
+  rule {
+    default_retention {
+      mode = "GOVERNANCE"
+      days = 1
+    }
+  }
+  depends_on = [aws_s3_bucket_versioning.records]
+}
+
+resource "aws_s3_bucket_lifecycle_configuration" "records" {
+  bucket = aws_s3_bucket.records.id
+  rule {
+    id     = "archive"
+    status = "Enabled"
+    filter {
+      prefix = "logs/"
+    }
+    transition {
+      days          = 30
+      storage_class = "STANDARD_IA"
+    }
+    expiration {
+      days = 730
+    }
+    noncurrent_version_expiration {
+      noncurrent_days = 30
+    }
+    abort_incomplete_multipart_upload {
+      days_after_initiation = 7
+    }
+  }
+  depends_on = [aws_s3_bucket_versioning.records]
+}
+
+resource "aws_s3_bucket_intelligent_tiering_configuration" "records" {
+  bucket = aws_s3_bucket.records.id
+  name   = "all"
+  tiering {
+    access_tier = "ARCHIVE_ACCESS"
+    days        = 90
+  }
+}
