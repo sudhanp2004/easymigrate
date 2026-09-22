@@ -120,8 +120,9 @@ rules + ASG backend, internal ALB, external NLB, internal NLB, k8s-owned); provi
   the only automatic path, at the cost of provisioning after DNS moves.
 - **D4 Cloud Armor for ALB source restrictions.** A global external ALB has no security group; an
   allow-list policy is the equivalent that keeps a restricted ALB restricted.
-- **D5 One unmanaged instance group per zone.** GCP allows an instance in only one load-balanced
-  unmanaged group, so target groups share groups and differ by named port.
+- **D5 Endpoint groups for ALBs, one unmanaged instance group per zone for NLBs.** GCP allows an
+  instance in only one load-balanced instance group, and one group cannot serve both balancing
+  modes (amended after the live run).
 - **D6 Kubernetes-controller LBs excluded**, consistent with spec 5's empty-cluster boundary.
 
 ## 10. Plans
@@ -130,3 +131,28 @@ rules + ASG backend, internal ALB, external NLB, internal NLB, k8s-owned); provi
 2. `LB-*` rules.
 3. Generation, report, goldens, provider schema.
 4. Testbed and live run.
+
+## 11. Live run, 2026-09-22
+
+**Partly synthetic, stated plainly.** The AWS account refused to create a Network Load Balancer
+(`OperationNotPermitted: This AWS account currently does not support creating load balancers`);
+the ALB was created. So the ALB, both target groups and the app instance went through the real
+AWS collection, and one NLB entry, shaped like `DescribeLoadBalancers` output and pointing at the
+real SSH target group, was added to the snapshot before `analyze`. Everything from `analyze`
+onward, including `apply` to GCP, is real.
+
+Proven on GCP (`asia-south1`): the global external ALB answered with the migrated VM's page;
+`/api/x` reached the backend through the path rule (404 from the VM's own server); SSH through the
+external passthrough NLB logged into the same VM; a second `plan` showed no changes; teardown
+clean.
+
+Found and fixed:
+1. **Cloud Armor quota.** The project's `SECURITY_POLICIES` limit was 0, so the default allow-list
+   failed at apply. `plan` now reads the quota first and stops with the two ways out.
+2. **One instance group cannot serve an ALB and an NLB** (`incompatible balancing_mode`), and an
+   instance can be in only one load-balanced instance group. Application LB backends now use zonal
+   network endpoint groups (`GCE_VM_IP_PORT`); Network LBs keep unmanaged instance groups. D5 is
+   amended accordingly; a managed instance group behind both kinds is a `GenerationError`.
+
+Not proven live: HTTPS (needs a domain for the managed certificate), internal ALB/NLB, ASG backends
+— covered by goldens and provider-schema tests.
