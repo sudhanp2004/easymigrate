@@ -107,8 +107,15 @@ def collect(connection: AwsConnection, ctx: CollectContext) -> dict[str, Any]:
             "addon",
             "eks:DescribeAddon",
         )
-        files["kubernetes.access_entries"][name] = _list(
-            eks, ctx, "list_access_entries", "accessEntries", "eks:ListAccessEntries", name
+        # A CONFIG_MAP-mode cluster keeps access in the aws-auth ConfigMap, which only the
+        # Kubernetes API can read; EKS rejects ListAccessEntries for it (live run, 2026-09-22).
+        mode = (cluster.get("accessConfig") or {}).get("authenticationMode", "CONFIG_MAP")
+        files["kubernetes.access_entries"][name] = (
+            []
+            if mode == "CONFIG_MAP"
+            else _list(
+                eks, ctx, "list_access_entries", "accessEntries", "eks:ListAccessEntries", name
+            )
         )
         files["kubernetes.pod_identities"][name] = _list(
             eks,
@@ -186,8 +193,14 @@ def _unsupported(exc: BaseException) -> bool:
     response = getattr(exc, "response", None)
     if not isinstance(response, dict):
         return False
-    # A bare "404" is an endpoint (moto, some partitions) that does not serve the operation.
-    return response.get("Error", {}).get("Code") in {"UnsupportedOperation", "InvalidAction", "404"}
+    # A bare "404" is an endpoint (moto, some partitions) that does not serve the operation;
+    # InvalidRequestException is EKS saying the operation does not apply to this cluster.
+    return response.get("Error", {}).get("Code") in {
+        "UnsupportedOperation",
+        "InvalidAction",
+        "InvalidRequestException",
+        "404",
+    }
 
 
 def _self_managed_groups(autoscaling: Any, ctx: CollectContext) -> list[dict[str, Any]]:

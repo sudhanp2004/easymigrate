@@ -116,3 +116,26 @@ def test_denied_describe_cluster_is_a_scan_gap_and_the_rest_continues(aws, monke
 
     assert files["kubernetes.clusters"] == {}
     assert "Grant eks:DescribeCluster" in [f.suggestion for f in ctx.findings]
+
+
+def test_access_entries_not_applicable_to_the_cluster_do_not_fail_the_scan(aws, monkeypatch):
+    """Live run, 2026-09-22: EKS rejects ListAccessEntries on a CONFIG_MAP-mode cluster."""
+    _cluster(aws)
+    original = type(aws).client
+
+    def client(self, service):
+        c = original(self, service)
+
+        def reject(**kwargs):
+            raise ClientError(
+                {"Error": {"Code": "InvalidRequestException", "Message": "mode"}},
+                "ListAccessEntries",
+            )
+
+        c.meta.events.register("before-call.eks.ListAccessEntries", reject)
+        return c
+
+    monkeypatch.setattr(type(aws), "client", client)
+    files = collect(aws, CollectContext(plugin="kubernetes"))
+    assert files["kubernetes.access_entries"]["prod"] == []
+    assert "prod" in files["kubernetes.clusters"]
