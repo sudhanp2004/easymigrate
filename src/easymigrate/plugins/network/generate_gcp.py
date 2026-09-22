@@ -173,6 +173,14 @@ def _generate_subnets(file, names, subnets, findings, decided_by, ctx) -> None:
         block.attr("ip_cidr_range", subnet.cidr)
         block.attr("region", Ref("var.region"))
         block.attr("network", Ref(f"google_compute_network.{names.label[subnet.network]}.id"))
+        # Pod and service ranges a GKE cluster on this subnet needs (spec 5 §2.1), decided by
+        # K8S-POD-RANGES and carried as a hint so the subnet stays this family's object.
+        for entry in sorted(
+            subnet.target_hints.get("secondary_ranges", []), key=lambda e: e["name"]
+        ):
+            secondary = block.block("secondary_ip_range")
+            secondary.attr("range_name", entry["name"])
+            secondary.attr("ip_cidr_range", entry["cidr"])
 
 
 def _generate_internet_routes(file, names, networks, subnets) -> None:
@@ -248,6 +256,21 @@ def _generate_nats(file, names, nats, subnets, findings, decided_by, ctx) -> Non
 
 def _peer_suffix(peer) -> str:
     return _PEER_SUFFIX[type(peer)]
+
+
+def network_tf_labels(resolved: IRDocument) -> dict[str, str]:
+    """Network IR id -> the Terraform label `generate` gives it. Other families reference
+    networks by this label, so they read it here rather than recomputing it."""
+    allocator = TfLabelAllocator()
+    live = sorted((n for n in resolved.of_kind(Network) if n.excluded is None), key=lambda n: n.id)
+    return {n.id: allocator.allocate("google_compute_network", n.id) for n in live}
+
+
+def subnet_tf_labels(resolved: IRDocument) -> dict[str, str]:
+    """Subnet IR id -> the Terraform label `generate` gives it (see `network_tf_labels`)."""
+    allocator = TfLabelAllocator()
+    live = sorted((s for s in resolved.of_kind(Subnet) if s.excluded is None), key=lambda s: s.id)
+    return {s.id: allocator.allocate("google_compute_subnetwork", s.id) for s in live}
 
 
 def policy_network_tags(policies) -> tuple[dict[str, str], dict[str, str]]:

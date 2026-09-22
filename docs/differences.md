@@ -534,3 +534,116 @@ An ASG lifecycle hook pauses a launch or termination until something calls back.
 | Strategy | Title | Effect | Risk | Manual | Default |
 |---|---|---|---|---|---|
 | `note_only` | Note it | the hooks are named in the report; nothing pauses instance changes | medium |  | yes |
+
+## Kubernetes rules
+
+### The GKE cluster is created empty (`K8S-EMPTY-CLUSTER`)
+
+EasyMigrate migrates the cluster, not what runs in it. No Deployments, Services, ConfigMaps, Secrets, custom resources, Helm releases or persistent volumes are read or copied: the Kubernetes API is never called.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `note_only` | Understood | the cluster and its node pools are created with nothing deployed; every workload must be redeployed from its source of truth | high |  | yes |
+
+### The Kubernetes version and upgrade policy change hands (`K8S-VERSION`)
+
+EKS keeps a cluster on its minor until the user upgrades it or standard support ends. GKE offers a set of minors and, in a release channel, upgrades automatically.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `pin_minor` | Pin the same minor, no release channel | the cluster starts on the source minor (or the nearest newer one GKE offers) and node auto-upgrade is off; GKE still upgrades when the minor reaches end of support, as EKS does | low |  | yes |
+| `regular_channel` | Enrol in the Regular release channel | GKE picks the version and upgrades control plane and nodes automatically | medium |  |  |
+
+### The API endpoint's exposure is reproduced, not narrowed (`K8S-ENDPOINT`)
+
+EKS exposes the Kubernetes API publicly, privately or both, with an optional CIDR allow-list. GKE has a public endpoint guarded by authorized networks, or a private one. EasyMigrate mirrors the source so kubectl keeps working from where it worked before.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `mirror` | Mirror the source exposure | a public endpoint with the same allow-list as authorized networks, or a private endpoint when EKS was private-only | low |  | yes |
+| `private_endpoint` | Private endpoint only | the API is reachable only from inside the VPC; kubectl from outside stops working | medium |  |  |
+
+### Nodes get no external IP unless you ask for one (`K8S-PRIVATE-NODES`)
+
+EKS nodes in public subnets get public addresses. A GKE node with no external IP reaches the internet only through Cloud NAT, so image pulls from public registries need NAT on the node subnet; Google's own registries are reached privately.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `private_nodes` | Private nodes | nodes have no external IPs; pulling from Docker Hub or other public registries needs Cloud NAT on the node subnet | medium |  | yes |
+| `public_nodes` | Public nodes | every node has an external IP, reachable from the internet as the firewall allows | high |  |  |
+
+### Pods move from VPC addresses to a secondary range (`K8S-POD-RANGES`)
+
+EKS's VPC CNI gives every pod an address from the node's subnet. GKE takes pod and service addresses from secondary ranges on one subnet, so pods no longer hold VPC addresses: anything that allow-listed pod IPs, or relied on security groups for pods, must change.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `secondary_ranges` | Add pod and service ranges to the node subnet | the chosen subnet gains a pods range and a services range; the EKS service CIDR is kept when it overlaps nothing, so in-cluster DNS keeps its address | medium |  | yes |
+
+Params:
+
+- `pods_cidr`: pod range, /21 or larger, overlapping nothing in the network
+- `services_cidr`: service range, /27 or larger, overlapping nothing in the network
+- `subnet`: IR id of the subnet the cluster and its node pools use
+
+### Control-plane log types map to GKE logging components (`K8S-LOGGING`)
+
+EKS ships selected control-plane logs to CloudWatch. GKE sends component logs to Cloud Logging; audit logs are Cloud Audit Logs, and the authenticator log has no equivalent.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `map_components` | Map each log type | api, controllerManager and scheduler become the matching GKE components, plus system components; container logs are not enabled, as on EKS | low |  | yes |
+
+### A KMS key for Kubernetes secrets does not carry to GCP (`K8S-SECRETS-ENCRYPTION`)
+
+EKS envelope-encrypts secrets with the customer's KMS key. GKE encrypts etcd at rest with Google-managed keys; application-layer encryption needs a Cloud KMS key.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `google_managed` | Google-managed encryption | secrets are encrypted at rest by Google, without application-layer encryption | low |  | yes |
+| `manual` | Handle manually | create a Cloud KMS key and set database_encryption on the cluster yourself | low | yes |  |
+
+### EKS add-ons map to GKE built-ins, or are not migrated (`K8S-ADDONS`)
+
+The VPC CNI, kube-proxy and CoreDNS are part of every GKE cluster, and the Persistent Disk CSI driver replaces the EBS one. The EFS driver maps to Filestore. Any other add-on must be reinstalled; storage classes naming AWS provisioners must change either way.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `map_addons` | Map each add-on | built-ins are used, Filestore CSI is enabled for EFS, and the rest are listed | low |  | yes |
+
+### IAM roles for service accounts are not translated (`K8S-IAM-FOR-PODS`)
+
+Pods that assumed AWS roles through IRSA or EKS Pod Identity lose those credentials. Workload Identity is enabled on the GKE cluster so each binding can be recreated as a Google service account, but EasyMigrate does not translate permissions.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `manual` | Recreate the bindings yourself | Workload Identity is on; every listed service account needs a Google service account with equivalent access and an IAM binding | high | yes | yes |
+
+### Who can use the cluster must be granted again (`K8S-CLUSTER-ACCESS`)
+
+EKS maps IAM principals to Kubernetes identities through access entries or the aws-auth ConfigMap. Neither carries: on GKE only Google IAM principals with container roles, plus in-cluster RBAC, grant access.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `manual` | Re-grant access yourself | the new cluster is usable only by Google principals with container roles in the project; grant each team the roles and RBAC bindings it had | medium | yes | yes |
+
+### An IPv6 cluster is generated IPv4-only (`K8S-IPV6`)
+
+GKE dual-stack needs subnet and cluster changes this family does not generate.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `manual` | Handle manually | the GKE cluster is IPv4; configure dual-stack yourself if pods need IPv6 | medium | yes | yes |
+
+### Fargate pods run on ordinary nodes (`K8S-FARGATE`)
+
+GKE Standard has no serverless pods. Pods a Fargate profile selected are scheduled on the cluster's node pools instead, which changes their isolation and billing. A cluster that ran only on Fargate needs a node pool to run anything.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `schedule_on_nodes` | Schedule them on node pools | the selected pods run on the cluster's nodes; when the cluster has no node groups, a default node pool is created | medium |  | yes |
+
+Params:
+
+- `machine_type`: machine type of the default node pool, e.g. e2-standard-4
+- `nodes_per_zone`: nodes per zone in the default node pool

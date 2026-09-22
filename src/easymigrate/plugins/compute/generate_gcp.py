@@ -17,8 +17,12 @@ from easymigrate.ir.compute import (
     InstanceGroup,
     InstanceTemplate,
 )
-from easymigrate.ir.network import FirewallPolicy, Network, Subnet
-from easymigrate.plugins.network.generate_gcp import policy_network_tags
+from easymigrate.ir.network import FirewallPolicy
+from easymigrate.plugins.network.generate_gcp import (
+    network_tf_labels,
+    policy_network_tags,
+    subnet_tf_labels,
+)
 from easymigrate.providers.gcp.hcl import HclFile, Ref
 from easymigrate.providers.gcp.naming import GcpNameAllocator, TfLabelAllocator
 from easymigrate.providers.gcp.zones import zone_suffix
@@ -225,12 +229,7 @@ def generate(resolved: IRDocument, ctx: GenerateContext) -> HclFile:
 
 
 def _network_labels(resolved: IRDocument) -> dict[str, str]:
-    """The Terraform labels the network generator gave each network, recomputed the same way."""
-    allocator = TfLabelAllocator()
-    return {
-        network.id: allocator.allocate("google_compute_network", network.id)
-        for network in sorted(resolved.of_kind(Network), key=lambda n: n.id)
-    }
+    return network_tf_labels(resolved)
 
 
 def _templates_for(
@@ -294,12 +293,7 @@ def _generate_address(
 
 
 def _subnet_labels(resolved: IRDocument) -> dict[str, str]:
-    """The Terraform labels the network generator gave each subnet, recomputed the same way."""
-    allocator = TfLabelAllocator()
-    labels: dict[str, str] = {}
-    for subnet in sorted(resolved.of_kind(Subnet), key=lambda s: s.id):
-        labels[subnet.id] = allocator.allocate("google_compute_subnetwork", subnet.id)
-    return labels
+    return subnet_tf_labels(resolved)
 
 
 def _generate_disk(

@@ -52,6 +52,20 @@ from easymigrate.differences.rules.aws_gcp.database import (
     DbTier,
     DbUsers,
 )
+from easymigrate.differences.rules.aws_gcp.kubernetes import (
+    K8sAddons,
+    K8sClusterAccess,
+    K8sEmptyCluster,
+    K8sEndpoint,
+    K8sFargate,
+    K8sIamForPods,
+    K8sIpv6,
+    K8sLogging,
+    K8sPodRanges,
+    K8sPrivateNodes,
+    K8sSecretsEncryption,
+    K8sVersion,
+)
 from easymigrate.differences.rules.aws_gcp.network import (
     NetCidrOverlap,
     NetCustomRoute,
@@ -130,4 +144,18 @@ AWS_GCP_RULES: tuple[DifferenceRule, ...] = (
     VmAsgMixedInstances(),
     VmAsgTargetGroups(),
     VmAsgLifecycle(),
+    # Kubernetes (spec 5 §5). Cluster rules first: K8S-VERSION before node rules, because node
+    # versions follow the control plane; K8S-POD-RANGES chooses the subnet node pools use.
+    K8sEmptyCluster(),
+    K8sVersion(),
+    K8sEndpoint(),
+    K8sPrivateNodes(),
+    K8sPodRanges(),
+    K8sLogging(),
+    K8sSecretsEncryption(),
+    K8sAddons(),
+    K8sIamForPods(),
+    K8sClusterAccess(),
+    K8sIpv6(),
+    K8sFargate(),
 )

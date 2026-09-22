@@ -8,59 +8,59 @@ Every IR field the kubernetes generator could touch is declared here, so an IR f
 
 | Field | Declaration |
 |---|---|
-| `access_entries` | not_generated:GKE generation is spec 5 plans 2-3 |
-| `addons` | not_generated:GKE generation is spec 5 plans 2-3 |
-| `authentication_mode` | not_generated:GKE generation is spec 5 plans 2-3 |
-| `endpoint_private` | not_generated:GKE generation is spec 5 plans 2-3 |
-| `endpoint_public` | not_generated:GKE generation is spec 5 plans 2-3 |
+| `access_entries` | always_excluded:K8S-CLUSTER-ACCESS; access is re-granted by hand |
+| `addons` | decision:K8S-ADDONS |
+| `authentication_mode` | recorded:captured in the IR and the report; nothing is generated from it |
+| `endpoint_private` | decision:K8S-ENDPOINT |
+| `endpoint_public` | decision:K8S-ENDPOINT |
 | `excluded` | metadata |
-| `fargate_profiles` | not_generated:GKE generation is spec 5 plans 2-3 |
-| `firewall_policies` | not_generated:GKE generation is spec 5 plans 2-3 |
+| `fargate_profiles` | decision:K8S-FARGATE |
+| `firewall_policies` | derived:node pools wear the policies' network tags |
 | `id` | metadata |
-| `ip_family` | not_generated:GKE generation is spec 5 plans 2-3 |
+| `ip_family` | decision:K8S-IPV6 |
 | `kind` | metadata |
 | `labels` | metadata |
-| `log_types` | not_generated:GKE generation is spec 5 plans 2-3 |
+| `log_types` | decision:K8S-LOGGING maps them to logging components |
 | `name` | metadata |
-| `oidc_issuer` | not_generated:GKE generation is spec 5 plans 2-3 |
-| `pod_identities` | not_generated:GKE generation is spec 5 plans 2-3 |
-| `public_access_cidrs` | not_generated:GKE generation is spec 5 plans 2-3 |
+| `oidc_issuer` | decision:K8S-IAM-FOR-PODS; Workload Identity is always enabled |
+| `pod_identities` | always_excluded:K8S-IAM-FOR-PODS; bindings are recreated by hand |
+| `public_access_cidrs` | decision:K8S-ENDPOINT maps them to authorized networks |
 | `resolution` | metadata |
-| `secrets_kms_key` | not_generated:GKE generation is spec 5 plans 2-3 |
-| `service_cidr` | not_generated:GKE generation is spec 5 plans 2-3 |
+| `secrets_kms_key` | always_excluded:an AWS KMS key cannot be used by GCP |
+| `service_cidr` | decision:K8S-POD-RANGES keeps it as the services range when free |
 | `source` | metadata |
-| `subnets` | not_generated:GKE generation is spec 5 plans 2-3 |
+| `subnets` | decision:K8S-POD-RANGES picks the one subnet the cluster uses |
 | `target_hints` | metadata |
-| `version` | not_generated:GKE generation is spec 5 plans 2-3 |
+| `version` | decision:K8S-VERSION sets min_master_version and the release channel |
 
 ## `node_pool`
 
 | Field | Declaration |
 |---|---|
-| `ami_type` | not_generated:GKE generation is spec 5 plans 2-3 |
-| `capacity` | not_generated:GKE generation is spec 5 plans 2-3 |
-| `cluster` | not_generated:GKE generation is spec 5 plans 2-3 |
-| `desired_size` | not_generated:GKE generation is spec 5 plans 2-3 |
-| `disk_size_gib` | not_generated:GKE generation is spec 5 plans 2-3 |
+| `ami_type` | not_generated:node pools are spec 5 plan 3 |
+| `capacity` | not_generated:node pools are spec 5 plan 3 |
+| `cluster` | not_generated:node pools are spec 5 plan 3 |
+| `desired_size` | not_generated:node pools are spec 5 plan 3 |
+| `disk_size_gib` | not_generated:node pools are spec 5 plan 3 |
 | `excluded` | metadata |
-| `firewall_policies` | not_generated:GKE generation is spec 5 plans 2-3 |
+| `firewall_policies` | not_generated:node pools are spec 5 plan 3 |
 | `id` | metadata |
-| `instance_types` | not_generated:GKE generation is spec 5 plans 2-3 |
+| `instance_types` | not_generated:node pools are spec 5 plan 3 |
 | `kind` | metadata |
 | `labels` | metadata |
-| `max_size` | not_generated:GKE generation is spec 5 plans 2-3 |
-| `max_unavailable` | not_generated:GKE generation is spec 5 plans 2-3 |
-| `max_unavailable_percent` | not_generated:GKE generation is spec 5 plans 2-3 |
-| `memory_mib` | not_generated:GKE generation is spec 5 plans 2-3 |
-| `min_size` | not_generated:GKE generation is spec 5 plans 2-3 |
+| `max_size` | not_generated:node pools are spec 5 plan 3 |
+| `max_unavailable` | not_generated:node pools are spec 5 plan 3 |
+| `max_unavailable_percent` | not_generated:node pools are spec 5 plan 3 |
+| `memory_mib` | not_generated:node pools are spec 5 plan 3 |
+| `min_size` | not_generated:node pools are spec 5 plan 3 |
 | `name` | metadata |
-| `node_labels` | not_generated:GKE generation is spec 5 plans 2-3 |
-| `origin` | not_generated:GKE generation is spec 5 plans 2-3 |
+| `node_labels` | not_generated:node pools are spec 5 plan 3 |
+| `origin` | not_generated:node pools are spec 5 plan 3 |
 | `resolution` | metadata |
 | `source` | metadata |
-| `ssh_key` | not_generated:GKE generation is spec 5 plans 2-3 |
-| `subnets` | not_generated:GKE generation is spec 5 plans 2-3 |
-| `taints` | not_generated:GKE generation is spec 5 plans 2-3 |
+| `ssh_key` | not_generated:node pools are spec 5 plan 3 |
+| `subnets` | not_generated:node pools are spec 5 plan 3 |
+| `taints` | not_generated:node pools are spec 5 plan 3 |
 | `target_hints` | metadata |
-| `vcpus` | not_generated:GKE generation is spec 5 plans 2-3 |
-| `version` | not_generated:GKE generation is spec 5 plans 2-3 |
+| `vcpus` | not_generated:node pools are spec 5 plan 3 |
+| `version` | not_generated:node pools are spec 5 plan 3 |

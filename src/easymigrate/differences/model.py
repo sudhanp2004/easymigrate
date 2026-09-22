@@ -12,7 +12,7 @@ from easymigrate.ir.base import IRDocument, StrictModel
 
 Risk = Literal["none", "low", "medium", "high"]
 
-_RULE_ID_RE = re.compile(r"^[A-Z]+(-[A-Z0-9]+)+$")
+_RULE_ID_RE = re.compile(r"^[A-Z][A-Z0-9]*(-[A-Z0-9]+)+$")
 
 
 class Strategy(StrictModel):
