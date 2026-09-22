@@ -31,6 +31,7 @@ from easymigrate.plugins.compute.aws_values import (
     ASG_MEMBER_TAG,
     EKS_CLUSTER_TAG,
     FALLBACK_INSTANCE_TYPES,
+    K8S_CLUSTER_TAG_PREFIX,
     TRANSIENT_STATES,
     UNSUPPORTED_REASONS,
     name_tag,
@@ -184,7 +185,8 @@ def _translatable_instances(
             continue
         instance_tags = tags(instance)
         group = instance_tags.get(ASG_MEMBER_TAG)
-        if group and EKS_CLUSTER_TAG not in instance_tags:
+        is_k8s_node = EKS_CLUSTER_TAG in instance_tags or _self_managed_cluster(instance_tags)
+        if group and not is_k8s_node:
             ctx.info(
                 "VM-ASG-MEMBER",
                 f"{instance['InstanceId']} was launched by Auto Scaling group {group}; the group "
@@ -197,6 +199,13 @@ def _translatable_instances(
     return keep
 
 
+def _self_managed_cluster(resource_tags: dict[str, str]) -> str | None:
+    for key in resource_tags:
+        if key.startswith(K8S_CLUSTER_TAG_PREFIX):
+            return key[len(K8S_CLUSTER_TAG_PREFIX) :]
+    return None
+
+
 def _standalone_groups(
     groups_raw: list[dict[str, Any]], ctx: NormalizeContext
 ) -> list[dict[str, Any]]:
@@ -204,7 +213,9 @@ def _standalone_groups(
     keep = []
     for group in groups_raw:
         group_tags = {tag["Key"]: tag.get("Value", "") for tag in group.get("Tags") or []}
-        cluster = group_tags.get(EKS_CLUSTER_TAG)
+        # Self-managed node groups carry only `kubernetes.io/cluster/<name>`; the Kubernetes
+        # family turns them into node pools (spec 5 §2.2).
+        cluster = group_tags.get(EKS_CLUSTER_TAG) or _self_managed_cluster(group_tags)
         if cluster:
             ctx.info(
                 "VM-ASG-EKS",
@@ -410,7 +421,7 @@ def _instances(
             )
 
         instance_tags = tags(item)
-        eks_cluster = instance_tags.get(EKS_CLUSTER_TAG)
+        eks_cluster = instance_tags.get(EKS_CLUSTER_TAG) or _self_managed_cluster(instance_tags)
         if eks_cluster:
             ctx.info(
                 "VM-EKS-MEMBER",

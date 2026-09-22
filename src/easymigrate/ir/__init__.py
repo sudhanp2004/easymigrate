@@ -1,6 +1,11 @@
 """Intent-level intermediate representation."""
 
-from easymigrate.ir import database, network  # registers kinds; import order does not matter
+from easymigrate.ir import (  # registers kinds; import order does not matter
+    compute,
+    database,
+    kubernetes,
+    network,
+)
 from easymigrate.ir.base import (
     Finding,
     IntentObject,
@@ -18,7 +23,9 @@ __all__ = [
     "ResolutionRef",
     "SourceRef",
     "StrictModel",
+    "compute",
     "database",
     "intent_class",
+    "kubernetes",
     "network",
 ]

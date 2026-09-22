@@ -491,3 +491,32 @@ def test_eks_node_group_asg_is_left_to_the_eks_family():
     assert only(objects, InstanceGroup) == []
     assert only(objects, InstanceTemplate) == []
     assert "VM-ASG-EKS" in codes(ctx)
+
+
+def test_self_managed_kubernetes_asg_is_left_to_the_kubernetes_family():
+    from easymigrate.ir.compute import InstanceGroup
+
+    files = _asg_files()
+    group = files["compute.autoscaling_groups"]["AutoScalingGroups"][0]
+    group["Tags"] = [{"Key": "kubernetes.io/cluster/prod", "Value": "owned"}]
+    objects, ctx = run(files)
+
+    assert only(objects, InstanceGroup) == []
+    assert "VM-ASG-EKS" in codes(ctx)
+
+
+def test_self_managed_kubernetes_node_is_captured_as_a_cluster_member():
+    files = b.snapshot_files(
+        instances=[
+            b.instance(
+                extra_tags={
+                    "aws:autoscaling:groupName": "self-nodes",
+                    "kubernetes.io/cluster/prod": "owned",
+                }
+            )
+        ]
+    )
+    objects, ctx = run(files)
+
+    assert only(objects, ComputeInstance)[0].eks_cluster == "prod"
+    assert "VM-ASG-MEMBER" not in codes(ctx)

@@ -14,12 +14,18 @@ from easymigrate.plugins.database import DatabasePlugin
 from easymigrate.plugins.database.generate_gcp import (
     database_password_variables as _database_password_variables,
 )
+from easymigrate.plugins.kubernetes import KubernetesPlugin
 from easymigrate.plugins.network import NetworkPlugin
 from easymigrate.providers.aws import source as aws_source
 from easymigrate.providers.gcp import boilerplate, state_bucket
 from easymigrate.providers.gcp import services as gcp_services
 
-PLUGINS: tuple[Plugin, ...] = (NetworkPlugin(), ComputePlugin(), DatabasePlugin())
+PLUGINS: tuple[Plugin, ...] = (
+    NetworkPlugin(),
+    ComputePlugin(),
+    KubernetesPlugin(),
+    DatabasePlugin(),
+)
 
 
 class AwsSource:
