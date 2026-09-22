@@ -26,6 +26,10 @@ class KubernetesPlugin:
         }
     )
 
+    # Running pods show up in the tagging API. They are workloads, which K8S-EMPTY-CLUSTER
+    # already states are not migrated, so they are not also "unsupported" (live run, 2026-09-22).
+    managed_arns = (("eks:pod", r":pod/"),)
+
     def collect_aws(self, connection: Any, ctx: CollectContext) -> dict[str, Any]:
         return collect(connection, ctx)
 

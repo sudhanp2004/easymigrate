@@ -139,3 +139,15 @@ def test_access_entries_not_applicable_to_the_cluster_do_not_fail_the_scan(aws, 
     files = collect(aws, CollectContext(plugin="kubernetes"))
     assert files["kubernetes.access_entries"]["prod"] == []
     assert "prod" in files["kubernetes.clusters"]
+
+
+def test_running_pods_are_claimed_so_the_inventory_does_not_list_them():
+    import re
+
+    from easymigrate.plugins.kubernetes import KubernetesPlugin
+
+    arn = "arn:aws:eks:ap-south-1:1:pod/prod/kube-system/coredns-1/uid"
+    assert any(
+        kind == "eks:pod" and re.search(pattern, arn)
+        for kind, pattern in KubernetesPlugin.managed_arns
+    )
