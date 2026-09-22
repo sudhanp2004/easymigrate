@@ -13,6 +13,7 @@ import json
 import os
 import platform
 import subprocess
+import threading
 import zipfile
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -165,6 +166,10 @@ class Tofu:
     workdir: Path
     runner: Runner = subprocess.run
     env: dict[str, str] | None = field(default=None)
+    # Long-running commands (plan, apply) go through Popen so each output line reaches the
+    # caller as tofu prints it. `run` with capture_output replayed everything after exit, and
+    # a user watched an empty log for five minutes while the process was already dead.
+    popen: Callable[..., subprocess.Popen] = subprocess.Popen
 
     def _env(self) -> dict[str, str]:
         env = dict(os.environ) if self.env is None else dict(self.env)
@@ -185,6 +190,34 @@ class Tofu:
             raise TofuError(message)
         return result
 
+    def _run_streaming(self, args: list[str], stream: Callable[[str], None]) -> str:
+        proc = self.popen(
+            [str(self.binary), *args],
+            cwd=self.workdir,
+            env=self._env(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        # Drained on its own thread: a full stderr pipe would block tofu while this thread
+        # waits on stdout, and neither would ever finish.
+        stderr_parts: list[str] = []
+        reader = threading.Thread(target=lambda: stderr_parts.append(proc.stderr.read()))
+        reader.start()
+        lines: list[str] = []
+        for raw in proc.stdout:
+            line = raw.rstrip("\n")
+            lines.append(line)
+            stream(line)
+        returncode = proc.wait()
+        reader.join()
+        stderr = "".join(stderr_parts)
+        if returncode != 0:
+            hint = _hint(stderr)
+            raise TofuError(stderr if hint is None else f"{stderr}\n{hint}")
+        return "\n".join(lines)
+
     def init(self, backend_config: dict[str, str] | None = None, *, backend: bool = True) -> None:
         args = ["init"]
         if backend:
@@ -201,9 +234,11 @@ class Tofu:
         # `validate` does not accept `-input`; it never touches remote state or variables.
         self._run(["validate", "-no-color"])
 
-    def plan(self, out: Path) -> str:
-        result = self._run(["plan", f"-out={out}", "-no-color", "-input=false"])
-        return result.stdout
+    def plan(self, out: Path, stream: Callable[[str], None] | None = None) -> str:
+        args = ["plan", f"-out={out}", "-no-color", "-input=false"]
+        if stream is not None:
+            return self._run_streaming(args, stream)
+        return self._run(args).stdout
 
     def show_json(self, plan: Path) -> dict:
         # `show` does not accept `-input`; it only reads a plan/state file.
@@ -211,6 +246,4 @@ class Tofu:
         return json.loads(result.stdout)
 
     def apply(self, plan: Path, stream: Callable[[str], None]) -> None:
-        result = self._run(["apply", "-no-color", "-input=false", str(plan)])
-        for line in result.stdout.splitlines():
-            stream(line)
+        self._run_streaming(["apply", "-no-color", "-input=false", str(plan)], stream)

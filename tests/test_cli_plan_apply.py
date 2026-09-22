@@ -124,6 +124,7 @@ def test_plan_command_prints_non_info_findings(tmp_path, monkeypatch):
 
 def test_plan_command_prompts_for_missing_bucket(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("easymigrate.cli._stdin_is_tty", lambda: True)
     _ready_project(tmp_path)
     monkeypatch.setattr(registry, "gcp_target", lambda: FakeGcp(bucket_exists=False))
     _patch_tofu(monkeypatch)
@@ -136,6 +137,7 @@ def test_plan_command_prompts_for_missing_bucket(tmp_path, monkeypatch):
 
 def test_plan_command_declined_bucket_exits_two(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("easymigrate.cli._stdin_is_tty", lambda: True)
     _ready_project(tmp_path)
     monkeypatch.setattr(registry, "gcp_target", lambda: FakeGcp(bucket_exists=False))
     _patch_tofu(monkeypatch)
@@ -147,6 +149,7 @@ def test_plan_command_declined_bucket_exits_two(tmp_path, monkeypatch):
 
 def test_apply_command_confirmed_runs_and_streams_output(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("easymigrate.cli._stdin_is_tty", lambda: True)
     project = _ready_project(tmp_path)
     monkeypatch.setattr(registry, "gcp_target", lambda: FakeGcp())
     _patch_tofu(monkeypatch)
@@ -163,6 +166,7 @@ def test_apply_command_confirmed_runs_and_streams_output(tmp_path, monkeypatch):
 
 def test_apply_command_declined_exits_two(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("easymigrate.cli._stdin_is_tty", lambda: True)
     _ready_project(tmp_path)
     monkeypatch.setattr(registry, "gcp_target", lambda: FakeGcp())
     _patch_tofu(monkeypatch)
@@ -171,6 +175,50 @@ def test_apply_command_declined_exits_two(tmp_path, monkeypatch):
     result = runner.invoke(app, ["apply"], input="n\n")
 
     assert result.exit_code == 2
+
+
+def test_plan_off_a_terminal_declines_the_bucket_and_names_the_flag(tmp_path, monkeypatch):
+    """Live run, 2026-09-22: prompting with no terminal hung forever on an empty stdin."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("easymigrate.cli._stdin_is_tty", lambda: False)
+    _ready_project(tmp_path)
+    monkeypatch.setattr(registry, "gcp_target", lambda: FakeGcp(bucket_exists=False))
+    _patch_tofu(monkeypatch)
+
+    result = runner.invoke(app, ["plan", "--gcp-project", "my-proj"])
+
+    assert result.exit_code == 2
+    assert "--create-state-bucket" in result.output
+
+
+def test_plan_create_state_bucket_flag_skips_the_prompt(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("easymigrate.cli._stdin_is_tty", lambda: False)
+    _ready_project(tmp_path)
+    monkeypatch.setattr(registry, "gcp_target", lambda: FakeGcp(bucket_exists=False))
+    _patch_tofu(monkeypatch)
+
+    result = runner.invoke(app, ["plan", "--gcp-project", "my-proj", "--create-state-bucket"])
+
+    assert result.exit_code == 0, result.output
+    assert "Create it in" not in result.output
+
+
+def test_apply_off_a_terminal_needs_yes(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("easymigrate.cli._stdin_is_tty", lambda: False)
+    _ready_project(tmp_path)
+    monkeypatch.setattr(registry, "gcp_target", lambda: FakeGcp())
+    _patch_tofu(monkeypatch)
+    runner.invoke(app, ["plan", "--gcp-project", "my-proj"])
+
+    refused = runner.invoke(app, ["apply"])
+    assert refused.exit_code != 0
+    assert "--yes" in refused.output
+
+    result = runner.invoke(app, ["apply", "--yes"])
+    assert result.exit_code == 0, result.output
+    assert "apply: complete" in result.output
 
 
 def test_apply_command_without_plan_exits_two(tmp_path, monkeypatch):

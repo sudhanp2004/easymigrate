@@ -344,6 +344,11 @@ def plan(
             ),
         ),
     ] = None,
+    create_state_bucket: bool = typer.Option(
+        False,
+        "--create-state-bucket",
+        help="Create the Terraform state bucket without asking if it does not exist.",
+    ),
 ) -> None:
     """Generate GCP Terraform from the resolved decisions and run `tofu plan`."""
     project = Project(Path.cwd())
@@ -355,6 +360,12 @@ def plan(
         region = gcp_region_for(config.source.region, override=gcp_region)
 
         def confirm_bucket(name: str) -> bool:
+            if create_state_bucket:
+                return True
+            if not _stdin_is_tty():
+                # Prompting with no terminal blocks forever on a stdin nothing will write to
+                # (live run, 2026-09-22), so decline and let the error name the flag.
+                return False
             return typer.confirm(
                 f"State bucket {name} does not exist. Create it in {region}? [y/N]",
                 default=False,
@@ -374,7 +385,11 @@ def plan(
 
 
 @app.command()
-def apply() -> None:
+def apply(
+    yes: bool = typer.Option(
+        False, "--yes", help="Apply without asking; required when not run from a terminal."
+    ),
+) -> None:
     """Apply exactly the plan `easymigrate plan` produced, after confirmation."""
     project = Project(Path.cwd())
     with _user_errors():
@@ -383,6 +398,10 @@ def apply() -> None:
 
         def confirm(summary: PlanSummary) -> bool:
             _print_plan_summary(summary)
+            if yes:
+                return True
+            if not _stdin_is_tty():
+                _fail("not a terminal, so apply cannot ask for confirmation; re-run with --yes")
             return typer.confirm(
                 f"Apply these changes to project {target_project}? [y/N]", default=False
             )

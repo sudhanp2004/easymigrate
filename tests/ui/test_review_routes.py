@@ -49,9 +49,12 @@ class FakeTofu:
     def validate(self):
         pass
 
-    def plan(self, out: Path) -> str:
+    def plan(self, out: Path, stream=None) -> str:
         out.write_bytes(b"fake-plan-bytes")
-        return "Plan: 1 to add, 0 to change, 0 to destroy."
+        text = "Plan: 1 to add, 0 to change, 0 to destroy."
+        if stream is not None:
+            stream(text)
+        return text
 
     def show_json(self, plan: Path) -> dict:
         return {"resource_changes": []}

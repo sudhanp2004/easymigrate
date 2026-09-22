@@ -55,9 +55,12 @@ class FakeTofu:
     def init(self, backend_config=None, *, backend=True):
         self.init_calls.append(backend_config or {})
 
-    def plan(self, out: Path) -> str:
+    def plan(self, out: Path, stream=None) -> str:
         out.write_bytes(b"fake-plan-bytes")
-        return "Plan: 1 to add, 0 to change, 0 to destroy."
+        text = "Plan: 1 to add, 0 to change, 0 to destroy."
+        if stream is not None:
+            stream(text)
+        return text
 
     def show_json(self, plan: Path) -> dict:
         return self._show_json
@@ -214,6 +217,10 @@ def test_plan_returns_202_and_job_reaches_succeeded(
     finished = _wait_for_terminal(client, resp.json()["id"])
     assert finished["status"] == "succeeded"
     assert project.plan_lock_path.exists()
+    # The plan's progress and tofu output reach the job log; the route used to drop them.
+    log = (project.jobs_dir / f"{finished['id']}.log").read_text()
+    assert "Running tofu plan" in log
+    assert "Plan: 1 to add" in log
 
 
 def test_plan_passes_passwords_and_none_ask_password_through(
@@ -266,7 +273,7 @@ def test_plan_create_bucket_false_and_missing_bucket_fails_with_declined_message
     assert resp.status_code == 202
     finished = _wait_for_terminal(client, resp.json()["id"])
     assert finished["status"] == "failed"
-    assert "declined creating the state bucket" in finished["error"]
+    assert "creating it was not approved" in finished["error"]
 
 
 # --- /api/apply -----------------------------------------------------------------------

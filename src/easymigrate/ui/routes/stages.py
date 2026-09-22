@@ -34,6 +34,8 @@ class PlanRequest(StrictModel):
     gcp_project: str
     gcp_region: str | None = None
     db_passwords: dict[str, str] = {}
+    # EasyMigrate creates the state bucket outside Terraform, so the first plan in a project
+    # always needs it; the plan page sends its checkbox, which now defaults on.
     create_bucket: bool = False
 
 
@@ -72,7 +74,7 @@ def register(app: FastAPI, project: Project, jobs: JobStore, security: Security)
 
     @app.post("/api/plan", status_code=202, dependencies=mutating)
     def start_plan(body: PlanRequest) -> JobRecord:
-        def work(_stream: Callable[[str], None]) -> None:
+        def work(stream: Callable[[str], None]) -> None:
             pipeline.plan(
                 project,
                 gcp_project=body.gcp_project,
@@ -80,6 +82,7 @@ def register(app: FastAPI, project: Project, jobs: JobStore, security: Security)
                 confirm_bucket=lambda _name: body.create_bucket,
                 db_passwords=body.db_passwords,
                 ask_password=None,
+                stream=stream,
             )
 
         return _start_or_409(jobs, "plan", work)

@@ -29,7 +29,9 @@ function databaseInstanceIds(differences: DifferenceView[]): string[] {
 export function PlanPage({ project }: PlanPageProps) {
   const [gcpProject, setGcpProject] = useState('')
   const [gcpRegion, setGcpRegion] = useState('')
-  const [createBucket, setCreateBucket] = useState(false)
+  // On by default: the first plan in a fresh project always needs the bucket, and leaving
+  // this off made that run fail with a message that read like GCP refusing.
+  const [createBucket, setCreateBucket] = useState(true)
   const [instanceIds, setInstanceIds] = useState<string[]>([])
   const [passwords, setPasswords] = useState<Record<string, string>>({})
   const [jobId, setJobId] = useState<string | null>(project.activeJob?.id ?? null)

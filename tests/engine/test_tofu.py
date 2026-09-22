@@ -207,14 +207,52 @@ def test_show_json_argument_list_and_parse(tmp_path):
     assert result == {"format_version": "1.2"}
 
 
-def test_apply_argument_list_and_streaming(tmp_path):
-    runner = FakeRunner(FakeCompleted(stdout="line one\nline two"))
-    tofu = Tofu(Path("/opt/tofu"), tmp_path, runner=runner)
+def _script(tmp_path, body: str) -> Path:
+    """A stand-in tofu binary: a real process, so streaming is tested end to end."""
+    script = tmp_path / "fake-tofu"
+    script.write_text("#!/bin/sh\n" + body)
+    script.chmod(0o755)
+    return script
+
+
+def test_apply_streams_each_line_while_the_process_runs(tmp_path):
+    # The marker file exists only between the first and second line, so seeing it from the
+    # callback proves the line arrived before the process finished.
+    marker = tmp_path / "running"
+    binary = _script(
+        tmp_path,
+        f'echo "$@" > {tmp_path}/args\ntouch {marker}\necho "line one"\nsleep 0.3\n'
+        f'rm {marker}\necho "line two"\n',
+    )
+    tofu = Tofu(binary, tmp_path)
     plan = tmp_path / "tfplan"
-    streamed = []
-    tofu.apply(plan, streamed.append)
-    assert runner.calls[0]["args"] == ["/opt/tofu", "apply", "-no-color", "-input=false", str(plan)]
-    assert streamed == ["line one", "line two"]
+    seen = []
+    tofu.apply(plan, lambda line: seen.append((line, marker.exists())))
+    assert seen == [("line one", True), ("line two", False)]
+    assert (tmp_path / "args").read_text().split() == [
+        "apply",
+        "-no-color",
+        "-input=false",
+        str(plan),
+    ]
+
+
+def test_streaming_failure_raises_with_stderr_and_hint(tmp_path):
+    binary = _script(tmp_path, 'echo partial\necho "Error 403: Permission denied" >&2\nexit 1\n')
+    tofu = Tofu(binary, tmp_path)
+    seen = []
+    with pytest.raises(TofuError, match="lacks permission") as excinfo:
+        tofu.apply(tmp_path / "tfplan", seen.append)
+    assert "Error 403" in str(excinfo.value)
+    assert seen == ["partial"]
+
+
+def test_plan_with_a_stream_streams_and_returns_the_text(tmp_path):
+    binary = _script(tmp_path, 'echo "Plan: 1 to add"\necho done\n')
+    seen = []
+    text = Tofu(binary, tmp_path).plan(tmp_path / "tfplan", stream=seen.append)
+    assert seen == ["Plan: 1 to add", "done"]
+    assert text == "Plan: 1 to add\ndone"
 
 
 def test_plugin_cache_dir_set(tmp_path):

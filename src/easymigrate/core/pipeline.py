@@ -493,8 +493,13 @@ def plan(
     ask_password: Callable[[str], str] | None = None,
     tofu: Any = None,
     gcp: Any = None,
+    stream: Callable[[str], None] | None = None,
 ) -> PlanSummary:
-    """Generate GCP Terraform from the resolved IR and run `tofu plan` (spec §5.4)."""
+    """Generate GCP Terraform from the resolved IR and run `tofu plan` (spec §5.4).
+
+    `stream`, when given, receives progress and every `tofu plan` output line as it happens.
+    """
+    say = stream or (lambda _line: None)
     config = project.load_config()
     if config.source is None:
         raise EasyMigrateError("no scan found; run `easymigrate scan` first")
@@ -570,9 +575,15 @@ def plan(
         tofu_obj = registry.new_tofu(binary, terraform_dir)
 
     bucket = f"{gcp_project}{_STATE_BUCKET_SUFFIX}"
+    say(f"Checking the state bucket gs://{bucket}")
     ok = gcp.ensure_bucket(gcp_project, bucket, region, confirm_bucket)
     if not ok:
-        raise Declined(f"declined creating the state bucket {bucket!r}")
+        raise Declined(
+            f"the state bucket gs://{bucket} does not exist and creating it was not approved. "
+            "EasyMigrate keeps Terraform state there, so plan cannot continue without it: "
+            "tick 'Create the Terraform state bucket' in the UI, or re-run with "
+            "--create-state-bucket (or answer y at the prompt)."
+        )
 
     if terraform_dir.is_dir():
         for old in terraform_dir.glob("*.tf"):
@@ -599,8 +610,14 @@ def plan(
     for name, content in registry.generate_boilerplate_tf(gcp_project, region, __version__).items():
         project.write_text(terraform_dir / name, content)
 
+    say("Running tofu init")
     tofu_obj.init(backend_config={"bucket": bucket, "prefix": "easymigrate"})
-    plan_text = tofu_obj.plan(out=project.tfplan_path)
+    say("Running tofu plan")
+    plan_text = (
+        tofu_obj.plan(out=project.tfplan_path, stream=stream)
+        if stream is not None
+        else tofu_obj.plan(out=project.tfplan_path)
+    )
     project.write_text(project.plan_txt_path, plan_text)
     show = tofu_obj.show_json(project.tfplan_path)
     add, change, destroy, changed_or_destroyed = _resource_change_counts(show)
