@@ -25,6 +25,10 @@ resource "google_container_cluster" "prod" {
     team = "platform"
   }
 
+  node_config {
+    disk_size_gb = 20
+    disk_type    = "pd-standard"
+  }
   release_channel {
     channel = "EXTENDED"
   }

@@ -290,6 +290,12 @@ def _generate_cluster(
     if cluster.labels:
         block.attr("resource_labels", dict(sorted(cluster.labels.items())))
 
+    # GKE still builds the default pool before removing it: one node per zone with a 100 GB
+    # SSD-class disk, which alone exceeded a common 250 GB regional SSD quota (live run,
+    # 2026-09-22). Small standard disks keep that throwaway pool out of the SSD quota.
+    bootstrap = block.block("node_config")
+    bootstrap.attr("disk_size_gb", 20)
+    bootstrap.attr("disk_type", "pd-standard")
     block.block("release_channel").attr("channel", channel)
     ranges = block.block("ip_allocation_policy")
     ranges.attr("cluster_secondary_range_name", _require(cluster, "pods_range"))

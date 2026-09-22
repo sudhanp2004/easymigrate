@@ -54,6 +54,8 @@ def test_cluster_renders_regional_vpc_native_and_removable():
     assert 'min_master_version       = "1.31"' in out
     assert 'cluster_secondary_range_name  = "prod-pods"' in out
     assert 'workload_pool = "${var.project}.svc.id.goog"' in out
+    # The throwaway default pool must not eat the regional SSD quota (live run, 2026-09-22).
+    assert 'disk_type    = "pd-standard"' in out
 
 
 def test_endpoint_and_private_nodes_render():
