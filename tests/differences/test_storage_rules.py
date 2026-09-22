@@ -274,3 +274,39 @@ def test_kms_and_acceleration_fire_only_when_present():
 def test_bucket_name_runs_before_access_logging():
     ids = [rule.id for rule in AWS_GCP_RULES]
     assert ids.index("S3-BUCKET-NAME") < ids.index("S3-ACCESS-LOGGING")
+
+
+def test_object_lock_retention_turns_versioning_off_and_per_object_keeps_it():
+    rule = S3ObjectLock()
+    doc = _doc(
+        _bucket(
+            versioning="enabled",
+            object_lock_enabled=True,
+            object_lock=ObjectLockRetention(mode="GOVERNANCE", days=30),
+        )
+    )
+    diff = _only(rule, doc)
+    assert _hints(rule.apply(doc, diff, "retention_unlocked"))["versioning_off"] is True
+    assert _hints(rule.apply(doc, diff, "object_retention")) == {"object_retention": True}
+
+
+def test_autoclass_is_not_the_default_when_lifecycle_moves_classes():
+    lifecycle = S3Lifecycle()
+    tiering = S3IntelligentTiering()
+    bucket = _bucket(
+        intelligent_tiering=True,
+        lifecycle_rules=[
+            LifecycleRule(
+                id="a",
+                transitions=[Transition(days=30, storage_class="GLACIER")],
+                expiration_days=90,
+            )
+        ],
+    )
+    doc = _doc(bucket)
+    doc = lifecycle.apply(doc, _only(lifecycle, doc), "map_rules")
+    diff = _only(tiering, doc)
+    assert tiering.default_strategy(diff) == "standard"
+    assert tiering.risk_for(diff, "autoclass") == "medium"
+    hints = _hints(tiering.apply(doc, diff, "autoclass"))
+    assert [r["action"]["type"] for r in hints["lifecycle"]] == ["Delete"]

@@ -403,7 +403,10 @@ class S3IntelligentTiering(DifferenceRule):
         Strategy(
             id="autoclass",
             title="Enable Autoclass",
-            effect="Cloud Storage moves each object to the class its access pattern warrants",
+            effect=(
+                "Cloud Storage moves each object to the class its access pattern warrants; "
+                "lifecycle storage-class transitions are dropped, since Autoclass refuses them"
+            ),
             risk="low",
         ),
         Strategy(
@@ -416,7 +419,27 @@ class S3IntelligentTiering(DifferenceRule):
     default = "autoclass"
 
     def detect(self, ir: IRDocument) -> list[Difference]:
-        return [self.difference([b.id]) for b in _buckets(ir) if b.intelligent_tiering]
+        return [
+            self.difference(
+                [b.id],
+                lifecycle_transitions=any(
+                    r.enabled and (r.transitions or r.noncurrent_transitions)
+                    for r in b.lifecycle_rules
+                ),
+            )
+            for b in _buckets(ir)
+            if b.intelligent_tiering
+        ]
+
+    def default_strategy(self, diff: Difference) -> str:
+        # Autoclass refuses SetStorageClass lifecycle actions; keep the explicit transitions the
+        # user wrote rather than silently dropping them.
+        return "standard" if diff.context.get("lifecycle_transitions") else self.default
+
+    def risk_for(self, diff: Difference, strategy_id: str) -> Risk:
+        if strategy_id == "autoclass" and diff.context.get("lifecycle_transitions"):
+            return "medium"
+        return self.strategy(strategy_id).risk
 
     def apply(self, ir, diff, strategy_id, params=None) -> IRDocument:
         doc, bucket = _subject(ir, diff)
@@ -426,7 +449,16 @@ class S3IntelligentTiering(DifferenceRule):
             return doc
         if strategy_id != "autoclass":
             raise ValueError(f"unknown strategy {strategy_id!r}")
-        return _replace_object(doc, _set_hint(bucket, "autoclass", True))
+        # S3-LIFECYCLE ran first; Autoclass cannot coexist with its storage-class transitions.
+        kept = [
+            r
+            for r in bucket.target_hints.get("lifecycle", [])
+            if r["action"]["type"] != "SetStorageClass"
+        ]
+        updated = _set_hint(bucket, "autoclass", True)
+        if "lifecycle" in bucket.target_hints:
+            updated = _set_hint(updated, "lifecycle", kept)
+        return _replace_object(doc, updated)
 
 
 class S3Cors(_AcknowledgeOnly, DifferenceRule):
@@ -566,13 +598,29 @@ class S3ObjectLock(DifferenceRule):
         Strategy(
             id="retention_unlocked",
             title="Unlocked retention policy",
-            effect="objects are kept for the same period; an admin can still remove the policy",
+            effect=(
+                "objects are kept for the same period and an admin can still remove the policy; "
+                "Object Versioning is turned off, because Cloud Storage does not allow a retention "
+                "policy on a versioned bucket"
+            ),
             risk="medium",
         ),
         Strategy(
             id="retention_locked",
             title="Locked retention policy",
-            effect="objects are kept for the same period, irreversibly",
+            effect=(
+                "objects are kept for the same period, irreversibly; "
+                "Object Versioning is turned off"
+            ),
+            risk="high",
+        ),
+        Strategy(
+            id="object_retention",
+            title="Per-object retention",
+            effect=(
+                "versioning stays on and objects can be locked one by one, but nothing sets a "
+                "default period: every writer must set retention on upload"
+            ),
             risk="high",
         ),
         Strategy(
@@ -597,10 +645,13 @@ class S3ObjectLock(DifferenceRule):
             return doc
         if strategy_id == "omit":
             return doc
+        if strategy_id == "object_retention":
+            return _replace_object(doc, _set_hint(bucket, "object_retention", True))
         if strategy_id not in {"retention_unlocked", "retention_locked"}:
             raise ValueError(f"unknown strategy {strategy_id!r}")
         retention = {"days": diff.context["days"], "locked": strategy_id == "retention_locked"}
-        return _replace_object(doc, _set_hint(bucket, "retention", retention))
+        updated = _set_hint(bucket, "retention", retention)
+        return _replace_object(doc, _set_hint(updated, "versioning_off", True))
 
 
 class S3Replication(_AcknowledgeOnly, DifferenceRule):

@@ -1,0 +1,96 @@
+{
+  "app-data": {
+    "Name": "app-data",
+    "Region": "ap-south-1",
+    "accelerate": {},
+    "acl": {
+      "Grants": []
+    },
+    "cors": null,
+    "encryption": {
+      "ServerSideEncryptionConfiguration": {
+        "Rules": [
+          {
+            "ApplyServerSideEncryptionByDefault": {
+              "SSEAlgorithm": "AES256"
+            }
+          }
+        ]
+      }
+    },
+    "intelligent_tiering": {},
+    "lifecycle": null,
+    "logging": {},
+    "notifications": {},
+    "object_lock": null,
+    "ownership": null,
+    "policy": null,
+    "policy_status": null,
+    "public_access_block": {
+      "PublicAccessBlockConfiguration": {
+        "BlockPublicAcls": true,
+        "BlockPublicPolicy": true,
+        "IgnorePublicAcls": true,
+        "RestrictPublicBuckets": true
+      }
+    },
+    "replication": null,
+    "request_payment": {
+      "Payer": "BucketOwner"
+    },
+    "tagging": {
+      "TagSet": [
+        {
+          "Key": "team",
+          "Value": "app"
+        }
+      ]
+    },
+    "versioning": {},
+    "website": null
+  },
+  "www.example.com": {
+    "Name": "www.example.com",
+    "Region": "ap-south-1",
+    "accelerate": {},
+    "acl": {
+      "Grants": []
+    },
+    "cors": null,
+    "encryption": {
+      "ServerSideEncryptionConfiguration": {
+        "Rules": [
+          {
+            "ApplyServerSideEncryptionByDefault": {
+              "SSEAlgorithm": "AES256"
+            }
+          }
+        ]
+      }
+    },
+    "intelligent_tiering": {},
+    "lifecycle": null,
+    "logging": {},
+    "notifications": {},
+    "object_lock": null,
+    "ownership": {
+      "OwnershipControls": {
+        "Rules": [
+          {
+            "ObjectOwnership": "BucketOwnerEnforced"
+          }
+        ]
+      }
+    },
+    "policy": null,
+    "policy_status": null,
+    "public_access_block": null,
+    "replication": null,
+    "request_payment": {
+      "Payer": "BucketOwner"
+    },
+    "tagging": null,
+    "versioning": {},
+    "website": null
+  }
+}

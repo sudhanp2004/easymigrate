@@ -23,6 +23,7 @@ from easymigrate.ir.compute import ComputeInstance, Disk
 from easymigrate.ir.database import DatabaseInstance
 from easymigrate.ir.kubernetes import KubernetesCluster, NodePool
 from easymigrate.ir.network import FirewallPolicy
+from easymigrate.ir.storage import StorageBucket
 
 _SECTION_ORDER = [
     "Scan gaps",
@@ -120,6 +121,26 @@ class KubernetesRow:
 
 
 @dataclass(frozen=True)
+class StorageRow:
+    """What `plan` decided for one Cloud Storage bucket, in the user's terms (spec 6 §7)."""
+
+    id: str
+    name: str
+    access: str
+    versioning: str
+    notes: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "access": self.access,
+            "versioning": self.versioning,
+            "notes": list(self.notes),
+        }
+
+
+@dataclass(frozen=True)
 class PlanSummaryView:
     add: int
     change: int
@@ -158,6 +179,7 @@ class Report:
     databases: list[DatabaseRow] = field(default_factory=list)
     compute: list[ComputeRow] = field(default_factory=list)
     kubernetes: list[KubernetesRow] = field(default_factory=list)
+    storage: list[StorageRow] = field(default_factory=list)
     plan: PlanSummaryView | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -177,6 +199,7 @@ class Report:
             "databases": [d.to_dict() for d in self.databases],
             "compute": [c.to_dict() for c in self.compute],
             "kubernetes": [k.to_dict() for k in self.kubernetes],
+            "storage": [b.to_dict() for b in self.storage],
             "plan": self.plan.to_dict() if self.plan else None,
         }
 
@@ -314,6 +337,21 @@ class Report:
                 "Every cluster is created empty. No workloads, manifests, secrets, custom "
                 "resources, Helm releases or persistent volumes were read or migrated; redeploy "
                 "them from their source of truth."
+            )
+            lines.append("")
+
+        if self.storage:
+            lines.append("## Storage")
+            for bucket in self.storage:
+                lines.append(f"### {bucket.name}")
+                lines.append(f"- Access: {bucket.access}")
+                lines.append(f"- Versioning: {bucket.versioning}")
+                for note in bucket.notes:
+                    lines.append(f"- {note}")
+            lines.append("")
+            lines.append(
+                "Every bucket is created empty. No objects, versions or metadata were copied; "
+                "move the data with Storage Transfer Service."
             )
             lines.append("")
 
@@ -614,6 +652,52 @@ def _kubernetes_rows(resolved: IRDocument | None) -> list[KubernetesRow]:
     return rows
 
 
+def _storage_rows(resolved: IRDocument | None) -> list[StorageRow]:
+    if resolved is None:
+        return []
+    rows: list[StorageRow] = []
+    for bucket in sorted(resolved.of_kind(StorageBucket), key=lambda b: b.id):
+        if bucket.excluded is not None:
+            continue
+        hints = bucket.target_hints
+        name = hints.get("gcs_name", bucket.bucket_name)
+        title = (
+            name if name == bucket.bucket_name else f"{name} (renamed from {bucket.bucket_name})"
+        )
+        access = (
+            "public: anyone can read every object"
+            if hints.get("public")
+            else "private; public access prevention enforced"
+        )
+        versioned = bucket.versioning == "enabled" and not hints.get("versioning_off")
+        versioning = "on" if versioned else "off"
+        if bucket.versioning == "enabled" and not versioned:
+            versioning += " (a retention policy replaced it; Cloud Storage allows only one)"
+        notes: list[str] = []
+        if bucket.lifecycle_rules:
+            kept = len(hints.get("lifecycle", []))
+            notes.append(
+                f"{kept} lifecycle action(s) generated from {len(bucket.lifecycle_rules)} S3 rule(s)"
+            )
+        if hints.get("retention"):
+            lock = "locked" if hints["retention"]["locked"] else "unlocked"
+            notes.append(f"retention policy of {hints['retention']['days']} days ({lock})")
+        if bucket.website is not None and hints.get("website"):
+            notes.append("website pages configured; serving needs a load balancer or domain bucket")
+        for flag, text in (
+            (bucket.has_policy, "bucket policy not translated; grant IAM yourself"),
+            (bool(bucket.replication_destinations), "replication not reproduced"),
+            (bool(bucket.notifications), "event notifications not reproduced"),
+            (bool(bucket.kms_key), "encrypted with Google-managed keys, not the AWS KMS key"),
+        ):
+            if flag:
+                notes.append(text)
+        rows.append(
+            StorageRow(id=bucket.id, name=title, access=access, versioning=versioning, notes=notes)
+        )
+    return rows
+
+
 def build_report(project: Project) -> Report:
     config = project.load_config() if project.config_path.exists() else None
     source = config.source.cloud if config and config.source else None
@@ -626,6 +710,7 @@ def build_report(project: Project) -> Report:
     databases = _database_rows(resolved)
     compute = _compute_rows(resolved)
     kubernetes = _kubernetes_rows(resolved)
+    storage = _storage_rows(resolved)
     superseded = _load_superseded(project)
 
     rules_by_id: dict[str, DifferenceRule] = {rule.id: rule for rule in catalogue()}
@@ -726,6 +811,7 @@ def build_report(project: Project) -> Report:
         databases=databases,
         compute=compute,
         kubernetes=kubernetes,
+        storage=storage,
         plan=plan_summary,
     )
 

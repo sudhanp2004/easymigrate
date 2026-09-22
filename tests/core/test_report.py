@@ -663,3 +663,30 @@ def test_kubernetes_section_says_the_cluster_is_empty():
     assert "Every cluster is created empty" in markdown
     assert "arn:aws:iam::1:role/admin" in markdown
     assert report.to_dict()["kubernetes"][0]["id"] == "kubernetes_cluster:prod"
+
+
+# --- Storage section (spec 6 §7) ----------------------------------------------------
+
+
+def test_storage_rows_state_access_versioning_and_what_did_not_carry():
+    from easymigrate.core.report import _storage_rows
+    from tests.plugins.storage.test_generate_gcp_golden import resolved_case
+
+    document, _ = resolved_case("versioned_lifecycle_lock")
+    row = _storage_rows(document)[0]
+    assert row.access.startswith("private")
+    assert "retention policy replaced it" in row.versioning
+    assert "replication not reproduced" in row.notes
+    report = Report(source="aws", target="gcp", coverage={}, storage=[row])
+    markdown = report.to_markdown()
+    assert "## Storage" in markdown
+    assert "Every bucket is created empty" in markdown
+
+
+def test_renamed_bucket_names_its_origin():
+    from easymigrate.core.report import _storage_rows
+    from tests.plugins.storage.test_generate_gcp_golden import resolved_case
+
+    document, _ = resolved_case("plain_and_dotted")
+    names = [row.name for row in _storage_rows(document)]
+    assert "www-example-com (renamed from www.example.com)" in names

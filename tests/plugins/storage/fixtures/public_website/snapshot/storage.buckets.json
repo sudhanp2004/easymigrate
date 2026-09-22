@@ -1,0 +1,134 @@
+{
+  "site-assets": {
+    "Name": "site-assets",
+    "Region": "ap-south-1",
+    "accelerate": {},
+    "acl": {
+      "Grants": []
+    },
+    "cors": {
+      "CORSRules": [
+        {
+          "AllowedHeaders": [
+            "Authorization"
+          ],
+          "AllowedMethods": [
+            "GET",
+            "HEAD"
+          ],
+          "AllowedOrigins": [
+            "https://example.com"
+          ],
+          "ExposeHeaders": [
+            "ETag"
+          ],
+          "MaxAgeSeconds": 3600
+        }
+      ]
+    },
+    "encryption": {
+      "ServerSideEncryptionConfiguration": {
+        "Rules": [
+          {
+            "ApplyServerSideEncryptionByDefault": {
+              "SSEAlgorithm": "AES256"
+            }
+          }
+        ]
+      }
+    },
+    "intelligent_tiering": {},
+    "lifecycle": null,
+    "logging": {
+      "LoggingEnabled": {
+        "TargetBucket": "site-logs",
+        "TargetPrefix": "access/"
+      }
+    },
+    "notifications": {},
+    "object_lock": null,
+    "ownership": {
+      "OwnershipControls": {
+        "Rules": [
+          {
+            "ObjectOwnership": "BucketOwnerEnforced"
+          }
+        ]
+      }
+    },
+    "policy": {
+      "Policy": "{\"Statement\": [{\"Effect\": \"Allow\", \"Principal\": \"*\", \"Action\": \"s3:GetObject\", \"Resource\": \"arn:aws:s3:::site-assets/*\"}]}"
+    },
+    "policy_status": {
+      "PolicyStatus": {
+        "IsPublic": true
+      }
+    },
+    "public_access_block": null,
+    "replication": null,
+    "request_payment": {
+      "Payer": "BucketOwner"
+    },
+    "tagging": null,
+    "versioning": {},
+    "website": {
+      "ErrorDocument": {
+        "Key": "404.html"
+      },
+      "IndexDocument": {
+        "Suffix": "index.html"
+      }
+    }
+  },
+  "site-logs": {
+    "Name": "site-logs",
+    "Region": "ap-south-1",
+    "accelerate": {},
+    "acl": {
+      "Grants": []
+    },
+    "cors": null,
+    "encryption": {
+      "ServerSideEncryptionConfiguration": {
+        "Rules": [
+          {
+            "ApplyServerSideEncryptionByDefault": {
+              "SSEAlgorithm": "AES256"
+            }
+          }
+        ]
+      }
+    },
+    "intelligent_tiering": {},
+    "lifecycle": null,
+    "logging": {},
+    "notifications": {},
+    "object_lock": null,
+    "ownership": {
+      "OwnershipControls": {
+        "Rules": [
+          {
+            "ObjectOwnership": "BucketOwnerEnforced"
+          }
+        ]
+      }
+    },
+    "policy": null,
+    "policy_status": null,
+    "public_access_block": {
+      "PublicAccessBlockConfiguration": {
+        "BlockPublicAcls": true,
+        "BlockPublicPolicy": true,
+        "IgnorePublicAcls": true,
+        "RestrictPublicBuckets": true
+      }
+    },
+    "replication": null,
+    "request_payment": {
+      "Payer": "BucketOwner"
+    },
+    "tagging": null,
+    "versioning": {},
+    "website": null
+  }
+}

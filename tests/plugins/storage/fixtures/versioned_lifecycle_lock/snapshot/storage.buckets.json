@@ -1,0 +1,126 @@
+{
+  "records": {
+    "Name": "records",
+    "Region": "ap-south-1",
+    "accelerate": {
+      "Status": "Enabled"
+    },
+    "acl": {
+      "Grants": []
+    },
+    "cors": null,
+    "encryption": {
+      "ServerSideEncryptionConfiguration": {
+        "Rules": [
+          {
+            "ApplyServerSideEncryptionByDefault": {
+              "KMSMasterKeyID": "arn:aws:kms:ap-south-1:123456789012:key/k",
+              "SSEAlgorithm": "aws:kms"
+            }
+          }
+        ]
+      }
+    },
+    "intelligent_tiering": {
+      "IntelligentTieringConfigurationList": [
+        {
+          "Id": "all"
+        }
+      ]
+    },
+    "lifecycle": {
+      "Rules": [
+        {
+          "AbortIncompleteMultipartUpload": {
+            "DaysAfterInitiation": 7
+          },
+          "Expiration": {
+            "Days": 730
+          },
+          "Filter": {
+            "Prefix": "logs/"
+          },
+          "ID": "archive",
+          "NoncurrentVersionExpiration": {
+            "NewerNoncurrentVersions": 3,
+            "NoncurrentDays": 30
+          },
+          "Status": "Enabled",
+          "Transitions": [
+            {
+              "Days": 30,
+              "StorageClass": "STANDARD_IA"
+            },
+            {
+              "Days": 180,
+              "StorageClass": "DEEP_ARCHIVE"
+            }
+          ]
+        },
+        {
+          "Expiration": {
+            "Days": 1
+          },
+          "Filter": {
+            "Tag": {
+              "Key": "tmp",
+              "Value": "yes"
+            }
+          },
+          "ID": "tagged",
+          "Status": "Enabled"
+        }
+      ]
+    },
+    "logging": {},
+    "notifications": {
+      "QueueConfigurations": [
+        {
+          "QueueArn": "arn:aws:sqs:ap-south-1:123456789012:q"
+        }
+      ]
+    },
+    "object_lock": {
+      "ObjectLockConfiguration": {
+        "ObjectLockEnabled": "Enabled",
+        "Rule": {
+          "DefaultRetention": {
+            "Days": 30,
+            "Mode": "GOVERNANCE"
+          }
+        }
+      }
+    },
+    "ownership": {
+      "OwnershipControls": {
+        "Rules": [
+          {
+            "ObjectOwnership": "BucketOwnerEnforced"
+          }
+        ]
+      }
+    },
+    "policy": null,
+    "policy_status": null,
+    "public_access_block": null,
+    "replication": {
+      "ReplicationConfiguration": {
+        "Rules": [
+          {
+            "Destination": {
+              "Bucket": "arn:aws:s3:::records-dr"
+            }
+          }
+        ]
+      }
+    },
+    "request_payment": {
+      "Payer": "Requester"
+    },
+    "tagging": null,
+    "versioning": {
+      "Status": "Enabled"
+    },
+    "website": null
+  }
+}

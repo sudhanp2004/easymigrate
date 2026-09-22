@@ -8,33 +8,33 @@ Every IR field the storage generator could touch is declared here, so an IR fiel
 
 | Field | Declaration |
 |---|---|
-| `acceleration` | not_generated:bucket generation is spec 6 plan 3 |
-| `bucket_name` | not_generated:bucket generation is spec 6 plan 3 |
-| `cors_rules` | not_generated:bucket generation is spec 6 plan 3 |
-| `encryption` | not_generated:bucket generation is spec 6 plan 3 |
+| `acceleration` | always_excluded:S3-ACCELERATION |
+| `bucket_name` | decision:S3-BUCKET-NAME |
+| `cors_rules` | exact:cors blocks; allowed headers dropped (S3-CORS) |
+| `encryption` | derived:Cloud Storage always encrypts at rest |
 | `excluded` | metadata |
-| `has_policy` | not_generated:bucket generation is spec 6 plan 3 |
+| `has_policy` | always_excluded:S3-BUCKET-POLICY; statements are not translated |
 | `id` | metadata |
-| `intelligent_tiering` | not_generated:bucket generation is spec 6 plan 3 |
+| `intelligent_tiering` | decision:S3-INTELLIGENT-TIERING enables autoclass |
 | `kind` | metadata |
-| `kms_key` | not_generated:bucket generation is spec 6 plan 3 |
+| `kms_key` | decision:S3-ENCRYPTION-KMS; an AWS KMS key cannot be used by GCP |
 | `labels` | metadata |
-| `lifecycle_rules` | not_generated:bucket generation is spec 6 plan 3 |
-| `logging_bucket` | not_generated:bucket generation is spec 6 plan 3 |
-| `logging_prefix` | not_generated:bucket generation is spec 6 plan 3 |
+| `lifecycle_rules` | decision:S3-LIFECYCLE |
+| `logging_bucket` | decision:S3-ACCESS-LOGGING |
+| `logging_prefix` | decision:S3-ACCESS-LOGGING |
 | `name` | metadata |
-| `notifications` | not_generated:bucket generation is spec 6 plan 3 |
-| `object_lock` | not_generated:bucket generation is spec 6 plan 3 |
-| `object_lock_enabled` | not_generated:bucket generation is spec 6 plan 3 |
-| `object_ownership` | not_generated:bucket generation is spec 6 plan 3 |
-| `public_access_blocked` | not_generated:bucket generation is spec 6 plan 3 |
-| `public_via_acl` | not_generated:bucket generation is spec 6 plan 3 |
-| `public_via_policy` | not_generated:bucket generation is spec 6 plan 3 |
-| `region` | not_generated:bucket generation is spec 6 plan 3 |
-| `replication_destinations` | not_generated:bucket generation is spec 6 plan 3 |
-| `requester_pays` | not_generated:bucket generation is spec 6 plan 3 |
+| `notifications` | always_excluded:S3-NOTIFICATIONS |
+| `object_lock` | decision:S3-OBJECT-LOCK sets retention_policy |
+| `object_lock_enabled` | recorded:captured in the IR and the report; nothing is generated from it |
+| `object_ownership` | decision:S3-ACLS sets uniform_bucket_level_access |
+| `public_access_blocked` | exact:public_access_prevention = enforced |
+| `public_via_acl` | decision:S3-PUBLIC-ACCESS |
+| `public_via_policy` | decision:S3-PUBLIC-ACCESS |
+| `region` | derived:the bucket is created in the destination region |
+| `replication_destinations` | always_excluded:S3-REPLICATION |
+| `requester_pays` | exact:requester_pays |
 | `resolution` | metadata |
 | `source` | metadata |
 | `target_hints` | metadata |
-| `versioning` | not_generated:bucket generation is spec 6 plan 3 |
-| `website` | not_generated:bucket generation is spec 6 plan 3 |
+| `versioning` | exact:versioning.enabled (suspended becomes disabled; S3-OBJECT-LOCK) |
+| `website` | decision:S3-WEBSITE |

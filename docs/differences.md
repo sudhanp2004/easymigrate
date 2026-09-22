@@ -775,7 +775,7 @@ Both move objects between classes by access pattern. Autoclass works per bucket 
 
 | Strategy | Title | Effect | Risk | Manual | Default |
 |---|---|---|---|---|---|
-| `autoclass` | Enable Autoclass | Cloud Storage moves each object to the class its access pattern warrants | low |  | yes |
+| `autoclass` | Enable Autoclass | Cloud Storage moves each object to the class its access pattern warrants; lifecycle storage-class transitions are dropped, since Autoclass refuses them | low |  | yes |
 | `standard` | Stay in Standard | objects stay in Standard unless a lifecycle rule moves them | low |  |  |
 
 ### CORS request-header allow-lists do not carry (`S3-CORS`)
@@ -810,8 +810,9 @@ A Cloud Storage retention policy keeps every object for a minimum period. Unlock
 
 | Strategy | Title | Effect | Risk | Manual | Default |
 |---|---|---|---|---|---|
-| `retention_unlocked` | Unlocked retention policy | objects are kept for the same period; an admin can still remove the policy | medium |  | yes |
-| `retention_locked` | Locked retention policy | objects are kept for the same period, irreversibly | high |  |  |
+| `retention_unlocked` | Unlocked retention policy | objects are kept for the same period and an admin can still remove the policy; Object Versioning is turned off, because Cloud Storage does not allow a retention policy on a versioned bucket | medium |  | yes |
+| `retention_locked` | Locked retention policy | objects are kept for the same period, irreversibly; Object Versioning is turned off | high |  |  |
+| `object_retention` | Per-object retention | versioning stays on and objects can be locked one by one, but nothing sets a default period: every writer must set retention on upload | high |  |  |
 | `omit` | No retention | objects can be deleted at any time | high |  |  |
 
 ### Replication is not reproduced (`S3-REPLICATION`)
