@@ -16,6 +16,7 @@ from easymigrate.plugins.database.generate_gcp import (
 )
 from easymigrate.plugins.kubernetes import KubernetesPlugin
 from easymigrate.plugins.network import NetworkPlugin
+from easymigrate.plugins.storage import StoragePlugin
 from easymigrate.providers.aws import source as aws_source
 from easymigrate.providers.gcp import boilerplate, state_bucket
 from easymigrate.providers.gcp import services as gcp_services
@@ -24,6 +25,7 @@ PLUGINS: tuple[Plugin, ...] = (
     NetworkPlugin(),
     ComputePlugin(),
     KubernetesPlugin(),
+    StoragePlugin(),
     DatabasePlugin(),
 )
 

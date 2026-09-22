@@ -5,6 +5,7 @@ from easymigrate.ir import (  # registers kinds; import order does not matter
     database,
     kubernetes,
     network,
+    storage,
 )
 from easymigrate.ir.base import (
     Finding,
@@ -28,4 +29,5 @@ __all__ = [
     "intent_class",
     "kubernetes",
     "network",
+    "storage",
 ]
