@@ -18,9 +18,11 @@ from easymigrate.core.project import Project
 from easymigrate.differences.decisions import from_yaml
 from easymigrate.differences.engine import catalogue
 from easymigrate.differences.model import DifferenceRule
+from easymigrate.differences.rules.aws_gcp.iam_facts import suggest
 from easymigrate.ir.base import Finding, IRDocument
-from easymigrate.ir.compute import ComputeInstance, Disk
+from easymigrate.ir.compute import ComputeInstance, Disk, InstanceTemplate
 from easymigrate.ir.database import DatabaseInstance
+from easymigrate.ir.iam import IamRole
 from easymigrate.ir.kubernetes import KubernetesCluster, NodePool
 from easymigrate.ir.loadbalancing import LoadBalancer
 from easymigrate.ir.network import FirewallPolicy
@@ -160,6 +162,38 @@ class LoadBalancerRow:
 
 
 @dataclass(frozen=True)
+class IamRoleRow:
+    """One IAM role a migrated object uses, and where to start on GCP (spec 8 §5)."""
+
+    role: str
+    used_by: list[str]
+    attach_as: str
+    services: list[str]
+    warnings: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "role": self.role,
+            "used_by": list(self.used_by),
+            "attach_as": self.attach_as,
+            "services": list(self.services),
+            "warnings": list(self.warnings),
+        }
+
+
+@dataclass(frozen=True)
+class IamView:
+    roles: list[IamRoleRow]
+    unused_roles: list[str]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "roles": [r.to_dict() for r in self.roles],
+            "unused_roles": list(self.unused_roles),
+        }
+
+
+@dataclass(frozen=True)
 class PlanSummaryView:
     add: int
     change: int
@@ -200,6 +234,7 @@ class Report:
     kubernetes: list[KubernetesRow] = field(default_factory=list)
     storage: list[StorageRow] = field(default_factory=list)
     load_balancers: list[LoadBalancerRow] = field(default_factory=list)
+    iam: IamView | None = None
     plan: PlanSummaryView | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -221,6 +256,7 @@ class Report:
             "kubernetes": [k.to_dict() for k in self.kubernetes],
             "storage": [b.to_dict() for b in self.storage],
             "load_balancers": [lb.to_dict() for lb in self.load_balancers],
+            "iam": self.iam.to_dict() if self.iam else None,
             "plan": self.plan.to_dict() if self.plan else None,
         }
 
@@ -390,6 +426,30 @@ class Report:
                 "Every load balancer has a new IP address. Nothing reaches it until DNS or clients "
                 "are repointed at cutover; Google-managed certificates are issued only after that."
             )
+            lines.append("")
+
+        if self.iam is not None and (self.iam.roles or self.iam.unused_roles):
+            lines.append("## Identity and access")
+            lines.append(
+                "No IAM was migrated. Below are the AWS roles the migrated resources use, what "
+                "each could do, and the Google Cloud predefined roles nearest to that access. They "
+                "are a starting point for service accounts and bindings, not a translation."
+            )
+            lines.append("")
+            for row in self.iam.roles:
+                lines.append(f"### {row.role}")
+                lines.append(f"- Used by: {', '.join(row.used_by)}")
+                lines.append(f"- On GCP: {row.attach_as}")
+                for service in row.services:
+                    lines.append(f"- {service}")
+                for warning in row.warnings:
+                    lines.append(f"- **{warning}**")
+            if self.iam.unused_roles:
+                lines.append("")
+                lines.append(
+                    f"{len(self.iam.unused_roles)} other role(s) are used by nothing migrated: "
+                    + ", ".join(self.iam.unused_roles)
+                )
             lines.append("")
 
         if self.plan is not None:
@@ -779,6 +839,83 @@ def _load_balancer_rows(resolved: IRDocument | None) -> list[LoadBalancerRow]:
     return rows
 
 
+def _iam_view(resolved: IRDocument | None) -> IamView | None:
+    if resolved is None:
+        return None
+    roles = sorted(resolved.of_kind(IamRole), key=lambda r: r.id)
+    if not roles:
+        return None
+    by_profile = {p: r.id for r in roles for p in r.instance_profiles}
+    by_arn = {r.arn: r.id for r in roles}
+    by_oidc = {}
+    for r in roles:
+        for provider in r.trusted_oidc:
+            by_oidc.setdefault(provider.rsplit("/", 1)[-1], []).append(r.id)
+    users: dict[str, list[tuple[str, str]]] = {}
+
+    def use(role_id: str | None, obj_id: str, how: str) -> None:
+        if role_id:
+            users.setdefault(role_id, []).append((obj_id, how))
+
+    for obj in resolved.objects:
+        if obj.excluded is not None:
+            continue
+        if obj.kind in {"compute_instance", "instance_template"} and obj.iam_profile:
+            how = (
+                "a service account attached to the instance template"
+                if isinstance(obj, InstanceTemplate)
+                else "a service account attached to the VM"
+            )
+            use(by_profile.get(obj.iam_profile) or by_arn.get(obj.iam_profile), obj.id, how)
+        elif obj.kind == "kubernetes_cluster":
+            use(
+                by_arn.get(obj.role_arn or ""), obj.id, "none needed: GKE manages its control plane"
+            )
+            for identity in obj.pod_identities:
+                use(
+                    by_arn.get(identity.role_arn or ""),
+                    f"{obj.id} {identity.namespace}/{identity.service_account}",
+                    "a Workload Identity binding for that Kubernetes service account",
+                )
+            issuer_id = (obj.oidc_issuer or "").rsplit("/", 1)[-1]
+            for role_id in by_oidc.get(issuer_id, []) if issuer_id else []:
+                use(role_id, f"{obj.id} (IRSA)", "a Workload Identity binding")
+        elif obj.kind == "node_pool":
+            use(by_arn.get(obj.role_arn or ""), obj.id, "the node pool's service account")
+
+    rows: list[IamRoleRow] = []
+    for role in roles:
+        if role.id not in users:
+            continue
+        services = []
+        for access in role.access:
+            if access.service == "*":
+                continue
+            suggestion = suggest(access.service, access.level)
+            target = ", ".join(suggestion) if suggestion else "no direct equivalent; review by hand"
+            services.append(f"{access.service}: {access.level} → {target}")
+        warnings = []
+        if role.admin_everything:
+            warnings.append(
+                "grants every action on every service; do not copy this, grant per service"
+            )
+        elif role.wildcard_resources:
+            warnings.append(
+                'applies to all resources ("*"); scope the GCP bindings to the migrated ones'
+            )
+        rows.append(
+            IamRoleRow(
+                role=role.name,
+                used_by=sorted(obj for obj, _ in users[role.id]),
+                attach_as="; ".join(sorted({how for _, how in users[role.id]})),
+                services=services,
+                warnings=warnings,
+            )
+        )
+    unused = sorted(r.name for r in roles if r.id not in users)
+    return IamView(roles=rows, unused_roles=unused)
+
+
 def build_report(project: Project) -> Report:
     config = project.load_config() if project.config_path.exists() else None
     source = config.source.cloud if config and config.source else None
@@ -793,6 +930,7 @@ def build_report(project: Project) -> Report:
     kubernetes = _kubernetes_rows(resolved)
     storage = _storage_rows(resolved)
     load_balancers = _load_balancer_rows(resolved)
+    iam = _iam_view(resolved)
     superseded = _load_superseded(project)
 
     rules_by_id: dict[str, DifferenceRule] = {rule.id: rule for rule in catalogue()}
@@ -895,6 +1033,7 @@ def build_report(project: Project) -> Report:
         kubernetes=kubernetes,
         storage=storage,
         load_balancers=load_balancers,
+        iam=iam,
         plan=plan_summary,
     )
 

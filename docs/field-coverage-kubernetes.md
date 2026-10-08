@@ -26,6 +26,7 @@ Every IR field the kubernetes generator could touch is declared here, so an IR f
 | `pod_identities` | always_excluded:K8S-IAM-FOR-PODS; bindings are recreated by hand |
 | `public_access_cidrs` | decision:K8S-ENDPOINT maps them to authorized networks |
 | `resolution` | metadata |
+| `role_arn` | recorded:reported in Identity and access (spec 8) |
 | `secrets_kms_key` | always_excluded:an AWS KMS key cannot be used by GCP |
 | `service_cidr` | decision:K8S-POD-RANGES keeps it as the services range when free |
 | `source` | metadata |
@@ -57,6 +58,7 @@ Every IR field the kubernetes generator could touch is declared here, so an IR f
 | `node_labels` | exact:node_config.labels |
 | `origin` | decision:K8S-SELF-MANAGED-NODES for self-managed groups |
 | `resolution` | metadata |
+| `role_arn` | recorded:reported in Identity and access (spec 8) |
 | `source` | metadata |
 | `ssh_key` | always_excluded:K8S-SSH-KEY; GKE nodes use gcloud compute ssh |
 | `subnets` | decision:K8S-NODE-SCALING maps their AZs to node_locations |

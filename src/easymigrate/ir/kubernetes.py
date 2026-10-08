@@ -62,6 +62,7 @@ class KubernetesCluster(IntentObject):
     pod_identities: list[PodIdentity] = Field(default_factory=list)
     fargate_profiles: list[FargateProfile] = Field(default_factory=list)
     authentication_mode: str | None = None
+    role_arn: str | None = None
 
     @field_validator("public_access_cidrs")
     @classmethod
@@ -98,6 +99,7 @@ class NodePool(IntentObject):
     max_unavailable: int | None = None
     max_unavailable_percent: int | None = None
     version: str | None = None
+    role_arn: str | None = None
 
     @field_validator("cluster")
     @classmethod

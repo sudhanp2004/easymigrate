@@ -3,6 +3,7 @@
 from easymigrate.ir import (  # registers kinds; import order does not matter
     compute,
     database,
+    iam,
     kubernetes,
     loadbalancing,
     network,
@@ -27,6 +28,7 @@ __all__ = [
     "StrictModel",
     "compute",
     "database",
+    "iam",
     "intent_class",
     "kubernetes",
     "loadbalancing",

@@ -61,6 +61,7 @@ FIELD_COVERAGE: dict[str, dict[str, str]] = {
         "pod_identities": "always_excluded:K8S-IAM-FOR-PODS; bindings are recreated by hand",
         "fargate_profiles": "decision:K8S-FARGATE",
         "authentication_mode": _RECORDED,
+        "role_arn": "recorded:reported in Identity and access (spec 8)",
     },
     "node_pool": {
         **_METADATA_FIELDS,
@@ -83,6 +84,7 @@ FIELD_COVERAGE: dict[str, dict[str, str]] = {
         "max_unavailable": "exact:upgrade_settings.max_unavailable",
         "max_unavailable_percent": "always_excluded:GKE surge upgrades take counts, not percents",
         "version": "derived:nodes follow the control plane version",
+        "role_arn": "recorded:reported in Identity and access (spec 8)",
     },
 }
 

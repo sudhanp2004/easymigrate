@@ -242,6 +242,7 @@ def _cluster(
             key=lambda p: p.name,
         ),
         authentication_mode=(cluster.get("accessConfig") or {}).get("authenticationMode"),
+        role_arn=cluster.get("roleArn"),
     )
 
 
@@ -323,6 +324,7 @@ def _managed_pool(
         max_unavailable=update.get("maxUnavailable"),
         max_unavailable_percent=update.get("maxUnavailablePercentage"),
         version=nodegroup.get("version"),
+        role_arn=nodegroup.get("nodeRole"),
     )
 
 

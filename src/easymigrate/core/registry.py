@@ -14,6 +14,7 @@ from easymigrate.plugins.database import DatabasePlugin
 from easymigrate.plugins.database.generate_gcp import (
     database_password_variables as _database_password_variables,
 )
+from easymigrate.plugins.iam import IamPlugin
 from easymigrate.plugins.kubernetes import KubernetesPlugin
 from easymigrate.plugins.loadbalancing import LoadBalancingPlugin
 from easymigrate.plugins.network import NetworkPlugin
@@ -29,6 +30,7 @@ PLUGINS: tuple[Plugin, ...] = (
     KubernetesPlugin(),
     StoragePlugin(),
     DatabasePlugin(),
+    IamPlugin(),
 )
 
 
