@@ -9,6 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 from easymigrate.core.plugin import CollectContext
+from easymigrate.plugins.compute.normalize import group_template_spec
 from easymigrate.providers.aws.source import AwsConnection, is_access_denied
 
 SELF_MANAGED_TAG_PREFIX = "kubernetes.io/cluster/"
@@ -117,14 +118,7 @@ def collect(connection: AwsConnection, ctx: CollectContext) -> dict[str, Any]:
                 eks, ctx, "list_access_entries", "accessEntries", "eks:ListAccessEntries", name
             )
         )
-        files["kubernetes.pod_identities"][name] = _list(
-            eks,
-            ctx,
-            "list_pod_identity_associations",
-            "associations",
-            "eks:ListPodIdentityAssociations",
-            name,
-        )
+        files["kubernetes.pod_identities"][name] = _pod_identities(eks, ctx, name)
 
     groups = _self_managed_groups(connection.client("autoscaling"), ctx)
     files["kubernetes.self_managed_groups"] = {"AutoScalingGroups": groups}
@@ -149,6 +143,38 @@ def _list(eks: Any, ctx: CollectContext, method: str, key: str, action: str, clu
         if _unsupported(exc):
             return []
         raise
+
+
+def _pod_identities(eks: Any, ctx: CollectContext, cluster: str) -> list[dict[str, Any]]:
+    """The list call returns summaries without the role; each association is described for it
+    (review, 2026-10-08: every pod identity's role was missing)."""
+    summaries = _list(
+        eks,
+        ctx,
+        "list_pod_identity_associations",
+        "associations",
+        "eks:ListPodIdentityAssociations",
+        cluster,
+    )
+    described = []
+    for summary in summaries:
+        try:
+            detail = _call(
+                ctx,
+                "eks:DescribePodIdentityAssociation",
+                eks.describe_pod_identity_association,
+                clusterName=cluster,
+                associationId=summary["associationId"],
+            ).get("association", {})
+        except _Denied:
+            return [*described, *summaries[len(described) :]]
+        except Exception as exc:
+            if _unsupported(exc):
+                detail = summary
+            else:
+                raise
+        described.append({**summary, **detail})
+    return described
 
 
 def _describe_each(
@@ -234,9 +260,10 @@ def _launch_templates(
     """launch template id -> {version number: LaunchTemplateData} for every referenced version."""
     wanted: set[tuple[str, str]] = set()
     for group in groups:
-        spec = group.get("LaunchTemplate") or {}
-        if spec.get("LaunchTemplateId"):
-            wanted.add((spec["LaunchTemplateId"], str(spec.get("Version") or "$Default")))
+        spec = group_template_spec(group)
+        template = spec.get("LaunchTemplateId") or spec.get("LaunchTemplateName")
+        if template:
+            wanted.add((template, str(spec.get("Version") or "$Default")))
     for items in nodegroups.values():
         for nodegroup in items:
             spec = nodegroup.get("launchTemplate") or {}
@@ -244,12 +271,13 @@ def _launch_templates(
                 wanted.add((spec["id"], str(spec.get("version") or "$Default")))
     result: dict[str, dict[str, Any]] = {}
     for template_id, version in sorted(wanted):
+        by = "LaunchTemplateId" if template_id.startswith("lt-") else "LaunchTemplateName"
         try:
             versions = _call(
                 ctx,
                 "ec2:DescribeLaunchTemplateVersions",
                 ec2.describe_launch_template_versions,
-                LaunchTemplateId=template_id,
+                **{by: template_id},
                 Versions=[version],
             ).get("LaunchTemplateVersions", [])
         except _Denied:

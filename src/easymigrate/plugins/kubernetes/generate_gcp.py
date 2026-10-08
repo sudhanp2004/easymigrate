@@ -62,6 +62,7 @@ FIELD_COVERAGE: dict[str, dict[str, str]] = {
         "fargate_profiles": "decision:K8S-FARGATE",
         "authentication_mode": _RECORDED,
         "role_arn": "recorded:reported in Identity and access (spec 8)",
+        "auto_mode": "decision:K8S-FARGATE adds a default pool for an Auto Mode cluster",
     },
     "node_pool": {
         **_METADATA_FIELDS,
@@ -163,7 +164,7 @@ def _generate_pool(
 
     block = file.block("resource", "google_container_node_pool", names.label[pool.id])
     block.comment("\n".join(_header_lines(pool, ctx.decided_by)))
-    block.attr("name", names.name[pool.id][:_POOL_NAME_MAX].rstrip("-"))
+    block.attr("name", names.pool_name(pool))
     block.attr("cluster", Ref(f"google_container_cluster.{names.label[cluster.id]}.id"))
     block.attr("location", Ref("var.region"))
     block.attr("node_locations", _zones(letters, ctx, pool.id))
@@ -177,6 +178,13 @@ def _generate_pool(
     else:
         block.attr("node_count", _require(pool, "node_count_per_zone"))
     _management(block, cluster)
+    if pool.max_unavailable is None and pool.max_unavailable_percent is not None:
+        ctx.info(
+            "GEN-K8S-UPGRADE-PERCENT",
+            f"{pool.id} limited upgrades to {pool.max_unavailable_percent}% of nodes; GKE surge "
+            "upgrades take a count, so GKE's default is used.",
+            subject=pool.id,
+        )
     if pool.max_unavailable is not None:
         upgrade = block.block("upgrade_settings")
         upgrade.attr("max_surge", 1)
@@ -200,8 +208,8 @@ def _generate_pool(
     for taint in pool.taints:
         entry = node.block("taint")
         entry.attr("key", taint.key)
-        if taint.value is not None:
-            entry.attr("value", taint.value)
+        # The provider requires a value; EKS allows a taint without one (review, 2026-10-08).
+        entry.attr("value", taint.value or "")
         entry.attr("effect", taint.effect)
     node.block("workload_metadata_config").attr("mode", "GKE_METADATA")
 
@@ -232,6 +240,19 @@ class _Names:
         self.gcp = GcpNameAllocator()
         self.label: dict[str, str] = {}
         self.name: dict[str, str] = {}
+        self.pool_names: dict[str, set[str]] = {}
+
+    def pool_name(self, pool) -> str:
+        """GKE caps node pool names at 40 characters; keep truncated names unique per cluster."""
+        used = self.pool_names.setdefault(pool.cluster, set())
+        base = self.name[pool.id][:_POOL_NAME_MAX].rstrip("-")
+        name, n = base, 2
+        while name in used:
+            suffix = f"-{n}"
+            name = f"{base[: _POOL_NAME_MAX - len(suffix)].rstrip('-')}{suffix}"
+            n += 1
+        used.add(name)
+        return name
 
     def allocate(self, resource_type: str, ir_id: str) -> None:
         self.label[ir_id] = self.tf.allocate(resource_type, ir_id)
@@ -303,8 +324,8 @@ def _generate_cluster(
     ranges.attr("cluster_secondary_range_name", _require(cluster, "pods_range"))
     ranges.attr("services_secondary_range_name", _require(cluster, "services_range"))
 
-    endpoint = hints.get("endpoint") or {"private_endpoint": False, "authorized_networks": None}
-    private_nodes = hints.get("private_nodes", True)
+    endpoint = _require(cluster, "endpoint")
+    private_nodes = _require(cluster, "private_nodes")
     if private_nodes or endpoint["private_endpoint"]:
         private = block.block("private_cluster_config")
         private.attr("enable_private_nodes", private_nodes)

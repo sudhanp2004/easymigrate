@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ipaddress
 import math
+import re
 from collections import Counter
 from typing import Any
 
@@ -190,6 +191,8 @@ class K8sEndpoint(DifferenceRule):
     def risk_for(self, diff: Difference, strategy_id: str) -> Risk:
         if strategy_id == "mirror" and diff.context.get("world_open"):
             return "high"
+        if strategy_id == "mirror" and any(":" in c for c in diff.context.get("cidrs", [])):
+            return "medium"  # IPv6 allow-list entries cannot be carried
         return self.strategy(strategy_id).risk
 
     def apply(self, ir, diff, strategy_id, params=None) -> IRDocument:
@@ -207,7 +210,9 @@ class K8sEndpoint(DifferenceRule):
                 # No authorized-networks block: the endpoint accepts every source, as it did.
                 endpoint = {"private_endpoint": False, "authorized_networks": None}
             else:
-                endpoint = {"private_endpoint": False, "authorized_networks": diff.context["cidrs"]}
+                # GKE authorized networks are IPv4-only; IPv6 entries are dropped and stated.
+                ipv4 = [c for c in diff.context["cidrs"] if ":" not in c]
+                endpoint = {"private_endpoint": False, "authorized_networks": ipv4}
         else:
             raise ValueError(f"unknown strategy {strategy_id!r}")
         return _replace_object(doc, _set_hint(cluster, "endpoint", endpoint))
@@ -252,6 +257,12 @@ class K8sPrivateNodes(DifferenceRule):
             return doc
         if strategy_id not in {"private_nodes", "public_nodes"}:
             raise ValueError(f"unknown strategy {strategy_id!r}")
+        endpoint = cluster.target_hints.get("endpoint") or {}
+        if strategy_id == "public_nodes" and endpoint.get("private_endpoint"):
+            raise ValueError(
+                f"{cluster.id} has a private API endpoint, which GKE allows only with private "
+                "nodes: choose private_nodes, or a public endpoint in K8S-ENDPOINT"
+            )
         return _replace_object(
             doc, _set_hint(cluster, "private_nodes", strategy_id == "private_nodes")
         )
@@ -318,7 +329,11 @@ class K8sPodRanges(DifferenceRule):
             if not services or _overlaps(services, taken):
                 services = _next_free(SERVICES_POOL, SERVICES_PREFIX, taken)
             allocated.append(services)
-            pods = _next_free(PODS_POOL, PODS_PREFIX, occupied + allocated)
+            # A node takes a /24 of pod addresses (110 pods), so size the range for every node the
+            # cluster may run; a fixed /16 ran out at 256 nodes (review, 2026-10-08).
+            nodes = sum(p.max_size for p in _pools_of(ir, cluster.id)) or 1
+            prefix = max(PODS_POOL.prefixlen, min(PODS_PREFIX, 24 - math.ceil(math.log2(nodes))))
+            pods = _next_free(PODS_POOL, prefix, occupied + allocated)
             allocated.append(pods)
             diffs.append(
                 self.difference(
@@ -611,7 +626,7 @@ class K8sFargate(DifferenceRule):
     impact = (
         "GKE Standard has no serverless pods. Pods a Fargate profile selected are scheduled on "
         "the cluster's node pools instead, which changes their isolation and billing. A cluster "
-        "that ran only on Fargate needs a node pool to run anything."
+        "that ran only on Fargate, or on EKS Auto Mode, needs a node pool to run anything."
     )
     strategies = (
         Strategy(
@@ -639,7 +654,7 @@ class K8sFargate(DifferenceRule):
                 has_pools=bool(_pools_of(ir, c.id)),
             )
             for c in _clusters(ir)
-            if c.fargate_profiles
+            if c.fargate_profiles or (c.auto_mode and not _pools_of(ir, c.id))
         ]
 
     def default_params(self, diff: Difference, strategy_id: str) -> dict[str, Any]:
@@ -895,7 +910,10 @@ class K8sNodeScaling(DifferenceRule):
         diffs = []
         for pool in _pools(ir):
             zones = _pool_zones(ir, pool)
-            per_zone = math.ceil(pool.desired_size / len(zones)) if zones else pool.desired_size
+            count = max(len(zones), 1)
+            per_zone = math.ceil(pool.desired_size / count)
+            # Autoscaling starts no higher than the maximum allows (review, 2026-10-08).
+            initial = min(per_zone, pool.max_size // count)
             diffs.append(
                 self.difference(
                     [pool.id],
@@ -905,6 +923,7 @@ class K8sNodeScaling(DifferenceRule):
                     max_size=pool.max_size,
                     desired_size=pool.desired_size,
                     per_zone=per_zone,
+                    initial_per_zone=initial,
                     # A regional pool runs at least `per_zone` nodes in every zone.
                     resulting_total=per_zone * max(len(zones), 1),
                 )
@@ -920,6 +939,15 @@ class K8sNodeScaling(DifferenceRule):
         if diff.context["min_size"] == diff.context["max_size"]:
             return "fixed_size"
         return self.default
+
+    def risk_for(self, diff: Difference, strategy_id: str) -> Risk:
+        # A regional pool runs at least one node per zone: say so when that changes the total.
+        if (
+            strategy_id == "fixed_size"
+            and diff.context["resulting_total"] != diff.context["desired_size"]
+        ):
+            return "medium"
+        return self.strategy(strategy_id).risk
 
     def apply(self, ir, diff, strategy_id, params=None) -> IRDocument:
         doc, pool = _subject(ir, diff)
@@ -940,7 +968,9 @@ class K8sNodeScaling(DifferenceRule):
                 {
                     "total_min": pool.min_size,
                     "total_max": pool.max_size,
-                    "initial_per_zone": diff.context["per_zone"],
+                    "initial_per_zone": diff.context.get(
+                        "initial_per_zone", diff.context["per_zone"]
+                    ),
                 },
             )
         return _replace_object(doc, updated)
@@ -1039,3 +1069,44 @@ class K8sSshKey(_AcknowledgeOnly, DifferenceRule):
 
     def detect(self, ir: IRDocument) -> list[Difference]:
         return [self.difference([p.id], ssh_key=p.ssh_key) for p in _pools(ir) if p.ssh_key]
+
+
+_GRAVITON = re.compile(r"^[a-z]+\d+[a-z]*g[a-z]*\.")
+_ACCELERATED = re.compile(r"^(g\d|p\d|inf\d|trn\d|dl\d)")
+
+
+class K8sNodeSpecialHardware(_AcknowledgeOnly, DifferenceRule):
+    id = "K8S-NODE-SPECIAL-HARDWARE"
+    family = "kubernetes"
+    title = "Arm and accelerator node groups need a deliberate choice"
+    impact = (
+        "The node group runs Arm (Graviton) or GPU/accelerator instances. EasyMigrate maps "
+        "machine types to x86 predefined types without accelerators, so Arm-only images would "
+        "not start and GPU workloads would find no GPU."
+    )
+    strategies = (
+        Strategy(
+            id="manual",
+            title="Choose the hardware yourself",
+            effect=(
+                "the pool is generated as x86 with no accelerator; change its machine type to an "
+                "Arm series (t2a, c4a) or add a guest_accelerator before applying"
+            ),
+            risk="high",
+            manual=True,
+        ),
+    )
+    default = "manual"
+
+    def detect(self, ir: IRDocument) -> list[Difference]:
+        diffs = []
+        for pool in _pools(ir):
+            ami = pool.ami_type.upper()
+            types = pool.instance_types
+            arm = "ARM" in ami or any(_GRAVITON.match(t) for t in types)
+            accel = any(x in ami for x in ("GPU", "NVIDIA", "NEURON")) or any(
+                _ACCELERATED.match(t) for t in types
+            )
+            if arm or accel:
+                diffs.append(self.difference([pool.id], arm=arm, accelerator=accel))
+        return diffs

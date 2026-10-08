@@ -21,6 +21,7 @@ from easymigrate.ir.kubernetes import (
 )
 from easymigrate.ir.naming import allocate_ids, clean_labels
 from easymigrate.plugins.compute.aws_values import FALLBACK_INSTANCE_TYPES
+from easymigrate.plugins.compute.normalize import group_template_spec
 from easymigrate.plugins.kubernetes.collect_aws import SELF_MANAGED_TAG_PREFIX
 
 _LIVE_NODEGROUP_STATES = {"ACTIVE", "DEGRADED", "UPDATING"}
@@ -243,6 +244,7 @@ def _cluster(
         ),
         authentication_mode=(cluster.get("accessConfig") or {}).get("authenticationMode"),
         role_arn=cluster.get("roleArn"),
+        auto_mode=bool((cluster.get("computeConfig") or {}).get("enabled")),
     )
 
 
@@ -260,12 +262,20 @@ def _template_sgs(data: dict[str, Any]) -> list[str]:
     return groups
 
 
+_ROOT_DEVICES = ("/dev/xvda", "/dev/sda1", "/dev/xvda1", "/dev/nvme0n1")
+
+
 def _root_size(data: dict[str, Any]) -> int | None:
-    for mapping in data.get("BlockDeviceMappings") or []:
-        size = (mapping.get("Ebs") or {}).get("VolumeSize")
-        if size:
-            return size
-    return None
+    """The root volume's size: a template may list a data disk first (review, 2026-10-08)."""
+    sized = {
+        m.get("DeviceName"): (m.get("Ebs") or {}).get("VolumeSize")
+        for m in data.get("BlockDeviceMappings") or []
+        if (m.get("Ebs") or {}).get("VolumeSize")
+    }
+    for device in _ROOT_DEVICES:
+        if device in sized:
+            return sized[device]
+    return next(iter(sized.values()), None)
 
 
 def _managed_pool(
@@ -341,8 +351,12 @@ def _self_managed_pool(
     sizes: dict[str, tuple[int, int]],
     cluster_sg: str | None,
 ) -> NodePool:
-    spec = group.get("LaunchTemplate") or {}
-    data = _template_data(templates, spec.get("LaunchTemplateId"), spec.get("Version"))
+    spec = group_template_spec(group)
+    data = _template_data(
+        templates,
+        spec.get("LaunchTemplateId") or spec.get("LaunchTemplateName"),
+        spec.get("Version"),
+    )
     instance_types = [data["InstanceType"]] if data.get("InstanceType") else []
     overrides = ((group.get("MixedInstancesPolicy") or {}).get("LaunchTemplate") or {}).get(
         "Overrides"

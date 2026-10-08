@@ -746,7 +746,7 @@ GKE dual-stack needs subnet and cluster changes this family does not generate.
 
 ### Fargate pods run on ordinary nodes (`K8S-FARGATE`)
 
-GKE Standard has no serverless pods. Pods a Fargate profile selected are scheduled on the cluster's node pools instead, which changes their isolation and billing. A cluster that ran only on Fargate needs a node pool to run anything.
+GKE Standard has no serverless pods. Pods a Fargate profile selected are scheduled on the cluster's node pools instead, which changes their isolation and billing. A cluster that ran only on Fargate, or on EKS Auto Mode, needs a node pool to run anything.
 
 | Strategy | Title | Effect | Risk | Manual | Default |
 |---|---|---|---|---|---|
@@ -785,6 +785,14 @@ EKS optimized AMIs (Amazon Linux, Bottlerocket) have no GKE counterpart; GKE nod
 | `cos` | Container-Optimized OS | nodes run COS with containerd, GKE's default and most locked-down image | low |  | yes |
 | `ubuntu` | Ubuntu | nodes run Ubuntu with containerd, for workloads that need a general distro | low |  |  |
 | `windows` | Windows Server LTSC | nodes run Windows Server with containerd; the cluster still needs a Linux pool | medium |  |  |
+
+### Arm and accelerator node groups need a deliberate choice (`K8S-NODE-SPECIAL-HARDWARE`)
+
+The node group runs Arm (Graviton) or GPU/accelerator instances. EasyMigrate maps machine types to x86 predefined types without accelerators, so Arm-only images would not start and GPU workloads would find no GPU.
+
+| Strategy | Title | Effect | Risk | Manual | Default |
+|---|---|---|---|---|---|
+| `manual` | Choose the hardware yourself | the pool is generated as x86 with no accelerator; change its machine type to an Arm series (t2a, c4a) or add a guest_accelerator before applying | high | yes | yes |
 
 ### Spot node groups become Spot node pools, preempted differently (`K8S-NODE-SPOT`)
 

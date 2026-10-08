@@ -192,3 +192,21 @@ def test_pool_whose_cluster_is_excluded_is_a_generation_error():
 def test_pool_without_zones_is_a_generation_error():
     with pytest.raises(GenerationError, match="no zones"):
         _render(_cluster(), _pool(zone_letters=[]))
+
+
+def test_taint_without_a_value_renders_an_empty_value():
+    pool = _pool().model_copy(update={"taints": [Taint(key="dedicated", effect="NO_SCHEDULE")]})
+    assert 'value  = ""' in _render(_cluster(), pool)
+
+
+def test_truncated_pool_names_stay_unique():
+    long = "a" * 45
+    first = _pool().model_copy(update={"id": f"node_pool:{long}x", "name": f"{long}x"})
+    second = _pool().model_copy(update={"id": f"node_pool:{long}y", "name": f"{long}y"})
+    out = _render(_cluster(), first, second)
+    names = [
+        line.split('"')[1]
+        for line in out.splitlines()
+        if line.strip().startswith("name ") and "aaaa" in line
+    ]
+    assert len(names) == 2 and len(set(names)) == 2 and all(len(n) <= 40 for n in names)

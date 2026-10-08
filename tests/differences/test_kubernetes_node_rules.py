@@ -160,3 +160,41 @@ def test_node_rules_run_after_cluster_rules():
     ids = [rule.id for rule in AWS_GCP_RULES]
     assert ids.index("K8S-FARGATE") < ids.index("K8S-SELF-MANAGED-NODES")
     assert ids.index("K8S-NODE-MACHINE-TYPE") < ids.index("K8S-NODE-IMAGE")
+
+
+def test_autoscaling_never_starts_above_the_maximum():
+    """Review 2026-10-08: desired 4, max 4 over 3 zones started 6 nodes."""
+    pool = _pool(
+        subnets=["subnet:private-1", "subnet:private-2", "subnet:private-3"],
+        desired_size=4,
+        max_size=4,
+    )
+    doc = _doc(pool)
+    rule = K8sNodeScaling()
+    hints = _hints(rule.apply(doc, _only(rule, doc), "autoscale_totals"))
+    assert hints["autoscaling"]["initial_per_zone"] * 3 <= 4
+
+
+def test_fixed_size_says_when_zones_change_the_total():
+    rule = K8sNodeScaling()
+    diff = _only(rule, _doc(_pool(min_size=1, max_size=1, desired_size=1)))
+    assert diff.context["resulting_total"] == 2
+    assert rule.risk_for(diff, "fixed_size") == "medium"
+
+
+@pytest.mark.parametrize(
+    ("ami", "types", "fires"),
+    [
+        ("AL2_ARM_64", ["m6g.large"], True),
+        ("AL2_x86_64_GPU", ["g5.xlarge"], True),
+        ("AL2023_x86_64_STANDARD", ["t4g.small"], True),
+        ("AL2023_x86_64_STANDARD", ["m5.large"], False),
+    ],
+)
+def test_arm_and_accelerator_pools_need_a_deliberate_choice(ami, types, fires):
+    from easymigrate.differences.rules.aws_gcp.kubernetes import K8sNodeSpecialHardware
+
+    assert (
+        bool(K8sNodeSpecialHardware().detect(_doc(_pool(ami_type=ami, instance_types=types))))
+        is fires
+    )

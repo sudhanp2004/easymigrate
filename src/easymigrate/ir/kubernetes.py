@@ -63,6 +63,8 @@ class KubernetesCluster(IntentObject):
     fargate_profiles: list[FargateProfile] = Field(default_factory=list)
     authentication_mode: str | None = None
     role_arn: str | None = None
+    # EKS Auto Mode: AWS runs the nodes, so there are no node groups to migrate.
+    auto_mode: bool = False
 
     @field_validator("public_access_cidrs")
     @classmethod

@@ -269,3 +269,43 @@ def test_cluster_rules_run_after_compute_and_version_first():
     k8s = [i for i in ids if i.startswith("K8S-")]
     assert ids.index("VM-ASG-LIFECYCLE") < ids.index(k8s[0])
     assert k8s.index("K8S-VERSION") < k8s.index("K8S-POD-RANGES") < k8s.index("K8S-FARGATE")
+
+
+def test_private_endpoint_with_public_nodes_is_refused_clearly():
+    rule = K8sPrivateNodes()
+    cluster = _cluster().model_copy(
+        update={
+            "target_hints": {"endpoint": {"private_endpoint": True, "authorized_networks": None}}
+        }
+    )
+    doc = _doc(cluster)
+    with pytest.raises(ValueError, match="private nodes"):
+        rule.apply(doc, _only(rule, doc), "public_nodes")
+
+
+def test_ipv6_allow_list_entries_are_dropped_and_raise_the_risk():
+    rule = K8sEndpoint()
+    doc = _doc(_cluster(public_access_cidrs=["203.0.113.0/24", "2001:db8::/32"]))
+    diff = _only(rule, doc)
+    assert rule.risk_for(diff, "mirror") == "medium"
+    assert _hints(rule.apply(doc, diff, "mirror"))["endpoint"]["authorized_networks"] == [
+        "203.0.113.0/24"
+    ]
+
+
+def test_pod_range_grows_with_the_number_of_nodes():
+    rule = K8sPodRanges()
+    big = _pool(subnets=("subnet:private-2",)).model_copy(
+        update={"max_size": 1000, "desired_size": 2}
+    )
+    diff = _only(rule, _doc(_cluster(), big))
+    assert diff.context["pods_cidr"].endswith("/14")  # 1000 nodes x /24 each
+
+
+def test_auto_mode_cluster_gets_a_default_pool():
+    rule = K8sFargate()
+    doc = _doc(_cluster(auto_mode=True))
+    diff = _only(rule, doc)
+    assert "default_pool" in _hints(
+        rule.apply(doc, diff, "schedule_on_nodes", rule.default_params(diff, ""))
+    )

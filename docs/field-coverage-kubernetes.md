@@ -11,6 +11,7 @@ Every IR field the kubernetes generator could touch is declared here, so an IR f
 | `access_entries` | always_excluded:K8S-CLUSTER-ACCESS; access is re-granted by hand |
 | `addons` | decision:K8S-ADDONS |
 | `authentication_mode` | recorded:captured in the IR and the report; nothing is generated from it |
+| `auto_mode` | decision:K8S-FARGATE adds a default pool for an Auto Mode cluster |
 | `endpoint_private` | decision:K8S-ENDPOINT |
 | `endpoint_public` | decision:K8S-ENDPOINT |
 | `excluded` | metadata |
