@@ -12,6 +12,14 @@ Migrates cloud infrastructure from AWS to GCP. It scans the live source cloud, b
     #    (.easymigrate/ir.json, .easymigrate/differences.json)
     easymigrate analyze
 
+    #    A scan reads the whole region. To migrate only part of it, scope the analysis
+    #    (saved with the project; re-run analyze to change it, --clear-scope to remove):
+    easymigrate analyze --vpc vpc-0abc123          # only this VPC and what runs in it
+    easymigrate analyze --tag app=shop             # only resources carrying this tag
+    easymigrate analyze --exclude i-0123456789     # leave one resource out
+    #    Everything left out is listed in the report. --vpc does not apply to buckets,
+    #    which belong to no VPC; narrow those with --tag or --exclude.
+
     # 3. Choose a strategy per difference (safe defaults preselected) and save
     #    .easymigrate/decisions.yaml
     easymigrate resolve

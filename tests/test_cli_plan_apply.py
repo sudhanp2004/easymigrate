@@ -289,3 +289,16 @@ def test_plan_supplies_a_prompt_when_stdin_is_a_tty(tmp_path, monkeypatch):
     result = runner.invoke(app, ["plan", "--gcp-project", "p"])
     assert result.exit_code == 1
     assert callable(captured["ask_password"])
+
+
+def test_analyze_scope_is_saved_merged_and_clearable(tmp_path, monkeypatch):
+    from easymigrate.core.pipeline import set_scope
+
+    monkeypatch.chdir(tmp_path)
+    project = _ready_project(tmp_path)
+    set_scope(project, vpcs=["vpc-app"])
+    scope = set_scope(project, exclude=["trineural"])
+    assert (scope.vpcs, scope.exclude) == (["vpc-app"], ["trineural"])
+    assert project.load_config().scope.vpcs == ["vpc-app"]
+    assert set_scope(project, clear=True) is None
+    assert project.load_config().scope is None

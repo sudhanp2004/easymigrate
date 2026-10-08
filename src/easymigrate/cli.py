@@ -17,7 +17,7 @@ from rich.table import Table
 
 from easymigrate import __version__
 from easymigrate.core.errors import EasyMigrateError, ExitTwoError
-from easymigrate.core.pipeline import PlanSummary
+from easymigrate.core.pipeline import PlanSummary, set_scope
 from easymigrate.core.pipeline import analyze as run_analyze
 from easymigrate.core.pipeline import apply as run_apply
 from easymigrate.core.pipeline import plan as run_plan
@@ -160,11 +160,50 @@ def scan(
 
 
 @app.command()
-def analyze() -> None:
-    """Turn the latest scan into .easymigrate/ir.json."""
+def analyze(
+    vpc: Annotated[
+        list[str] | None,
+        typer.Option("--vpc", help="Only migrate resources in this VPC (id or name); repeatable."),
+    ] = None,
+    tag: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--tag", help="Only migrate resources tagged KEY or KEY=VALUE; repeatable (any match)."
+        ),
+    ] = None,
+    exclude: Annotated[
+        list[str] | None,
+        typer.Option("--exclude", help="Leave this resource out (id or name); repeatable."),
+    ] = None,
+    clear_scope: bool = typer.Option(
+        False, "--clear-scope", help="Forget the saved scope and migrate everything scanned."
+    ),
+) -> None:
+    """Turn the latest scan into .easymigrate/ir.json.
+
+    The scope (--vpc, --tag, --exclude) is saved with the project, so re-running analyze keeps it.
+    """
     project = Project(Path.cwd())
     with _user_errors():
+        if vpc or tag or exclude or clear_scope:
+            scope = set_scope(project, vpcs=vpc, tags=tag, exclude=exclude, clear=clear_scope)
+        else:
+            scope = project.load_config().scope if project.config_path.exists() else None
         doc = run_analyze(project)
+    if scope is not None:
+        parts = [
+            f"{label} {', '.join(values)}"
+            for label, values in (
+                ("VPC", scope.vpcs),
+                ("tag", scope.tags),
+                ("excluding", scope.exclude),
+            )
+            if values
+        ]
+        console.print(f"Scope: {'; '.join(parts)} (saved; --clear-scope to remove)", markup=False)
+        for finding in doc.findings:
+            if finding.code.startswith("SCOPE-"):
+                console.print(f"  {finding.code}: {finding.message}", markup=False)
     counts = Counter(obj.kind for obj in doc.objects)
     table = Table("Kind", "Count", title="Intent objects")
     for kind in sorted(counts):

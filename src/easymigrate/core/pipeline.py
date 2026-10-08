@@ -24,9 +24,10 @@ from easymigrate.core.plugin import (
     Plugin,
     Snapshot,
 )
-from easymigrate.core.project import Project, SourceConfig, TargetConfig
+from easymigrate.core.project import Project, ScopeConfig, SourceConfig, TargetConfig
 from easymigrate.core.regions import gcp_region_for
 from easymigrate.core.report import build_report, write_report
+from easymigrate.core.scope import Scope, apply_scope
 from easymigrate.differences.decisions import (
     from_yaml,
     merge_decisions,
@@ -191,6 +192,32 @@ def check_plugin_order(plugins: Sequence[Plugin]) -> None:
         seen.add(plugin.name)
 
 
+def set_scope(
+    project: Project,
+    *,
+    vpcs: list[str] | None = None,
+    tags: list[str] | None = None,
+    exclude: list[str] | None = None,
+    clear: bool = False,
+) -> ScopeConfig | None:
+    """Save the migration scope `analyze` applies. Lists given replace the saved ones; lists not
+    given keep them, so `--exclude x` alone adds an exclusion to an existing VPC scope."""
+    config = project.load_config()
+    if clear:
+        scope = None
+    else:
+        current = config.scope or ScopeConfig()
+        scope = ScopeConfig(
+            vpcs=vpcs if vpcs else current.vpcs,
+            tags=tags if tags else current.tags,
+            exclude=exclude if exclude else current.exclude,
+        )
+        if not (scope.vpcs or scope.tags or scope.exclude):
+            scope = None
+    project.save_config(config.model_copy(update={"scope": scope}))
+    return scope
+
+
 def analyze(
     project: Project, *, plugins: Sequence[Plugin] | None = None, strict: bool = False
 ) -> IRDocument:
@@ -206,6 +233,12 @@ def analyze(
         produced = plugin.normalize(snapshot, ctx)
         objects.extend(produced)
         ctx.objects.update({obj.id: obj for obj in produced})
+
+    config = project.load_config() if project.config_path.exists() else None
+    saved = config.scope if config is not None else None
+    scoped = apply_scope(objects, Scope.model_validate(saved.model_dump()) if saved else None)
+    objects = scoped.objects
+    ctx.findings.extend(scoped.findings)
 
     doc = IRDocument(
         source={

@@ -51,10 +51,19 @@ class TargetConfig(StrictModel):
     region: str
 
 
+class ScopeConfig(StrictModel):
+    """What `analyze` keeps of the scan; see `core.scope`. Saved so re-analysis keeps it."""
+
+    vpcs: list[str] = []
+    tags: list[str] = []
+    exclude: list[str] = []
+
+
 class ProjectConfig(StrictModel):
     tool_version: str
     source: SourceConfig | None = None
     target: TargetConfig | None = None
+    scope: ScopeConfig | None = None
 
 
 class Project:
