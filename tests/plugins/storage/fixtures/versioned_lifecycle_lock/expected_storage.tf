@@ -61,7 +61,7 @@ resource "google_storage_bucket" "records" {
     }
     condition {
       days_since_noncurrent_time = 30
-      num_newer_versions         = 3
+      num_newer_versions         = 4
       with_state                 = "ARCHIVED"
       matches_prefix             = ["logs/"]
     }

@@ -21,7 +21,7 @@ resource "google_storage_bucket" "site_assets" {
   cors {
     origin          = ["https://example.com"]
     method          = ["GET", "HEAD"]
-    response_header = ["ETag"]
+    response_header = ["Authorization", "ETag"]
     max_age_seconds = 3600
   }
   website {

@@ -842,7 +842,7 @@ The bucket's policy or ACL lets anyone read it. Recreating that exposure without
 | Strategy | Title | Effect | Risk | Manual | Default |
 |---|---|---|---|---|---|
 | `private` | Private | public access prevention is enforced; anonymous readers, including website visitors, lose access | medium |  | yes |
-| `public_read` | Public read | allUsers can read every object, as in the source | high |  |  |
+| `public_read` | Public read | allUsers can read every object in the bucket — which may be wider than the source if its policy opened only some prefixes | high |  |  |
 
 ### The bucket policy is not translated (`S3-BUCKET-POLICY`)
 
@@ -887,13 +887,13 @@ Both move objects between classes by access pattern. Autoclass works per bucket 
 | `autoclass` | Enable Autoclass | Cloud Storage moves each object to the class its access pattern warrants; lifecycle storage-class transitions are dropped, since Autoclass refuses them | low |  | yes |
 | `standard` | Stay in Standard | objects stay in Standard unless a lifecycle rule moves them | low |  |  |
 
-### CORS request-header allow-lists do not carry (`S3-CORS`)
+### Allowed and exposed CORS headers merge into one list (`S3-CORS`)
 
-Cloud Storage CORS has origins, methods, exposed headers and max age, but no allow-list of request headers: any request header is accepted.
+Cloud Storage keeps one header list per CORS rule: it allows those request headers in a preflight and exposes those response headers. S3 keeps two. Merging them carries both, and also exposes the allowed headers — slightly wider than the source.
 
 | Strategy | Title | Effect | Risk | Manual | Default |
 |---|---|---|---|---|---|
-| `map_cors` | Map the CORS rules | origins, methods, exposed headers and max age carry; allowed headers do not | low |  | yes |
+| `map_cors` | Map the CORS rules | origins (including wildcards), methods, max age and both header lists carry; allowed request headers are also exposed | low |  | yes |
 
 ### Static website hosting has no s3-website endpoint on GCP (`S3-WEBSITE`)
 

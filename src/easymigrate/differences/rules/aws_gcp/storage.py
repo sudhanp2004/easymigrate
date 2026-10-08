@@ -80,17 +80,23 @@ class S3BucketName(DifferenceRule):
     param_docs = {"name": "Cloud Storage bucket name"}
 
     def detect(self, ir: IRDocument) -> list[Difference]:
-        names = [b.bucket_name for b in _buckets(ir)]
-        return [
-            self.difference(
-                [b.id],
-                bucket_name=b.bucket_name,
-                problem=name_problem(b.bucket_name),
-                suggested=sanitized(b.bucket_name),
-                others=sorted(n for n in names if n != b.bucket_name),
+        names = {b.bucket_name for b in _buckets(ir)}
+        diffs = []
+        for b in _buckets(ir):
+            suggested = sanitized(b.bucket_name)
+            # The default rename must not land on another scanned bucket's name.
+            if suggested in names - {b.bucket_name}:
+                suggested = sanitized(f"{suggested}-gcs")
+            diffs.append(
+                self.difference(
+                    [b.id],
+                    bucket_name=b.bucket_name,
+                    problem=name_problem(b.bucket_name),
+                    suggested=suggested,
+                    others=sorted(n for n in names if n != b.bucket_name),
+                )
             )
-            for b in _buckets(ir)
-        ]
+        return diffs
 
     def allowed_strategies(self, diff: Difference) -> tuple[Strategy, ...]:
         if diff.context.get("problem"):
@@ -149,7 +155,10 @@ class S3PublicAccess(DifferenceRule):
         Strategy(
             id="public_read",
             title="Public read",
-            effect="allUsers can read every object, as in the source",
+            effect=(
+                "allUsers can read every object in the bucket — which may be wider than the "
+                "source if its policy opened only some prefixes"
+            ),
             risk="high",
         ),
     )
@@ -283,9 +292,10 @@ def gcs_lifecycle(rule: LifecycleRule) -> tuple[list[dict[str, Any]], list[str]]
     if rule.filtered_by_tags or rule.filtered_by_size:
         what = "object tags" if rule.filtered_by_tags else "object size"
         return [], [f"{rule.id}: filters by {what}, which Cloud Storage lifecycle cannot match"]
+    dropped_parts = [f"{rule.id}: {part} is not carried" for part in rule.unsupported]
     base: dict[str, Any] = {"matches_prefix": [rule.prefix]} if rule.prefix else {}
     out: list[dict[str, Any]] = []
-    dropped: list[str] = []
+    dropped: list[str] = dropped_parts
 
     def transition(days: int, s3_class: str, state: str, age_key: str) -> None:
         target = STORAGE_CLASS.get(s3_class)
@@ -322,7 +332,9 @@ def gcs_lifecycle(rule: LifecycleRule) -> tuple[list[dict[str, Any]], list[str]]
         if rule.noncurrent_expiration_days is not None:
             condition["days_since_noncurrent_time"] = rule.noncurrent_expiration_days
         if rule.newer_noncurrent_versions is not None:
-            condition["num_newer_versions"] = rule.newer_noncurrent_versions
+            # S3 keeps N noncurrent versions; Cloud Storage counts newer versions including the
+            # live one, so keeping N noncurrent means N + 1 (review, 2026-10-08).
+            condition["num_newer_versions"] = rule.newer_noncurrent_versions + 1
         out.append({"action": {"type": "Delete"}, "condition": condition})
     if rule.abort_multipart_days is not None:
         out.append(
@@ -464,16 +476,20 @@ class S3IntelligentTiering(DifferenceRule):
 class S3Cors(_AcknowledgeOnly, DifferenceRule):
     id = "S3-CORS"
     family = "storage"
-    title = "CORS request-header allow-lists do not carry"
+    title = "Allowed and exposed CORS headers merge into one list"
     impact = (
-        "Cloud Storage CORS has origins, methods, exposed headers and max age, but no allow-list "
-        "of request headers: any request header is accepted."
+        "Cloud Storage keeps one header list per CORS rule: it allows those request headers in a "
+        "preflight and exposes those response headers. S3 keeps two. Merging them carries both, "
+        "and also exposes the allowed headers — slightly wider than the source."
     )
     strategies = (
         Strategy(
             id="map_cors",
             title="Map the CORS rules",
-            effect="origins, methods, exposed headers and max age carry; allowed headers do not",
+            effect=(
+                "origins (including wildcards), methods, max age and both header lists carry; "
+                "allowed request headers are also exposed"
+            ),
             risk="low",
         ),
     )
@@ -529,6 +545,8 @@ class S3Website(DifferenceRule):
             return doc
         if strategy_id != "website_config":
             raise ValueError(f"unknown strategy {strategy_id!r}")
+        if not (bucket.website.index or bucket.website.error):
+            return doc  # redirect-only: nothing Cloud Storage can carry
         site = {"main_page_suffix": bucket.website.index, "not_found_page": bucket.website.error}
         return _replace_object(doc, _set_hint(bucket, "website", site))
 

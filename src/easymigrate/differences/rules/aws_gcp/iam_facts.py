@@ -83,8 +83,12 @@ def suggest(service: str, level: str) -> list[str]:
     levels = SUGGESTED_ROLES.get(service)
     if not levels:
         return []
+    if level == "read":
+        # Never suggest write access for a read-only need (review, 2026-10-08): sts read, for
+        # one, needs no role at all.
+        return levels.get("read", [])
     for candidate in _ORDER[_ORDER.index(level) :]:
         if candidate in levels:
             return levels[candidate]
-    # Only weaker levels are known (e.g. sns read): the strongest known still covers the need.
+    # Only a weaker level is known: the strongest known still covers the need.
     return levels[max(levels, key=_ORDER.index)]

@@ -845,7 +845,9 @@ def _iam_view(resolved: IRDocument | None) -> IamView | None:
     roles = sorted(resolved.of_kind(IamRole), key=lambda r: r.id)
     if not roles:
         return None
+    # Launch templates may name the instance profile instead of giving its ARN.
     by_profile = {p: r.id for r in roles for p in r.instance_profiles}
+    by_profile.update({p.rsplit("/", 1)[-1]: r.id for r in roles for p in r.instance_profiles})
     by_arn = {r.arn: r.id for r in roles}
     by_oidc = {}
     for r in roles:

@@ -176,7 +176,8 @@ def test_lifecycle_maps_classes_expiry_noncurrent_and_multipart():
         "matches_prefix": ["logs/"],
         "with_state": "ARCHIVED",
         "days_since_noncurrent_time": 7,
-        "num_newer_versions": 2,
+        # S3 keeps 2 noncurrent versions; Cloud Storage counts the live one too.
+        "num_newer_versions": 3,
     }
 
 
@@ -310,3 +311,28 @@ def test_autoclass_is_not_the_default_when_lifecycle_moves_classes():
     assert tiering.risk_for(diff, "autoclass") == "medium"
     hints = _hints(tiering.apply(doc, diff, "autoclass"))
     assert [r["action"]["type"] for r in hints["lifecycle"]] == ["Delete"]
+
+
+def test_a_date_based_transition_is_dropped_not_run_immediately():
+    """Review 2026-10-08: a transition on a date became age 0 and archived everything."""
+    rule = LifecycleRule(
+        id="dated", expiration_days=30, unsupported=["transition to GLACIER on a date"]
+    )
+    rules, dropped = gcs_lifecycle(rule)
+    assert [r["action"]["type"] for r in rules] == ["Delete"]
+    assert dropped == ["dated: transition to GLACIER on a date is not carried"]
+
+
+def test_default_rename_avoids_another_scanned_bucket():
+    rule = S3BucketName()
+    dotted = _bucket("logs.prod").model_copy(update={"id": "storage_bucket:logs-prod-dotted"})
+    doc = _doc(dotted, _bucket("logs-prod"))
+    diff = next(d for d in rule.detect(doc) if d.context["bucket_name"] == "logs.prod")
+    assert diff.context["suggested"] == "logs-prod-gcs"
+    rule.validate_params(diff, "rename", rule.default_params(diff, "rename"))
+
+
+def test_redirect_only_website_sets_no_website_block():
+    rule = S3Website()
+    doc = _doc(_bucket(website=Website(redirect_all="example.com")))
+    assert "website" not in _hints(rule.apply(doc, _only(rule, doc), "website_config"))

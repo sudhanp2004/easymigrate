@@ -94,13 +94,24 @@ def _bucket(
             }
             - {""}
         ),
+        # EventBridge is enabled by an empty object, so presence, not truthiness, counts.
         notifications=sorted(
-            kind for key, kind in _NOTIFICATION_KINDS if (entry.get("notifications") or {}).get(key)
+            kind
+            for key, kind in _NOTIFICATION_KINDS
+            if (entry.get("notifications") or {}).get(key) is not None
+            and (kind == "eventbridge" or (entry.get("notifications") or {}).get(key))
         ),
         requester_pays=(entry.get("request_payment") or {}).get("Payer") == "Requester",
         acceleration=(entry.get("accelerate") or {}).get("Status") == "Enabled",
+        # Most buckets use Intelligent-Tiering through a lifecycle transition, with no
+        # tiering configuration at all (review, 2026-10-08).
         intelligent_tiering=bool(
             (entry.get("intelligent_tiering") or {}).get("IntelligentTieringConfigurationList")
+        )
+        or any(
+            t.get("StorageClass") == "INTELLIGENT_TIERING"
+            for r in (entry.get("lifecycle") or {}).get("Rules", [])
+            for t in r.get("Transitions") or []
         ),
     )
 
@@ -133,11 +144,20 @@ def _has_policy(response: dict[str, Any] | None) -> bool:
         return True
 
 
-def _transitions(items: list[dict[str, Any]], days_key: str) -> list[Transition]:
-    return [
-        Transition(days=item.get(days_key) or 0, storage_class=item.get("StorageClass", ""))
-        for item in items
-    ]
+def _transitions(
+    items: list[dict[str, Any]], days_key: str, unsupported: list[str], label: str
+) -> list[Transition]:
+    """Day-based transitions only. A transition on a calendar date has no Cloud Storage
+    condition; reading its missing Days as 0 archived every object at once (review,
+    2026-10-08), so it is recorded as unsupported instead."""
+    kept = []
+    for item in items:
+        days = item.get(days_key)
+        if days is None:
+            unsupported.append(f"{label} to {item.get('StorageClass', '?')} on a date")
+            continue
+        kept.append(Transition(days=days, storage_class=item.get("StorageClass", "")))
+    return kept
 
 
 def _rule(rule: dict[str, Any]) -> LifecycleRule:
@@ -146,6 +166,18 @@ def _rule(rule: dict[str, Any]) -> LifecycleRule:
     prefix = conditions.get("Prefix", rule.get("Prefix"))
     expiration = rule.get("Expiration") or {}
     noncurrent = rule.get("NoncurrentVersionExpiration") or {}
+    unsupported: list[str] = []
+    if expiration.get("Date"):
+        unsupported.append("expiration on a date")
+    if expiration.get("ExpiredObjectDeleteMarker"):
+        unsupported.append("removal of expired delete markers (Cloud Storage has none)")
+    transitions = _transitions(rule.get("Transitions") or [], "Days", unsupported, "transition")
+    noncurrent_transitions = _transitions(
+        rule.get("NoncurrentVersionTransitions") or [],
+        "NoncurrentDays",
+        unsupported,
+        "noncurrent transition",
+    )
     return LifecycleRule(
         id=rule.get("ID") or "rule",
         enabled=rule.get("Status") == "Enabled",
@@ -154,16 +186,15 @@ def _rule(rule: dict[str, Any]) -> LifecycleRule:
         filtered_by_size=bool(
             conditions.get("ObjectSizeGreaterThan") or conditions.get("ObjectSizeLessThan")
         ),
-        transitions=_transitions(rule.get("Transitions") or [], "Days"),
+        transitions=transitions,
         expiration_days=expiration.get("Days"),
-        noncurrent_transitions=_transitions(
-            rule.get("NoncurrentVersionTransitions") or [], "NoncurrentDays"
-        ),
+        noncurrent_transitions=noncurrent_transitions,
         noncurrent_expiration_days=noncurrent.get("NoncurrentDays"),
         newer_noncurrent_versions=noncurrent.get("NewerNoncurrentVersions"),
         abort_multipart_days=(rule.get("AbortIncompleteMultipartUpload") or {}).get(
             "DaysAfterInitiation"
         ),
+        unsupported=unsupported,
     )
 
 

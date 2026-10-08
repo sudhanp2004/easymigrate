@@ -139,3 +139,26 @@ def test_website_lock_replication_notifications_and_flags():
     assert bucket.requester_pays and bucket.acceleration and bucket.intelligent_tiering
     assert bucket.versioning == "suspended"
     assert bucket.labels == {"team": "web"}
+
+
+def test_date_transitions_eventbridge_and_tiering_by_lifecycle():
+    lifecycle = {
+        "Rules": [
+            {
+                "ID": "r",
+                "Status": "Enabled",
+                "Filter": {},
+                "Transitions": [
+                    {"Date": "2030-01-01T00:00:00Z", "StorageClass": "GLACIER"},
+                    {"Days": 30, "StorageClass": "INTELLIGENT_TIERING"},
+                ],
+                "Expiration": {"ExpiredObjectDeleteMarker": True},
+            }
+        ]
+    }
+    bucket = run(entry(lifecycle=lifecycle, notifications={"EventBridgeConfiguration": {}}))[0]
+    rule = bucket.lifecycle_rules[0]
+    assert [t.days for t in rule.transitions] == [30]  # the dated one is not read as day 0
+    assert len(rule.unsupported) == 2
+    assert bucket.notifications == ["eventbridge"]
+    assert bucket.intelligent_tiering

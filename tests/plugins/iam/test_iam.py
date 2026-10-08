@@ -55,8 +55,8 @@ def test_action_levels(action, expected):
 
 def test_suggestions_fall_back_to_the_nearest_known_level():
     assert suggest("s3", "read") == ["roles/storage.objectViewer"]
-    assert suggest("sns", "read") == ["roles/pubsub.publisher"]  # only write/admin known
-    assert suggest("kms", "read") == ["roles/cloudkms.cryptoKeyEncrypterDecrypter"]
+    assert suggest("sns", "read") == []  # never escalate a read need to publisher
+    assert suggest("kms", "write") == ["roles/cloudkms.cryptoKeyEncrypterDecrypter"]
     assert suggest("unknown-service", "write") == []
 
 
@@ -228,3 +228,46 @@ def test_report_links_roles_to_the_migrated_objects_that_use_them():
 
 def test_every_iam_role_field_is_declared():
     assert set(IamRole.model_fields) == set(FIELD_COVERAGE["iam_role"])
+
+
+@pytest.mark.parametrize(
+    ("action", "expected"),
+    [
+        ("ecr:BatchCheckLayerAvailability", ("ecr", "read")),
+        ("logs:FilterLogEvents", ("logs", "read")),
+        ("s3:getobject", ("s3", "read")),
+        ("S3:GetObject", ("s3", "read")),
+        ("ssm:Get*", ("ssm-parameters", "read")),
+    ],
+)
+def test_review_classification_fixes(action, expected):
+    assert action_level(action) == expected
+
+
+def test_read_needs_never_get_a_writer_role():
+    assert suggest("sts", "read") == []
+    assert suggest("logs", "read") == []
+    assert suggest("sns", "read") == []
+
+
+def test_not_action_allow_is_flagged_as_near_total_access():
+    policy = {"Statement": [{"Effect": "Allow", "NotAction": "iam:*", "Resource": "*"}]}
+    ctx = NormalizeContext(account_id="1", region="ap-south-1", strict=False)
+    assert normalize(_snapshot(_role("broad", policy)), ctx)[0].admin_everything
+
+
+def test_trust_conditions_with_external_ids_are_not_stored(aws):
+    trust = {
+        "Version": V,
+        "Statement": [
+            {
+                "Effect": "Allow",
+                "Principal": {"AWS": "arn:aws:iam::999999999999:root"},
+                "Action": "sts:AssumeRole",
+                "Condition": {"StringEquals": {"sts:ExternalId": "s3cr3t-external-id"}},
+            }
+        ],
+    }
+    aws.client("iam").create_role(RoleName="vendor", AssumeRolePolicyDocument=json.dumps(trust))
+    files = collect(aws, CollectContext(plugin="iam"))
+    assert "s3cr3t-external-id" not in json.dumps(files, default=str)

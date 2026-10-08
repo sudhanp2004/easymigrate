@@ -157,8 +157,12 @@ def _generate_bucket(
         entry = block.block("cors")
         entry.attr("origin", cors.origins)
         entry.attr("method", cors.methods)
-        if cors.expose_headers:
-            entry.attr("response_header", cors.expose_headers)
+        # Cloud Storage's responseHeader both allows request headers in a preflight and exposes
+        # response headers, so S3's two lists merge ("*" echoes whatever is requested).
+        # Verified live 2026-10-08; dropping AllowedHeaders broke browser uploads.
+        headers = list(dict.fromkeys([*cors.allowed_headers, *cors.expose_headers]))
+        if headers:
+            entry.attr("response_header", headers)
         if cors.max_age is not None:
             entry.attr("max_age_seconds", cors.max_age)
     website = hints.get("website")

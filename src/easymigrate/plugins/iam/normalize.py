@@ -13,16 +13,23 @@ from easymigrate.ir.naming import allocate_ids, clean_labels
 
 # Receive is the consuming side of a queue: a subscriber, not a publisher.
 _READ_VERBS = (
-    "Get",
-    "List",
-    "Describe",
-    "Head",
-    "Select",
-    "Scan",
-    "Query",
-    "BatchGet",
-    "View",
-    "Receive",
+    "get",
+    "list",
+    "describe",
+    "head",
+    "select",
+    "scan",
+    "query",
+    "batchget",
+    "batchcheck",
+    "check",
+    "filter",
+    "lookup",
+    "search",
+    "read",
+    "download",
+    "view",
+    "receive",
 )
 _LEVEL_ORDER = {"read": 0, "write": 1, "admin": 2}
 _SAMPLE = 5
@@ -58,7 +65,9 @@ def _service(service: str, verb: str) -> str:
     if service in _SSM_AGENT_SERVICES:
         return "ssm-agent"
     if service == "ssm":
-        return "ssm-parameters" if "Parameter" in verb or verb == "*" else "ssm-agent"
+        # Wildcards such as ssm:Get* cover GetParameter too.
+        parameters = "parameter" in verb.lower() or "*" in verb
+        return "ssm-parameters" if parameters else "ssm-agent"
     return service
 
 
@@ -66,11 +75,14 @@ def action_level(action: str) -> tuple[str, str]:
     """(service, read|write|admin) for one IAM action pattern (spec 8 D3)."""
     if action == "*":
         return "*", "admin"
+    # IAM action names are case-insensitive.
     raw_service, _, verb = action.partition(":")
+    raw_service = raw_service.lower()
     service = _service(raw_service, verb)
     if verb in {"*", ""}:
         return service, "admin"
-    if verb.startswith(_READ_VERBS) or action in _CONSUMER_ACTIONS:
+    canonical = f"{raw_service}:{verb}"
+    if verb.lower().startswith(_READ_VERBS) or canonical in _CONSUMER_ACTIONS:
         return service, "read"
     return service, "write"
 
@@ -124,6 +136,10 @@ def normalize(snapshot: Snapshot, ctx: NormalizeContext) -> list[IntentObject]:
                     continue
                 if "*" in _as_list(statement.get("Resource")):
                     wildcard = True
+                if statement.get("NotAction") is not None:
+                    # "Allow everything except …" is near-total access (review, 2026-10-08).
+                    everything = True
+                    continue
                 for action in _as_list(statement.get("Action")):
                     service, level = action_level(action)
                     if service == "*":

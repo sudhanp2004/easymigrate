@@ -14,6 +14,24 @@ IAM_SNAPSHOT_FILES = ("iam.authorization", "iam.aws_managed_policies")
 _FILTER = ["User", "Group", "Role", "LocalManagedPolicy"]
 
 
+def _without_trust_conditions(role: dict[str, Any]) -> dict[str, Any]:
+    """Keep only who may assume the role. Trust conditions can hold sts:ExternalId values,
+    shared secrets that have no place in a snapshot (review, 2026-10-08)."""
+    trust = role.get("AssumeRolePolicyDocument")
+    if not isinstance(trust, dict):
+        return role
+    statements = trust.get("Statement") or []
+    if isinstance(statements, dict):
+        statements = [statements]
+    reduced = {
+        "Statement": [
+            {k: v for k, v in s.items() if k in {"Effect", "Principal", "Action"}}
+            for s in statements
+        ]
+    }
+    return {**role, "AssumeRolePolicyDocument": reduced}
+
+
 def collect(connection: AwsConnection, ctx: CollectContext) -> dict[str, Any]:
     iam = connection.client("iam")
     files: dict[str, Any] = {
@@ -39,7 +57,7 @@ def collect(connection: AwsConnection, ctx: CollectContext) -> dict[str, Any]:
         raise
 
     files["iam.authorization"] = {
-        "Roles": sorted(roles, key=lambda r: r["Arn"]),
+        "Roles": sorted((_without_trust_conditions(r) for r in roles), key=lambda r: r["Arn"]),
         "Users": sorted(
             (
                 {"UserName": u["UserName"], "Groups": sorted(u.get("GroupList") or [])}

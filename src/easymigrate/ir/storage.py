@@ -26,6 +26,8 @@ class LifecycleRule(StrictModel):
     noncurrent_expiration_days: int | None = None
     newer_noncurrent_versions: int | None = None
     abort_multipart_days: int | None = None
+    # Parts of the rule with no Cloud Storage condition (dates, expired delete markers).
+    unsupported: list[str] = Field(default_factory=list)
 
 
 class CorsRule(StrictModel):
