@@ -32,7 +32,7 @@ SUGGESTED_ROLES: dict[str, dict[str, list[str]]] = {
         "write": ["roles/secretmanager.secretVersionManager"],
         "admin": ["roles/secretmanager.admin"],
     },
-    "ssm": {
+    "ssm-parameters": {
         "read": ["roles/secretmanager.secretAccessor"],
         "write": ["roles/secretmanager.secretVersionManager"],
     },
@@ -65,6 +65,14 @@ SUGGESTED_ROLES: dict[str, dict[str, list[str]]] = {
         "write": ["roles/compute.loadBalancerAdmin"],
     },
     "autoscaling": {"read": ["roles/compute.viewer"], "write": ["roles/compute.instanceAdmin.v1"]},
+}
+
+# Services whose AWS role has no GCP role to grant, with what replaces them instead.
+NOTES: dict[str, str] = {
+    "ssm-agent": (
+        "Systems Manager agent (Session Manager / Run Command): no role to grant; "
+        "use OS Login with IAP TCP forwarding for shell access"
+    ),
 }
 
 _ORDER = ("read", "write", "admin")

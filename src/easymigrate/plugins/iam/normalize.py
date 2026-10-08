@@ -46,14 +46,31 @@ def _as_list(value: Any) -> list[Any]:
     return value if isinstance(value, list) else [value]
 
 
+# Acknowledging or deferring a queue message is part of consuming it (live run, 2026-10-08:
+# a Receive+Delete consumer was told it needed publisher rights).
+_CONSUMER_ACTIONS = {"sqs:DeleteMessage", "sqs:DeleteMessageBatch", "sqs:ChangeMessageVisibility"}
+# The Systems Manager agent (Session Manager, Run Command) shares the `ssm` prefix with Parameter
+# Store but is a different thing entirely; the agent has its own message channels.
+_SSM_AGENT_SERVICES = {"ssmmessages", "ec2messages"}
+
+
+def _service(service: str, verb: str) -> str:
+    if service in _SSM_AGENT_SERVICES:
+        return "ssm-agent"
+    if service == "ssm":
+        return "ssm-parameters" if "Parameter" in verb or verb == "*" else "ssm-agent"
+    return service
+
+
 def action_level(action: str) -> tuple[str, str]:
     """(service, read|write|admin) for one IAM action pattern (spec 8 D3)."""
     if action == "*":
         return "*", "admin"
-    service, _, verb = action.partition(":")
+    raw_service, _, verb = action.partition(":")
+    service = _service(raw_service, verb)
     if verb in {"*", ""}:
         return service, "admin"
-    if verb.startswith(_READ_VERBS):
+    if verb.startswith(_READ_VERBS) or action in _CONSUMER_ACTIONS:
         return service, "read"
     return service, "write"
 

@@ -18,7 +18,7 @@ from easymigrate.core.project import Project
 from easymigrate.differences.decisions import from_yaml
 from easymigrate.differences.engine import catalogue
 from easymigrate.differences.model import DifferenceRule
-from easymigrate.differences.rules.aws_gcp.iam_facts import suggest
+from easymigrate.differences.rules.aws_gcp.iam_facts import NOTES, suggest
 from easymigrate.ir.base import Finding, IRDocument
 from easymigrate.ir.compute import ComputeInstance, Disk, InstanceTemplate
 from easymigrate.ir.database import DatabaseInstance
@@ -890,6 +890,9 @@ def _iam_view(resolved: IRDocument | None) -> IamView | None:
         services = []
         for access in role.access:
             if access.service == "*":
+                continue
+            if access.service in NOTES:
+                services.append(NOTES[access.service])
                 continue
             suggestion = suggest(access.service, access.level)
             target = ", ".join(suggestion) if suggestion else "no direct equivalent; review by hand"

@@ -94,3 +94,23 @@ No GCP resources are created by this family, so the live run costs only the AWS 
 1. IR, collection, normalization, Kubernetes role capture.
 2. `iam_facts.py` and the report section.
 3. Live run.
+
+## 9. Live run, 2026-10-08
+
+The real account (538342414628) scanned with an instance role on the testbed app VM: an inline
+policy (S3 read, SQS receive + delete, CloudWatch Logs write) and the AWS-managed
+`AmazonSSMManagedInstanceCore`. `plan` only — this family creates nothing on GCP.
+
+The report linked `migration-test-app-role` to `compute_instance:migration-test-app` through its
+instance profile, as "a service account attached to the VM", and flagged its wildcard resources.
+Two suggestions were wrong on the first run and are fixed, each with a regression test:
+
+1. **A queue consumer was told it needed publisher rights.** `sqs:DeleteMessage` acknowledges a
+   received message; it now counts as consuming, so the suggestion is `roles/pubsub.subscriber`.
+2. **The Systems Manager agent was mapped to Secret Manager.** `AmazonSSMManagedInstanceCore` is
+   Session Manager's agent policy; it shares the `ssm` prefix with Parameter Store and nothing else.
+   `ssm` now splits into `ssm-parameters` (→ Secret Manager) and `ssm-agent` (with `ssmmessages`
+   and `ec2messages`), which the report describes as needing no role — use OS Login with IAP.
+
+Not live-tested: EKS cluster, node and pod-identity linking (covered by unit tests; the full-stack
+run earlier the same day predates this family).

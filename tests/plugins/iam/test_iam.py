@@ -40,6 +40,13 @@ EC2_TRUST = {
         ("s3:PutObject", ("s3", "write")),
         ("sqs:*", ("sqs", "admin")),
         ("*", ("*", "admin")),
+        # Live run, 2026-10-08: consuming a queue includes deleting what was received.
+        ("sqs:DeleteMessage", ("sqs", "read")),
+        ("sqs:SendMessage", ("sqs", "write")),
+        # Parameter Store and the Systems Manager agent share a prefix and nothing else.
+        ("ssm:GetParameter", ("ssm-parameters", "read")),
+        ("ssm:UpdateInstanceInformation", ("ssm-agent", "write")),
+        ("ssmmessages:OpenDataChannel", ("ssm-agent", "write")),
     ],
 )
 def test_action_levels(action, expected):

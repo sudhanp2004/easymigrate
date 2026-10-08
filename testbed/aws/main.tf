@@ -397,6 +397,7 @@ resource "aws_instance" "app" {
   vpc_security_group_ids      = [aws_security_group.app.id, aws_security_group.mysql.id]
   associate_public_ip_address = true
   key_name                    = aws_key_pair.test.key_name
+  iam_instance_profile        = aws_iam_instance_profile.app.name
 
   # VM-USER-DATA: becomes a GCP startup script. Serves a page so the tag seam can be proven
   # by reaching port 80 through the migrated firewall rules.
@@ -855,4 +856,40 @@ resource "aws_lb_listener" "internal" {
     type             = "forward"
     target_group_arn = aws_lb_target_group.internal.arn
   }
+}
+
+# --- Spec 8: an instance role the IAM report should link to the app VM ------------------------
+resource "aws_iam_role" "app" {
+  name = "migration-test-app-role"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "ec2.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "app" {
+  name = "app-access"
+  role = aws_iam_role.app.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      { Effect = "Allow", Action = ["s3:GetObject", "s3:ListBucket"], Resource = "*" },
+      { Effect = "Allow", Action = ["sqs:ReceiveMessage", "sqs:DeleteMessage"], Resource = "*" },
+      { Effect = "Allow", Action = ["logs:PutLogEvents", "logs:CreateLogStream"], Resource = "*" },
+    ]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "app_ssm" {
+  role       = aws_iam_role.app.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
+}
+
+resource "aws_iam_instance_profile" "app" {
+  name = "migration-test-app-profile"
+  role = aws_iam_role.app.name
 }
