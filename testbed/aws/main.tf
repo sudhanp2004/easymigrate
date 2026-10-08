@@ -789,3 +789,70 @@ resource "aws_lb_listener" "ssh" {
     target_group_arn = aws_lb_target_group.ssh.arn
   }
 }
+
+# --- Full-stack test additions: ASG behind the ALB, and an internal ALB ----------------------
+resource "aws_lb_target_group" "asg" {
+  name     = "migration-test-asg-tg"
+  port     = 80
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main.id
+  health_check {
+    path    = "/"
+    matcher = "200-399"
+  }
+}
+
+resource "aws_lb_listener_rule" "asg" {
+  listener_arn = aws_lb_listener.web.arn
+  priority     = 20
+  condition {
+    path_pattern {
+      values = ["/asg/*"]
+    }
+  }
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.asg.arn
+  }
+}
+
+resource "aws_autoscaling_attachment" "asg" {
+  autoscaling_group_name = aws_autoscaling_group.web.name
+  lb_target_group_arn    = aws_lb_target_group.asg.arn
+}
+
+# Internal ALB: exercises the regional internal shape and its proxy-only subnet.
+resource "aws_lb" "internal" {
+  name               = "migration-test-internal-alb"
+  internal           = true
+  load_balancer_type = "application"
+  subnets            = [aws_subnet.public_1.id, aws_subnet.public_2.id]
+  security_groups    = [aws_security_group.app.id]
+}
+
+# AWS forbids one target group on two load balancers, so the internal ALB gets its own, pointing
+# at the same instance: exactly the case GCP's balancing modes constrain.
+resource "aws_lb_target_group" "internal" {
+  name     = "migration-test-internal-tg"
+  port     = 80
+  protocol = "HTTP"
+  vpc_id   = aws_vpc.main.id
+  health_check {
+    path = "/"
+  }
+}
+
+resource "aws_lb_target_group_attachment" "internal" {
+  target_group_arn = aws_lb_target_group.internal.arn
+  target_id        = aws_instance.app.id
+}
+
+resource "aws_lb_listener" "internal" {
+  load_balancer_arn = aws_lb.internal.arn
+  port              = 8080
+  protocol          = "HTTP"
+  default_action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.internal.arn
+  }
+}
