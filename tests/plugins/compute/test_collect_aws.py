@@ -360,3 +360,12 @@ def test_no_describe_tags_call_is_made(aws, monkeypatch):
 
 def test_source_module_exposes_access_denied_helper():
     assert hasattr(source, "is_access_denied")
+
+
+def test_ssm_parameter_image_ids_are_not_sent_to_describe_images():
+    """Review 2026-10-08: a template ImageId like resolve:ssm:... aborted the whole scan."""
+    from easymigrate.plugins.compute.collect_aws import _image_ids
+
+    assert _image_ids(
+        [{"ImageId": "resolve:ssm:/aws/service/ami-amazon-linux-latest/al2023"}, {"ImageId": AMI}]
+    ) == [AMI]

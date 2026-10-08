@@ -208,7 +208,15 @@ def _attribute_value(response: dict[str, Any], response_key: str) -> Any:
 
 
 def _image_ids(instances: list[dict[str, Any]]) -> list[str]:
-    return sorted({instance["ImageId"] for instance in instances if instance.get("ImageId")})
+    # Launch templates may name an image as "resolve:ssm:/aws/service/..." — a parameter, not an
+    # AMI id, which DescribeImages rejects as malformed (review, 2026-10-08).
+    return sorted(
+        {
+            instance["ImageId"]
+            for instance in instances
+            if str(instance.get("ImageId") or "").startswith("ami-")
+        }
+    )
 
 
 def _collect_images(
@@ -222,13 +230,34 @@ def _collect_images(
             if is_access_denied(exc):
                 ctx.access_denied("DescribeImages", "ec2:DescribeImages")
                 return []
-            dropped = _unknown_ids(exc, "InvalidAMIID.NotFound")
+            dropped = _unknown_ids(exc, "InvalidAMIID.NotFound") | _unknown_ids(
+                exc, "InvalidAMIID.Unavailable"
+            )
             if dropped:
                 remaining = [item for item in remaining if item not in dropped]
                 continue
+            if _error_code(exc) in {"InvalidAMIID.Malformed", "InvalidAMIID.Unavailable"}:
+                # The bad id is not always listed in the message: fall back to one at a time.
+                return _images_one_by_one(ec2, remaining)
             raise
         return sorted(images, key=lambda item: item["ImageId"])
     return []
+
+
+def _error_code(exc: BaseException) -> str | None:
+    response = getattr(exc, "response", None)
+    return response.get("Error", {}).get("Code") if isinstance(response, dict) else None
+
+
+def _images_one_by_one(ec2: Any, ids: list[str]) -> list[dict[str, Any]]:
+    images: list[dict[str, Any]] = []
+    for image_id in ids:
+        try:
+            images += ec2.describe_images(ImageIds=[image_id]).get("Images", [])
+        except Exception as exc:
+            if not (_error_code(exc) or "").startswith("InvalidAMIID"):
+                raise
+    return sorted(images, key=lambda item: item["ImageId"])
 
 
 def _collect_key_pairs(ec2: Any, ctx: CollectContext) -> list[dict[str, Any]]:

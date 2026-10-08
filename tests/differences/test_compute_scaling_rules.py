@@ -281,3 +281,35 @@ def test_an_excluded_instance_takes_no_zone():
     shape = VmAsgShape()
     result = shape.apply(doc, _only(shape, doc), "regional_mig")
     assert _hints(result)["zone_letters"] == ["a", "b"]
+
+
+def test_a_zone_mapping_manual_exclusion_does_not_shift_later_letters():
+    """Review 2026-10-08: excluding one instance mid-pass collapsed two zones into one."""
+
+    def vm(name, zone, zone_id):
+        return _instance(zone=zone, zone_id=zone_id).model_copy(
+            update={"id": f"compute_instance:{name}", "name": name}
+        )
+
+    doc = _doc(
+        vm("a", "ap-south-1a", "aps1-az1"),
+        vm("b", "ap-south-1b", "aps1-az2"),
+        vm("c", "ap-south-1c", "aps1-az3"),
+    )
+    rule = VmZoneMapping()
+    diffs = {d.subjects[0]: d for d in rule.detect(doc)}
+    doc = rule.apply(doc, diffs["compute_instance:b"], "positional")
+    doc = rule.apply(doc, diffs["compute_instance:a"], "manual")
+    doc = rule.apply(doc, diffs["compute_instance:c"], "positional")
+    letters = {
+        i: doc.get(i).target_hints.get("zone_letter")
+        for i in ("compute_instance:b", "compute_instance:c")
+    }
+    assert letters == {"compute_instance:b": "b", "compute_instance:c": "c"}
+
+
+def test_a_group_whose_subnets_were_not_scanned_is_excluded_with_a_reason():
+    rule = VmAsgShape()
+    doc = _doc(_group(subnets=[]))
+    result = rule.apply(doc, _only(rule, doc), "regional_mig")
+    assert "subnets" in result.get("instance_group:web").excluded

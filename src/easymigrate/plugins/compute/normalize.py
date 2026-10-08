@@ -99,8 +99,18 @@ def normalize(snapshot: Snapshot, ctx: NormalizeContext) -> list[IntentObject]:
 
     _report_unsupported(snapshot, ctx)
     groups_raw = _standalone_groups(groups_raw, ctx)
+    available = {
+        (tid, str(v.get("VersionNumber")))
+        for tid, entry in templates_raw.items()
+        for v in entry.get("versions") or []
+    }
+    migratable = {
+        g["AutoScalingGroupName"]
+        for g in groups_raw
+        if resolve_template_version(templates_raw, group_template_spec(g)) in available
+    }
 
-    translatable = _translatable_instances(instances_raw, ctx)
+    translatable = _translatable_instances(instances_raw, ctx, migratable)
 
     addresses, address_by_instance = _addresses(addresses_raw, ctx)
     disks, disk_ids_by_instance = _disks(translatable, volumes, ctx)
@@ -136,6 +146,7 @@ def normalize(snapshot: Snapshot, ctx: NormalizeContext) -> list[IntentObject]:
         subnet_ids=subnet_ids,
         template_ids=template_ids,
         zone_ids=zone_ids,
+        templates_raw=templates_raw,
     )
 
     return [
@@ -145,6 +156,51 @@ def normalize(snapshot: Snapshot, ctx: NormalizeContext) -> list[IntentObject]:
         *sorted(templates, key=lambda o: o.id),
         *sorted(groups, key=lambda o: o.id),
     ]
+
+
+def group_template_spec(group: dict[str, Any]) -> dict[str, Any]:
+    """The launch template an Auto Scaling group launches from. A mixed-instances group keeps
+    it under its policy rather than at the top level (review, 2026-10-08)."""
+    if group.get("LaunchTemplate"):
+        return group["LaunchTemplate"]
+    mixed = (group.get("MixedInstancesPolicy") or {}).get("LaunchTemplate") or {}
+    return mixed.get("LaunchTemplateSpecification") or {}
+
+
+def resolve_template_version(
+    templates_raw: dict[str, Any], spec: dict[str, Any]
+) -> tuple[str | None, str]:
+    """(template id, concrete version number) for an Auto Scaling group's template reference.
+
+    AWS lets a group name the template by id or name and the version as a number, `$Latest`
+    or `$Default` (or not at all, meaning `$Default`). Only concrete versions are collected, so
+    every symbolic form is resolved here; before this, `$Latest` groups never migrated.
+    """
+    template_id = spec.get("LaunchTemplateId")
+    if not template_id and spec.get("LaunchTemplateName"):
+        template_id = next(
+            (
+                tid
+                for tid, entry in templates_raw.items()
+                if (entry.get("template") or {}).get("LaunchTemplateName")
+                == spec["LaunchTemplateName"]
+            ),
+            None,
+        )
+    version = str(spec.get("Version") or "$Default")
+    entry = templates_raw.get(template_id or "") or {}
+    numbers = [
+        int(v["VersionNumber"]) for v in entry.get("versions") or [] if v.get("VersionNumber")
+    ]
+    if version == "$Latest":
+        latest = (entry.get("template") or {}).get("LatestVersionNumber") or (
+            max(numbers) if numbers else None
+        )
+        version = str(latest) if latest else version
+    elif version == "$Default":
+        default = (entry.get("template") or {}).get("DefaultVersionNumber")
+        version = str(default) if default else version
+    return template_id, version
 
 
 def _report_unsupported(snapshot: Snapshot, ctx: NormalizeContext) -> None:
@@ -170,7 +226,7 @@ def _report_unsupported(snapshot: Snapshot, ctx: NormalizeContext) -> None:
 
 
 def _translatable_instances(
-    instances_raw: list[dict[str, Any]], ctx: NormalizeContext
+    instances_raw: list[dict[str, Any]], ctx: NormalizeContext, migratable: set[str]
 ) -> list[dict[str, Any]]:
     keep = []
     for instance in instances_raw:
@@ -186,7 +242,16 @@ def _translatable_instances(
         instance_tags = tags(instance)
         group = instance_tags.get(ASG_MEMBER_TAG)
         is_k8s_node = EKS_CLUSTER_TAG in instance_tags or _self_managed_cluster(instance_tags)
-        if group and not is_k8s_node:
+        if group and not is_k8s_node and group not in migratable:
+            # The group itself cannot migrate (a launch configuration, or a template outside
+            # the scan): keep its running instances rather than losing both.
+            ctx.info(
+                "VM-ASG-MEMBER-KEPT",
+                f"{instance['InstanceId']} belongs to Auto Scaling group {group}, which cannot "
+                "be migrated; the instance is migrated on its own instead.",
+                subject=instance["InstanceId"],
+            )
+        elif group and not is_k8s_node:
             ctx.info(
                 "VM-ASG-MEMBER",
                 f"{instance['InstanceId']} was launched by Auto Scaling group {group}; the group "
@@ -345,6 +410,15 @@ def _disk(
             boot=False,
             instance_store=True,
         )
+    if not volume:
+        # DescribeVolumes was denied (already a scan gap) or the volume vanished mid-scan.
+        ctx.info(
+            "VM-VOLUME-UNREADABLE",
+            f"volume {native} could not be read; it is migrated as a gp3 disk of the image's "
+            "default size. Grant ec2:DescribeVolumes and re-scan for its real size and type.",
+            subject=native,
+        )
+        volume = {"VolumeType": "gp3"}
     return Disk(
         id=object_id,
         name=name_tag(volume) or native,
@@ -442,7 +516,7 @@ def _instances(
                 instance_type=item.get("InstanceType", ""),
                 vcpus=vcpus,
                 memory_mib=memory,
-                architecture=item.get("Architecture", "x86_64"),
+                architecture=_architecture(item.get("Architecture")),
                 state=(item.get("State") or {}).get("Name", "running"),
                 zone=(item.get("Placement") or {}).get("AvailabilityZone", ""),
                 zone_id=(item.get("Placement") or {}).get("AvailabilityZoneId")
@@ -452,7 +526,7 @@ def _instances(
                 disks=disk_ids_by_instance.get(native, []),
                 image=item.get("ImageId", ""),
                 platform=_platform(item, image),
-                platform_details=image.get("PlatformDetails"),
+                platform_details=_platform_details(image),
                 external_ip=_external_ip(native, item, address_by_instance),
                 private_ip=item.get("PrivateIpAddress"),
                 user_data=_user_data(native, attributes, ctx),
@@ -496,6 +570,36 @@ def _size_for(
         )
     )
     return None, None
+
+
+_DISTRO_MARKERS = (
+    ("ubuntu", "Ubuntu"),
+    ("debian", "Debian"),
+    ("rhel", "Red Hat"),
+    ("red hat", "Red Hat"),
+    ("suse", "SUSE"),
+    ("sles", "SUSE"),
+    ("rocky", "Rocky"),
+)
+
+
+def _platform_details(image: dict[str, Any]) -> str | None:
+    """AWS reports Ubuntu, Debian and most other community AMIs as plain "Linux/UNIX", which
+    sent every Ubuntu server to Rocky Linux with the wrong login (review, 2026-10-08). The
+    image's name and description name the distribution."""
+    details = image.get("PlatformDetails")
+    if details and details != "Linux/UNIX":
+        return details
+    text = f"{image.get('Name') or ''} {image.get('Description') or ''}".lower()
+    for marker, distro in _DISTRO_MARKERS:
+        if marker in text:
+            return f"{details or 'Linux/UNIX'} ({distro})"
+    return details
+
+
+def _architecture(value: str | None) -> str:
+    # Mac instance architectures report as x86_64_mac / arm64_mac.
+    return (value or "x86_64").removesuffix("_mac")
 
 
 def _platform(item: dict[str, Any], image: dict[str, Any]) -> str:
@@ -548,10 +652,9 @@ def _templates(
     """Only versions an ASG references become objects (spec 4 §4.3)."""
     referenced: set[tuple[str, str]] = set()
     for group in groups_raw:
-        spec = group.get("LaunchTemplate") or {}
-        template_id = spec.get("LaunchTemplateId")
+        template_id, version = resolve_template_version(templates_raw, group_template_spec(group))
         if template_id:
-            referenced.add((template_id, str(spec.get("Version") or "")))
+            referenced.add((template_id, version))
 
     wanted: list[tuple[str | None, str]] = []
     for template_id, version in sorted(referenced):
@@ -592,17 +695,21 @@ def _templates(
                     instance_type=data.get("InstanceType", ""),
                     vcpus=vcpus,
                     memory_mib=memory,
-                    architecture=data.get("Architecture", "x86_64"),
+                    architecture=_architecture(
+                        data.get("Architecture") or image.get("Architecture")
+                    ),
                     image=data.get("ImageId", ""),
                     platform=_platform(data, image),
-                    platform_details=image.get("PlatformDetails"),
-                    firewall_policies=[
-                        policy_ids[group]
-                        for group in data.get("SecurityGroupIds") or []
-                        if group in policy_ids
-                    ],
+                    platform_details=_platform_details(image),
+                    firewall_policies=sorted(
+                        {
+                            policy_ids[group]
+                            for group in _template_groups(data)
+                            if group in policy_ids
+                        }
+                    ),
                     disks=[disk.id for disk in template_disks],
-                    user_data=_template_user_data(data),
+                    user_data=_template_user_data(data, native, ctx),
                     key_pair=data.get("KeyName"),
                     key_material=key_pairs.get(data.get("KeyName", ""), {}).get("PublicKey"),
                     iam_profile=profile.get("Arn") or profile.get("Name"),
@@ -673,13 +780,27 @@ def _template_disks(
     return disks
 
 
-def _template_user_data(data: dict[str, Any]) -> str | None:
+def _template_groups(data: dict[str, Any]) -> list[str]:
+    """Security groups set directly or on the template's network interfaces."""
+    groups = list(data.get("SecurityGroupIds") or [])
+    for interface in data.get("NetworkInterfaces") or []:
+        groups += interface.get("Groups") or []
+    return groups
+
+
+def _template_user_data(data: dict[str, Any], native: str, ctx: NormalizeContext) -> str | None:
     raw = data.get("UserData")
     if not raw:
         return None
     try:
         return base64.b64decode(raw, validate=True).decode("utf-8")
     except (binascii.Error, UnicodeDecodeError, ValueError):
+        ctx.info(
+            "VM-USER-DATA-BINARY",
+            f"launch template {native} has user data that is not UTF-8 text; it is reported "
+            "but not carried.",
+            subject=native,
+        )
         return None
 
 
@@ -692,6 +813,7 @@ def _groups(
     subnet_ids: dict[str, str],
     template_ids: dict[tuple[str, str], str],
     zone_ids: dict[str, str],
+    templates_raw: dict[str, Any],
 ) -> list[InstanceGroup]:
     ids = allocate_ids(
         "instance_group",
@@ -704,8 +826,7 @@ def _groups(
     objects: list[InstanceGroup] = []
     for item in groups_raw:
         native = item["AutoScalingGroupName"]
-        spec = item.get("LaunchTemplate") or {}
-        key = (spec.get("LaunchTemplateId"), str(spec.get("Version") or ""))
+        key = resolve_template_version(templates_raw, group_template_spec(item))
         template = template_ids.get(key)
         if template is None:
             ctx.findings.append(
@@ -739,7 +860,8 @@ def _groups(
                     if zone in zone_ids
                 },
                 subnets=subnets,
-                health_check_type=item.get("HealthCheckType", "EC2"),
+                # AWS reports a comma-separated list (e.g. "EC2,ELB" or "EC2,VPC_LATTICE").
+                health_check_type="ELB" if "ELB" in (item.get("HealthCheckType") or "") else "EC2",
                 health_check_grace=item.get("HealthCheckGracePeriod"),
                 target_groups=sorted(item.get("TargetGroupARNs") or []),
                 scaling_policies=sorted(by_group.get(native, []), key=lambda p: p.name),

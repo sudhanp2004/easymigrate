@@ -454,13 +454,25 @@ def test_normalizing_twice_is_identical():
 def test_asg_member_instance_is_not_migrated_on_its_own():
     """Found by the 2026-09-22 live run: the MIG launches its own instances, so migrating the
     ASG's current members too would run every member twice."""
-    files = b.snapshot_files(
-        instances=[b.instance(extra_tags={"aws:autoscaling:groupName": "web-asg"})]
-    )
+    files = _asg_files()
+    files["compute.instances"] = {
+        "Instances": [b.instance(extra_tags={"aws:autoscaling:groupName": "web-asg"})]
+    }
     objects, ctx = run(files)
 
     assert only(objects, ComputeInstance) == []
     assert "VM-ASG-MEMBER" in codes(ctx)
+
+
+def test_member_of_a_group_that_cannot_migrate_is_kept():
+    """Review 2026-10-08: dropping the members of an unmigratable group lost both."""
+    files = b.snapshot_files(
+        instances=[b.instance(extra_tags={"aws:autoscaling:groupName": "legacy-asg"})]
+    )
+    objects, ctx = run(files)
+
+    assert len(only(objects, ComputeInstance)) == 1
+    assert "VM-ASG-MEMBER-KEPT" in codes(ctx)
 
 
 def test_eks_member_is_still_captured_even_though_an_asg_launched_it():
@@ -520,3 +532,74 @@ def test_self_managed_kubernetes_node_is_captured_as_a_cluster_member():
 
     assert only(objects, ComputeInstance)[0].eks_cluster == "prod"
     assert "VM-ASG-MEMBER" not in codes(ctx)
+
+
+def _set_version(files, version, **template_extra):
+    group = files["compute.autoscaling_groups"]["AutoScalingGroups"][0]
+    group["LaunchTemplate"]["Version"] = version
+    files["compute.launch_templates"]["lt-1"]["template"].update(template_extra)
+    return files
+
+
+@pytest.mark.parametrize(
+    ("version", "extra", "expected"),
+    [
+        ("$Latest", {"LatestVersionNumber": 2}, "2"),
+        ("$Default", {}, "1"),  # DefaultVersionNumber is 1 in the fixture
+        (None, {}, "1"),
+    ],
+)
+def test_symbolic_launch_template_versions_resolve(version, extra, expected):
+    """Review 2026-10-08: groups on $Latest / $Default (the common case) never migrated."""
+    from easymigrate.ir.compute import InstanceGroup, InstanceTemplate
+
+    objects, ctx = run(_set_version(_asg_files(), version, **extra))
+    assert len(only(objects, InstanceGroup)) == 1
+    assert only(objects, InstanceTemplate)[0].version == expected
+
+
+def test_mixed_instances_group_finds_its_template_under_the_policy():
+    from easymigrate.ir.compute import InstanceGroup
+
+    files = _asg_files()
+    group = files["compute.autoscaling_groups"]["AutoScalingGroups"][0]
+    spec = group.pop("LaunchTemplate")
+    group["MixedInstancesPolicy"] = {
+        "LaunchTemplate": {"LaunchTemplateSpecification": spec, "Overrides": []}
+    }
+    objects, _ = run(files)
+    groups = only(objects, InstanceGroup)
+    assert len(groups) == 1 and groups[0].mixed_instances
+
+
+def test_ubuntu_ami_reported_as_linux_unix_is_recognised():
+    """Review 2026-10-08: AWS reports Ubuntu AMIs as plain Linux/UNIX; they went to Rocky."""
+    files = b.snapshot_files(instances=[b.instance()])
+    files["compute.images"] = {
+        "Images": [
+            {
+                "ImageId": b.AMI,
+                "PlatformDetails": "Linux/UNIX",
+                "Name": "ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-20240101",
+            }
+        ]
+    }
+    instance = only(run(files)[0], ComputeInstance)[0]
+    assert "Ubuntu" in instance.platform_details
+
+
+def test_unreadable_volume_is_reported_not_a_crash():
+    files = b.snapshot_files(instances=[b.instance()], volumes=[])
+    objects, ctx = run(files)
+    assert len(only(objects, ComputeInstance)) == 1
+    assert "VM-VOLUME-UNREADABLE" in codes(ctx)
+
+
+def test_comma_separated_health_check_type_and_mac_architecture_load():
+    from easymigrate.ir.compute import InstanceGroup
+
+    files = _asg_files()
+    files["compute.autoscaling_groups"]["AutoScalingGroups"][0]["HealthCheckType"] = "EC2,ELB"
+    assert only(run(files)[0], InstanceGroup)[0].health_check_type == "ELB"
+    files = b.snapshot_files(instances=[b.instance(architecture="x86_64_mac")])
+    assert only(run(files)[0], ComputeInstance)[0].architecture == "x86_64"

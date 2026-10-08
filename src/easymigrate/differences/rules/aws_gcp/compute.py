@@ -306,7 +306,12 @@ class VmZoneMapping(DifferenceRule):
         zone_ids: dict[str, str] = {}
         zones: set[str] = set()
         for instance in ir.of_kind(ComputeInstance):
-            if instance.excluded is not None or instance.eks_cluster or not instance.zone:
+            # An instance VM-ZONE-MAPPING itself excluded still holds its position: letters
+            # already handed out in this pass must not shift (review, 2026-10-08).
+            excluded_here = (instance.excluded or "").startswith("VM-ZONE-MAPPING")
+            if (instance.excluded is not None and not excluded_here) or instance.eks_cluster:
+                continue
+            if not instance.zone:
                 continue
             zones.add(instance.zone)
             if instance.zone_id:
@@ -1457,6 +1462,16 @@ class VmAsgShape(DifferenceRule):
             return doc
         if strategy_id not in {"regional_mig", "zonal_mig"}:
             raise ValueError(f"unknown strategy {strategy_id!r}")
+        if diff.context.get("subnet") is None:
+            return _replace_object(
+                doc,
+                group.model_copy(
+                    update={
+                        "excluded": f"{self.id}: none of its subnets is in the scan, so there "
+                        "is nowhere to place its instances"
+                    }
+                ),
+            )
         template = next((o for o in doc.objects if o.id == group.template), None)
         if template is None or template.excluded is not None:
             reason = template.excluded if template is not None else "missing"

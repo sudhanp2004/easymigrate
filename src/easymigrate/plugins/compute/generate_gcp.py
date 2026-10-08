@@ -600,7 +600,8 @@ def _generate_group(
     if health_check:
         healing = mig.block("auto_healing_policies")
         healing.attr("health_check", Ref(f"google_compute_health_check.{label}.id"))
-        healing.attr("initial_delay_sec", hints.get("initial_delay_sec", 300))
+        # GCP caps the autohealing initial delay at 3600 seconds.
+        healing.attr("initial_delay_sec", min(hints.get("initial_delay_sec", 300), 3600))
 
     if autoscaler:
         scaler_type = (
@@ -615,7 +616,8 @@ def _generate_group(
             scaler.attr("zone", _zone(letters[0], ctx, group.id, note=False))
         scaler.attr("target", Ref(f"{mig_type}.{label}.id"))
         policy = scaler.block("autoscaling_policy")
-        policy.attr("min_replicas", group.min_size)
+        # CPU-utilization autoscaling cannot scale to zero; GCP rejects a minimum of 0.
+        policy.attr("min_replicas", max(group.min_size, 1))
         policy.attr("max_replicas", group.max_size)
         policy.attr("cooldown_period", group.health_check_grace or 60)
         policy.block("cpu_utilization").attr("target", autoscaler["cpu_target"])
