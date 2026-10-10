@@ -17,9 +17,10 @@ from rich.table import Table
 
 from easymigrate import __version__
 from easymigrate.core.errors import EasyMigrateError, ExitTwoError
-from easymigrate.core.pipeline import PlanSummary, set_scope
+from easymigrate.core.pipeline import DestroySummary, PlanSummary, set_scope
 from easymigrate.core.pipeline import analyze as run_analyze
 from easymigrate.core.pipeline import apply as run_apply
+from easymigrate.core.pipeline import destroy as run_destroy
 from easymigrate.core.pipeline import plan as run_plan
 from easymigrate.core.pipeline import resolve as run_resolve
 from easymigrate.core.pipeline import scan as run_scan
@@ -456,6 +457,64 @@ def apply(
             f"[yellow]Decisions that no longer applied this run "
             f"({len(result.summary.superseded)})[/yellow]"
         )
+
+
+@app.command()
+def destroy(
+    yes: bool = typer.Option(
+        False, "--yes", help="Destroy without asking; required when not run from a terminal."
+    ),
+    remove_protection: bool = typer.Option(
+        False,
+        "--remove-protection",
+        help="Turn off deletion protection carried over from AWS and destroy those resources too.",
+    ),
+    delete_state_bucket: bool = typer.Option(
+        False,
+        "--delete-state-bucket",
+        help="Also delete the gs://<project>-easymigrate-tfstate bucket afterwards.",
+    ),
+) -> None:
+    """Undo `apply`: delete everything EasyMigrate created on GCP. AWS is never touched."""
+    project = Project(Path.cwd())
+    with _user_errors():
+
+        def confirm(summary: DestroySummary) -> bool:
+            console.print(
+                f"[bold]{len(summary.addresses)} resource(s) will be deleted from "
+                f"{summary.gcp_project}[/bold]"
+            )
+            for address in summary.addresses:
+                marker = (
+                    "  (deletion protection will be turned off)"
+                    if (address in summary.protected)
+                    else ""
+                )
+                console.print(f"  - {address}{marker}", markup=False)
+            if yes:
+                return True
+            if not _stdin_is_tty():
+                _fail("not a terminal, so destroy cannot ask for confirmation; re-run with --yes")
+            return typer.confirm(
+                f"Delete these from {summary.gcp_project}? This cannot be undone. [y/N]",
+                default=False,
+            )
+
+        def stream(line: str) -> None:
+            console.print(line, markup=False)
+
+        result = run_destroy(
+            project,
+            confirm=confirm,
+            stream=stream,
+            remove_protection=remove_protection,
+            delete_state_bucket=delete_state_bucket,
+        )
+    console.print(
+        f"Destroy complete: {len(result.summary.addresses)} resource(s) deleted.", markup=False
+    )
+    if delete_state_bucket and not result.bucket_deleted:
+        console.print("The state bucket was already gone.", markup=False)
 
 
 def _serve(fastapi_app: Any, sock: socket.socket) -> None:  # pragma: no cover - real server loop

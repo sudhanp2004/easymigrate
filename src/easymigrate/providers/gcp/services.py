@@ -4,6 +4,7 @@ which wires it in."""
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import google.auth
@@ -71,3 +72,50 @@ def quota_headroom(gcp_project: str, metric: str, *, session: Any = None) -> int
     except Exception:
         return None
     return None
+
+
+_NETWORK_URL = _PROJECT_URL + "/global/networks/{network}"
+_OPERATION_URL = _PROJECT_URL + "/global/operations/{operation}"
+
+
+def remove_peering(
+    gcp_project: str,
+    network: str,
+    peering: str,
+    *,
+    session: Any = None,
+    sleep: Any = time.sleep,
+    timeout: float = 300,
+) -> None:
+    """Delete VPC peering `peering` from `network` and wait for it to finish.
+
+    `tofu destroy` cannot delete a private-services connection while Cloud SQL's producer
+    network still holds it, and `gcloud services vpc-peerings delete` fails the same way;
+    removing the peering from our side works at once (live teardowns, 2026-09-16 onwards).
+    A peering that is already gone counts as removed."""
+    if session is None:
+        credentials, _ = google.auth.default()
+        session = AuthorizedSession(credentials)
+    url = _NETWORK_URL.format(project=gcp_project, network=network) + "/removePeering"
+    response = session.post(url, json={"name": peering})
+    if response.status_code == 404 or (
+        response.status_code == 400 and "not found" in response.text.lower()
+    ):
+        return
+    if response.status_code != 200:
+        raise RuntimeError(f"removePeering returned {response.status_code}: {response.text}")
+    operation = response.json()
+    waited = 0.0
+    while operation.get("status") != "DONE":
+        if waited >= timeout:
+            raise RuntimeError(f"removing peering {peering} from {network} did not finish")
+        sleep(2)
+        waited += 2
+        polled = session.get(
+            _OPERATION_URL.format(project=gcp_project, operation=operation["name"])
+        )
+        if polled.status_code != 200:
+            raise RuntimeError(f"operation poll returned {polled.status_code}: {polled.text}")
+        operation = polled.json()
+    if operation.get("error"):
+        raise RuntimeError(f"removing peering {peering} failed: {operation['error']}")

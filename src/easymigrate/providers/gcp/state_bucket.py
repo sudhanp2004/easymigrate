@@ -55,3 +55,15 @@ def ensure_bucket(
         return False
     create_bucket(client, name, region)
     return True
+
+
+def delete_bucket(gcp_project: str, name: str, *, client: storage.Client | None = None) -> bool:
+    """Delete the state bucket and every object version in it. False if it did not exist."""
+    client = client if client is not None else storage.Client(project=gcp_project)
+    if not bucket_exists(client, name):
+        return False
+    bucket = client.bucket(name)
+    for blob in client.list_blobs(name, versions=True):
+        bucket.delete_blob(blob.name, generation=blob.generation)
+    bucket.delete()
+    return True

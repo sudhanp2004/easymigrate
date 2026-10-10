@@ -80,6 +80,14 @@ class GcpTarget(Protocol):
         """How many more of a Compute Engine quota `gcp_project` can use, or None if unknown."""
         ...
 
+    def remove_peering(self, gcp_project: str, network: str, peering: str) -> None:
+        """Delete a VPC peering from `network` (used by `destroy`; see services.remove_peering)."""
+        ...
+
+    def delete_bucket(self, gcp_project: str, name: str) -> bool:
+        """Delete a bucket and all its object versions; False if it did not exist."""
+        ...
+
 
 class _GcpTarget:
     def credentials_ok(self) -> bool:
@@ -99,6 +107,12 @@ class _GcpTarget:
 
     def quota_headroom(self, gcp_project: str, metric: str) -> int | None:
         return gcp_services.quota_headroom(gcp_project, metric)
+
+    def remove_peering(self, gcp_project: str, network: str, peering: str) -> None:
+        gcp_services.remove_peering(gcp_project, network, peering)
+
+    def delete_bucket(self, gcp_project: str, name: str) -> bool:
+        return state_bucket.delete_bucket(gcp_project, name)
 
 
 def gcp_target() -> GcpTarget:

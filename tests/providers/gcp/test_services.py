@@ -78,3 +78,64 @@ def test_enabled_services_wraps_unexpected_errors():
 
     with pytest.raises(services.ServiceUsageCheckFailed):
         services.enabled_services("my-proj", session=_BoomSession())
+
+
+class _PeeringSession:
+    def __init__(self, post: _FakeResponse, polls: list[_FakeResponse] | None = None):
+        self._post = post
+        self._polls = list(polls or [])
+        self.posted: list[tuple[str, dict]] = []
+        self.polled: list[str] = []
+
+    def post(self, url, json=None):
+        self.posted.append((url, json))
+        return self._post
+
+    def get(self, url, params=None):
+        self.polled.append(url)
+        return self._polls.pop(0)
+
+
+def test_remove_peering_posts_and_waits_for_the_operation():
+    session = _PeeringSession(
+        _FakeResponse(200, {"name": "op-1", "status": "RUNNING"}),
+        [_FakeResponse(200, {"name": "op-1", "status": "DONE"})],
+    )
+
+    services.remove_peering(
+        "my-proj",
+        "main-vpc",
+        "servicenetworking-googleapis-com",
+        session=session,
+        sleep=lambda s: None,
+    )
+
+    assert session.posted == [
+        (
+            "https://compute.googleapis.com/compute/v1/projects/my-proj/global/networks/main-vpc"
+            "/removePeering",
+            {"name": "servicenetworking-googleapis-com"},
+        )
+    ]
+    assert session.polled == [
+        "https://compute.googleapis.com/compute/v1/projects/my-proj/global/operations/op-1"
+    ]
+
+
+def test_remove_peering_that_is_already_gone_is_fine():
+    session = _PeeringSession(_FakeResponse(400, text="The peering 'x' was not found."))
+    services.remove_peering("p", "n", "x", session=session, sleep=lambda s: None)
+    assert session.polled == []
+
+
+def test_remove_peering_raises_on_failure():
+    session = _PeeringSession(
+        _FakeResponse(200, {"name": "op-1", "status": "DONE", "error": {"errors": ["boom"]}})
+    )
+    with pytest.raises(RuntimeError, match="boom"):
+        services.remove_peering("p", "n", "x", session=session, sleep=lambda s: None)
+
+    with pytest.raises(RuntimeError, match="403"):
+        services.remove_peering(
+            "p", "n", "x", session=_PeeringSession(_FakeResponse(403, text="denied"))
+        )

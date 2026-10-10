@@ -795,3 +795,185 @@ def apply(
     write_report(project, build_report(project))
 
     return ApplyResult(summary=summary, output=output)
+
+
+# --- destroy (undo) ----------------------------------------------------------------
+
+_PROTECTION_LINE = re.compile(r"^(\s*deletion_protection(?:_enabled)?\s*=\s*)true\s*$", re.M)
+
+
+@dataclass
+class DestroySummary:
+    gcp_project: str
+    addresses: list[str]
+    protected: list[str]
+
+
+@dataclass
+class DestroyResult:
+    summary: DestroySummary
+    output: list[str]
+    peerings_removed: list[str] = field(default_factory=list)
+    bucket_deleted: bool = False
+
+
+def _state_resources(state: dict[str, Any]) -> list[dict[str, Any]]:
+    """Managed resources in `tofu show -json` state, child modules included."""
+    found: list[dict[str, Any]] = []
+    modules = [(state.get("values") or {}).get("root_module") or {}]
+    while modules:
+        module = modules.pop()
+        found += [r for r in module.get("resources") or [] if r.get("mode") == "managed"]
+        modules += module.get("child_modules") or []
+    return found
+
+
+def _is_protected(resource: dict[str, Any]) -> bool:
+    values = resource.get("values") or {}
+    if values.get("deletion_protection") is True:
+        return True
+    # Cloud SQL also has an API-side switch under settings, which blocks the delete call.
+    return any(s.get("deletion_protection_enabled") for s in values.get("settings") or [])
+
+
+def _peerings(resources: list[dict[str, Any]]) -> list[tuple[str, str]]:
+    return [
+        (str(r["values"]["network"]).rsplit("/", 1)[-1], r["values"].get("peering") or "")
+        for r in resources
+        if r.get("type") == "google_service_networking_connection" and r.get("values")
+    ]
+
+
+def _lift_protection(project: Project, tofu_obj: Any, protected: list[str], say: Any) -> None:
+    """Turn deletion protection off in the generated Terraform and apply that to the protected
+    resources alone, so the destroy that follows is allowed to delete them."""
+    for path in sorted(project.terraform_dir.glob("*.tf")):
+        text = path.read_text(encoding="utf-8")
+        lifted = _PROTECTION_LINE.sub(r"\1false", text)
+        if lifted != text:
+            project.write_text(path, lifted)
+    say(f"Turning off deletion protection on {len(protected)} resource(s)")
+    tofu_obj.apply_targets(protected, say)
+    still = [r["address"] for r in _state_resources(tofu_obj.state_json()) if _is_protected(r)]
+    if still:
+        raise EasyMigrateError(
+            "deletion protection is still on for: " + ", ".join(still) + "\n"
+            "Turn it off in the Google Cloud console, then re-run `easymigrate destroy`."
+        )
+
+
+def _destroy_hint(message: str) -> str:
+    lowered = message.lower()
+    if "bucket" in lowered and ("not empty" in lowered or "containing objects" in lowered):
+        return (
+            "a Cloud Storage bucket still holds objects. EasyMigrate never deletes data: empty "
+            "it yourself (gcloud storage rm --recursive 'gs://BUCKET/**') and re-run "
+            "`easymigrate destroy`."
+        )
+    return "state is safe in the bucket; fix the error above and re-run `easymigrate destroy`"
+
+
+def destroy(
+    project: Project,
+    *,
+    confirm: Callable[[DestroySummary], bool],
+    stream: Callable[[str], None],
+    remove_protection: bool = False,
+    delete_state_bucket: bool = False,
+    tofu: Any = None,
+    gcp: Any = None,
+) -> DestroyResult:
+    """Delete everything EasyMigrate created on GCP: the undo for `apply`.
+
+    Only resources in EasyMigrate's own Terraform state are touched, and the AWS side was never
+    changed, so the source keeps running. Deletion protection carried over from AWS blocks the
+    destroy unless `remove_protection` is set. Private-IP Cloud SQL leaves a services peering
+    that `tofu destroy` cannot remove, so it is removed through the Compute API and the destroy
+    retried once.
+    """
+    config = project.load_config()
+    if config.target is None or not any(project.terraform_dir.glob("*.tf")):
+        raise EasyMigrateError("nothing to destroy: this project has never been planned")
+    gcp_project = config.target.project
+    bucket = f"{gcp_project}{_STATE_BUCKET_SUFFIX}"
+
+    gcp = gcp if gcp is not None else registry.gcp_target()
+    if not gcp.credentials_ok():
+        raise EasyMigrateError(
+            "no GCP credentials found; run `gcloud auth application-default login`"
+        )
+    tofu_obj = tofu
+    if tofu_obj is None:
+        tofu_obj = registry.new_tofu(registry.ensure_tofu(), project.terraform_dir)
+
+    output: list[str] = []
+
+    def say(line: str) -> None:
+        output.append(line)
+        stream(line)
+
+    # Asking with a confirm that always says no only checks; it never creates the bucket.
+    if not gcp.ensure_bucket(gcp_project, bucket, config.target.region, lambda _name: False):
+        say(f"Nothing to destroy: the state bucket gs://{bucket} does not exist")
+        return DestroyResult(
+            summary=DestroySummary(gcp_project=gcp_project, addresses=[], protected=[]),
+            output=output,
+        )
+    say("Running tofu init")
+    tofu_obj.init(backend_config={"bucket": bucket, "prefix": "easymigrate"})
+    resources = _state_resources(tofu_obj.state_json())
+    summary = DestroySummary(
+        gcp_project=gcp_project,
+        addresses=sorted(r["address"] for r in resources),
+        protected=sorted(r["address"] for r in resources if _is_protected(r)),
+    )
+    if summary.protected and not remove_protection:
+        raise EasyMigrateError(
+            "deletion protection (carried over from AWS) is on for:\n  "
+            + "\n  ".join(summary.protected)
+            + "\nRe-run with --remove-protection to turn it off and destroy them too."
+        )
+    result = DestroyResult(summary=summary, output=output)
+    if summary.addresses:
+        if not confirm(summary):
+            raise Declined("destroy declined")
+        if summary.protected:
+            _lift_protection(project, tofu_obj, summary.protected, say)
+        result.peerings_removed = _run_destroy(project, tofu_obj, gcp, gcp_project, say)
+    else:
+        say("Nothing to destroy: the Terraform state is empty")
+
+    # The old plan described resources that no longer exist; never let `apply` replay it.
+    for path in (project.tfplan_path, project.plan_lock_path, project.destroy_plan_path):
+        path.unlink(missing_ok=True)
+
+    if delete_state_bucket:
+        say(f"Deleting the state bucket gs://{bucket}")
+        result.bucket_deleted = gcp.delete_bucket(gcp_project, bucket)
+    return result
+
+
+def _run_destroy(
+    project: Project, tofu_obj: Any, gcp: Any, gcp_project: str, say: Callable[[str], None]
+) -> list[str]:
+    removed: list[str] = []
+    for attempt in (1, 2):
+        say("Running tofu plan -destroy")
+        tofu_obj.plan_destroy(project.destroy_plan_path, say)
+        try:
+            tofu_obj.apply(project.destroy_plan_path, say)
+            return removed
+        except EasyMigrateError as exc:
+            message = str(exc)
+            peerings = _peerings(_state_resources(tofu_obj.state_json()))
+            networking = (
+                "service_networking_connection" in message or "Producer services" in message
+            )
+            if attempt == 1 and peerings and networking:
+                for network, peering in peerings:
+                    say(f"Removing the private services peering {peering} from {network}")
+                    gcp.remove_peering(gcp_project, network, peering)
+                    removed.append(f"{network}/{peering}")
+                continue
+            raise EasyMigrateError(f"{message}\n{_destroy_hint(message)}") from exc
+    return removed

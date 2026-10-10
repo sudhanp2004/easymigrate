@@ -111,6 +111,10 @@ class Project:
         return self.dir / "tfplan"
 
     @property
+    def destroy_plan_path(self) -> Path:
+        return self.dir / "destroy.tfplan"
+
+    @property
     def plan_txt_path(self) -> Path:
         return self.dir / "plan.txt"
 

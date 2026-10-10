@@ -38,8 +38,13 @@ Migrates cloud infrastructure from AWS to GCP. It scans the live source cloud, b
     # or at the prompt when you are on a terminal.
     easymigrate plan --gcp-project my-gcp-project --db-password database_instance:prod-db=s3cret
 
-    # 5. Review the plan and apply it (prompts for confirmation; no auto-approve flag)
+    # 5. Review the plan and apply it (prompts for confirmation; --yes off a terminal)
     easymigrate apply
+
+    # Undo: delete everything EasyMigrate created on GCP. AWS is never touched.
+    easymigrate destroy [--remove-protection] [--delete-state-bucket]
+
+`destroy` deletes only what is in EasyMigrate's own Terraform state, after listing it and asking. Deletion protection carried over from AWS (RDS `DeletionProtection`, EC2 termination protection) stops it until you pass `--remove-protection`. It never deletes data: a Cloud Storage bucket that holds objects makes it stop and say so. The private services peering that private-IP Cloud SQL leaves behind, which `tofu destroy` cannot remove, is removed for you.
 
 These commands work in the current directory and keep their output in `.easymigrate/`. That folder holds account metadata such as account IDs and ARNs; keep it private. It is added to `.gitignore` automatically inside a git repository. After every stage that has enough information, a report is written to `.easymigrate/report.md` and `.easymigrate/report.json`.
 

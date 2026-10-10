@@ -280,3 +280,23 @@ def test_error_hint_mapping(tmp_path, stderr, expected_hint):
     assert stderr in str(excinfo.value)
     if expected_hint:
         assert expected_hint in str(excinfo.value)
+
+
+def test_state_json_argument_list_and_empty_state(tmp_path):
+    runner = FakeRunner(FakeCompleted(stdout=""))
+    tofu = Tofu(Path("/opt/tofu"), tmp_path, runner=runner)
+    assert tofu.state_json() == {}
+    assert runner.calls[0]["args"] == ["/opt/tofu", "show", "-json", "-no-color"]
+
+
+def test_plan_destroy_and_apply_targets_argument_lists(tmp_path):
+    binary = _script(tmp_path, f'echo "$@" >> {tmp_path}/args\n')
+    tofu = Tofu(binary, tmp_path)
+    out = tmp_path / "destroy.tfplan"
+    tofu.plan_destroy(out, lambda line: None)
+    tofu.apply_targets(["google_compute_instance.a", "google_sql_database_instance.b"], print)
+    assert (tmp_path / "args").read_text().splitlines() == [
+        f"plan -destroy -out={out} -no-color -input=false",
+        "apply -auto-approve -no-color -input=false -target=google_compute_instance.a "
+        "-target=google_sql_database_instance.b",
+    ]

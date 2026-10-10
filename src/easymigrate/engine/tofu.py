@@ -247,3 +247,20 @@ class Tofu:
 
     def apply(self, plan: Path, stream: Callable[[str], None]) -> None:
         self._run_streaming(["apply", "-no-color", "-input=false", str(plan)], stream)
+
+    def state_json(self) -> dict:
+        """The current state as `tofu show -json` prints it ({} when nothing is managed)."""
+        result = self._run(["show", "-json", "-no-color"])
+        return json.loads(result.stdout or "{}")
+
+    def plan_destroy(self, out: Path, stream: Callable[[str], None]) -> str:
+        return self._run_streaming(
+            ["plan", "-destroy", f"-out={out}", "-no-color", "-input=false"], stream
+        )
+
+    def apply_targets(self, targets: list[str], stream: Callable[[str], None]) -> None:
+        """Apply the current configuration to `targets` only (used to lift deletion protection
+        before a destroy; the user has already confirmed the destroy)."""
+        args = ["apply", "-auto-approve", "-no-color", "-input=false"]
+        args += [f"-target={target}" for target in targets]
+        self._run_streaming(args, stream)
