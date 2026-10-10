@@ -134,10 +134,24 @@ def _target_group(
     stickiness = None
     if attrs.get("stickiness.enabled") == "true":
         kind = attrs.get("stickiness.type", "lb_cookie")
+        # NLB stickiness is by source address (source_ip, or source_ip_dest_ip[_proto]); the
+        # duration attribute belongs to lb_cookie alone (review, 2026-10-08).
+        mapped = (
+            "source_ip"
+            if kind.startswith("source_ip")
+            else kind
+            if kind in {"lb_cookie", "app_cookie"}
+            else "lb_cookie"
+        )
+        duration_key = (
+            "stickiness.lb_cookie.duration_seconds"
+            if mapped == "lb_cookie"
+            else "stickiness.app_cookie.duration_seconds"
+        )
         stickiness = Stickiness(
-            type=kind if kind in {"lb_cookie", "app_cookie", "source_ip"} else "lb_cookie",
+            type=mapped,
             cookie_name=attrs.get("stickiness.app_cookie.cookie_name") or None,
-            duration=int(attrs.get("stickiness.lb_cookie.duration_seconds") or 0) or None,
+            duration=int(attrs.get(duration_key) or 0) or None,
         )
     matcher = (group.get("Matcher") or {}).get("HttpCode")
     return TargetGroup(

@@ -122,6 +122,7 @@ class _Context:
     network_labels: dict[str, str] = field(default_factory=dict)
     subnet_labels: dict[str, str] = field(default_factory=dict)
     proxy_subnets: dict[str, str] = field(default_factory=dict)  # network id -> TF label
+    neg_names: set[str] = field(default_factory=set)
 
 
 def generate(resolved: IRDocument, ctx: GenerateContext) -> HclFile:
@@ -284,7 +285,12 @@ def _endpoint_group(
     )
     block = file.block("resource", "google_compute_network_endpoint_group", label)
     block.comment(f"targets of {tg.name} in zone {suffix} (LB-BACKENDS)")
-    block.attr("name", _name(_slug(tg.id), suffix))
+    # One NEG per (zone, subnet): two subnets in one zone need distinct names (review).
+    name = _name(_slug(tg.id), suffix)
+    if name in state.neg_names:
+        name = _name(_slug(tg.id), suffix, _slug(subnet_id))
+    state.neg_names.add(name)
+    block.attr("name", name)
     block.attr("zone", Ref(f'"${{var.region}}-{suffix}"'))
     block.attr("network", Ref(f"google_compute_network.{state.network_labels[network]}.id"))
     block.attr("subnetwork", Ref(f"google_compute_subnetwork.{state.subnet_labels[subnet_id]}.id"))
@@ -367,6 +373,9 @@ def _backend_service(
     if tg.deregistration_delay is not None:
         block.attr("connection_draining_timeout_sec", tg.deregistration_delay)
     affinity = tg.target_hints.get("affinity")
+    if affinity and passthrough and affinity["mode"] == "CLIENT_IP":
+        # Passthrough services support client-IP affinity, which is what NLB stickiness is.
+        block.attr("session_affinity", "CLIENT_IP")
     if affinity and not passthrough:
         block.attr("session_affinity", affinity["mode"])
         if affinity["mode"] == "GENERATED_COOKIE" and affinity.get("ttl"):
@@ -409,21 +418,76 @@ def _dropped(lb: LoadBalancer, port: int) -> set[int]:
     return {d["priority"] for d in lb.target_hints.get("dropped_rules", []) if d["port"] == port}
 
 
-def _redirect(block: Block, action: Action) -> None:
+_DEFAULT_PORTS = {"HTTP": "80", "HTTPS": "443"}
+
+
+def _redirect(
+    block: Block, action: Action, ctx: GenerateContext, subject: str, listener: Listener
+) -> None:
     redirect = action.redirect
     if redirect.protocol == "HTTPS":
         block.attr("https_redirect", True)
     if redirect.host and redirect.host != "#{host}":
         block.attr("host_redirect", redirect.host)
     if redirect.path and redirect.path != "/#{path}":
-        block.attr("path_redirect", redirect.path)
+        if "#{" in redirect.path:
+            # GCP redirects take a literal path; a template like /new/#{path} would send clients
+            # to that text (review, 2026-10-08).
+            ctx.info(
+                "GEN-LB-REDIRECT-PATH",
+                f"{subject} listener {listener.port}: redirect path {redirect.path!r} uses an "
+                "AWS template GCP cannot express; the request path is kept instead.",
+                subject=subject,
+            )
+        else:
+            block.attr("path_redirect", redirect.path)
+    protocol = (redirect.protocol or listener.protocol).upper()
+    if redirect.port not in {None, "#{port}", _DEFAULT_PORTS.get(protocol)}:
+        ctx.info(
+            "GEN-LB-REDIRECT-PORT",
+            f"{subject} listener {listener.port}: redirect to port {redirect.port} cannot be "
+            "expressed on GCP; clients are sent to the protocol's default port.",
+            subject=subject,
+        )
     block.attr("redirect_response_code", _REDIRECT_CODES.get(redirect.status, "FOUND"))
     block.attr("strip_query", False)
 
 
+def _live_targets(action: Action, services: dict[str, str]) -> list:
+    return [t for t in action.target_groups if t.target_group in services]
+
+
 def _route(action: Action, services: dict[str, str]) -> str | None:
-    live = [t for t in action.target_groups if t.target_group in services]
-    return services[live[0].target_group] if live else None
+    """The single service for an action: the heaviest target when weights differ."""
+    live = _live_targets(action, services)
+    if not live:
+        return None
+    return services[max(live, key=lambda t: t.weight).target_group]
+
+
+def _weighted(block: Block, action: Action, services: dict[str, str]) -> None:
+    for target in _live_targets(action, services):
+        weighted = block.block("weighted_backend_services")
+        weighted.attr("backend_service", Ref(services[target.target_group]))
+        weighted.attr("weight", target.weight)
+
+
+def _default(
+    block: Block,
+    action: Action,
+    service: str | None,
+    services: dict[str, str],
+    ctx: GenerateContext,
+    lb: LoadBalancer,
+    listener: Listener,
+) -> None:
+    """A URL map's or path matcher's default: redirect, weighted split, or one service."""
+    if action.type == "redirect":
+        _redirect(block.block("default_url_redirect"), action, ctx, lb.id, listener)
+    elif len(_live_targets(action, services)) > 1:
+        _weighted(block.block("default_route_action"), action, services)
+    else:
+        block.attr("default_service", Ref(service))
 
 
 def _url_map(
@@ -435,13 +499,19 @@ def _url_map(
     services: dict[str, str],
     regional: bool,
 ) -> str | None:
+    """One URL map per listener. AWS evaluates listener rules strictly by priority, so each
+    becomes a priority-ordered route rule; path rules would instead pick the longest prefix and
+    reject overlapping hosts (review, 2026-10-08)."""
+    ctx = state.ctx
     kind = "google_compute_region_url_map" if regional else "google_compute_url_map"
     label = state.labels.allocate(kind, f"{lb_label}_{listener.port}")
     default = listener.default_action
     fallback = lb.target_hints.get("default_fallbacks", {}).get(str(listener.port))
-    default_service = services.get(fallback) if fallback else _route(default, services)
+    if fallback:
+        default = Action(type="forward", target_groups=[{"target_group": fallback}])
+    default_service = _route(default, services)
     if default.type != "redirect" and default_service is None:
-        state.ctx.info(
+        ctx.info(
             "GEN-LB-LISTENER-SKIPPED",
             f"{lb.id} listener {listener.port} has no migrated default target; it is not created.",
             subject=lb.id,
@@ -451,41 +521,55 @@ def _url_map(
     block.attr("name", _name(lb_label, str(listener.port)))
     if regional:
         block.attr("region", Ref("var.region"))
-    if default.type == "redirect":
-        _redirect(block.block("default_url_redirect"), default)
-        return f"{kind}.{label}.id"
-    block.attr("default_service", Ref(default_service))
+    _default(block, default, default_service, services, ctx, lb, listener)
 
     dropped = _dropped(lb, listener.port)
-    by_hosts: dict[tuple[str, ...], list] = {}
-    for rule in listener.rules:
-        if rule.priority in dropped or rule.action.type not in {"forward", "redirect"}:
-            continue
-        if rule.action.type == "forward" and _route(rule.action, services) is None:
-            continue
-        by_hosts.setdefault(tuple(rule.hosts) or ("*",), []).append(rule)
-    for index, (hosts, rules) in enumerate(sorted(by_hosts.items())):
+    rules = [
+        r
+        for r in sorted(listener.rules, key=lambda r: r.priority)
+        if r.priority not in dropped
+        and (
+            r.action.type == "redirect"
+            or (r.action.type == "forward" and _route(r.action, services))
+        )
+    ]
+    if not rules:
+        return f"{kind}.{label}.id"
+
+    # Each host gets exactly the rules that apply to it; hosts with the same rules share one.
+    hosts = sorted({h for r in rules for h in r.hosts})
+    groups: dict[tuple[int, ...], list[str]] = {}
+    for host in hosts:
+        key = tuple(r.priority for r in rules if not r.hosts or host in r.hosts)
+        groups.setdefault(key, []).append(host)
+    anywhere = tuple(r.priority for r in rules if not r.hosts)
+    if anywhere:
+        groups.setdefault(anywhere, []).append("*")
+    by_priority = {r.priority: r for r in rules}
+    for index, (priorities, group_hosts) in enumerate(sorted(groups.items(), key=lambda g: g[1])):
         matcher_name = f"m{index}"
         host_rule = block.block("host_rule")
-        host_rule.attr("hosts", list(hosts))
+        host_rule.attr("hosts", group_hosts)
         host_rule.attr("path_matcher", matcher_name)
         matcher = block.block("path_matcher")
         matcher.attr("name", matcher_name)
-        # A host-only rule sets the matcher's default; otherwise the listener default applies.
-        host_only = next((r for r in rules if not r.paths), None)
-        if host_only is not None and host_only.action.type == "forward":
-            matcher.attr("default_service", Ref(_route(host_only.action, services)))
-        else:
-            matcher.attr("default_service", Ref(default_service))
-        for rule in rules:
-            if not rule.paths:
-                continue
-            path_rule = matcher.block("path_rule")
-            path_rule.attr("paths", rule.paths)
+        _default(matcher, default, default_service, services, ctx, lb, listener)
+        for priority in priorities:
+            rule = by_priority[priority]
+            route = matcher.block("route_rules")
+            route.attr("priority", priority)
+            for path in rule.paths or ["/*"]:
+                match = route.block("match_rules")
+                if path.endswith("*"):
+                    match.attr("prefix_match", path[:-1] or "/")
+                else:
+                    match.attr("full_path_match", path)
             if rule.action.type == "redirect":
-                _redirect(path_rule.block("url_redirect"), rule.action)
+                _redirect(route.block("url_redirect"), rule.action, ctx, lb.id, listener)
+            elif len(_live_targets(rule.action, services)) > 1:
+                _weighted(route.block("route_action"), rule.action, services)
             else:
-                path_rule.attr("service", Ref(_route(rule.action, services)))
+                route.attr("service", Ref(_route(rule.action, services)))
     return f"{kind}.{label}.id"
 
 
@@ -690,7 +774,21 @@ def _passthrough(file: HclFile, state: _Context, lb: LoadBalancer, internal: boo
         targets = [t for t in listener.default_action.target_groups if t.target_group in state.tgs]
         if not targets:
             continue
-        tg = state.tgs[targets[0].target_group]
+        if len(targets) > 1:
+            state.ctx.info(
+                "GEN-LB-NLB-WEIGHTS",
+                f"{lb.id} listener {listener.port} splits traffic across target groups; a "
+                "passthrough load balancer cannot, so the heaviest takes it all.",
+                subject=lb.id,
+            )
+        tg = state.tgs[max(targets, key=lambda t: t.weight).target_group]
+        if listener.protocol.upper() == "TCP_UDP":
+            state.ctx.info(
+                "GEN-LB-TCP-UDP",
+                f"{lb.id} listener {listener.port} is TCP_UDP; only TCP is generated. Add a UDP "
+                "forwarding rule if the service needs it.",
+                subject=lb.id,
+            )
         if tg.id not in services:
             services[tg.id] = _backend_service(
                 file, state, lb, lb_label, tg, scheme=scheme, regional=True

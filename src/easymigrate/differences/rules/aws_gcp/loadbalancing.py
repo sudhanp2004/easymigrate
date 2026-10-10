@@ -145,6 +145,13 @@ class LbShape(DifferenceRule):
             return doc
         if strategy_id != "map":
             raise ValueError(f"unknown strategy {strategy_id!r}")
+        if diff.context.get("network") is None:
+            return _replace_object(
+                doc,
+                lb.model_copy(
+                    update={"excluded": f"{self.id}: none of its subnets is in the scan"}
+                ),
+            )
         updated = _set_hint(lb, "shape", diff.context["shape"])
         updated = _set_hint(updated, "network", diff.context["network"])
         updated = _set_hint(updated, "subnet", diff.context["subnet"])
@@ -596,7 +603,8 @@ class LbUnsupportedActions(DifferenceRule):
     title = "Fixed-response and authenticate actions have no URL-map equivalent"
     impact = (
         "A URL map forwards or redirects; it cannot answer with a fixed body or run OIDC/Cognito "
-        "authentication. Rules using those actions are dropped. A default fixed-response is "
+        "authentication. Rules using those actions are dropped, so paths that required a login "
+        "become reachable without one. A default fixed-response is "
         "replaced by the lowest-priority forwarding rule's target, so unmatched requests reach a "
         "backend instead of getting the canned response."
     )
@@ -626,19 +634,36 @@ class LbUnsupportedActions(DifferenceRule):
             for listener in lb.listeners:
                 if listener.default_action.type not in unsupported:
                     continue
-                forwards = [r for r in listener.rules if r.action.type == "forward"]
+                # Never fall back to a rule that is itself dropped for its conditions.
+                forwards = [
+                    r
+                    for r in listener.rules
+                    if r.action.type == "forward"
+                    and r.action.target_groups
+                    and not r.unsupported_conditions
+                ]
                 fallback = (
                     max(forwards, key=lambda r: r.priority).action.target_groups[0].target_group
-                    if forwards and forwards[-1].action.target_groups
+                    if forwards
                     else None
                 )
                 defaults.append({"port": listener.port, "fallback": fallback})
+            authenticated = any(
+                r.action.type == "authenticate" for listener in lb.listeners for r in listener.rules
+            ) or any(listener.default_action.type == "authenticate" for listener in lb.listeners)
             if rules or defaults:
-                diffs.append(self.difference([lb.id], rules=rules, defaults=defaults))
+                diffs.append(
+                    self.difference(
+                        [lb.id], rules=rules, defaults=defaults, authenticated=authenticated
+                    )
+                )
         return diffs
 
     def risk_for(self, diff: Difference, strategy_id: str) -> Risk:
-        return "high" if diff.context.get("defaults") else "medium"
+        # A dropped authenticate rule leaves its paths reachable without logging in.
+        if diff.context.get("defaults") or diff.context.get("authenticated"):
+            return "high"
+        return "medium"
 
     def apply(self, ir, diff, strategy_id, params=None) -> IRDocument:
         doc, lb = _subject(ir, diff)

@@ -622,7 +622,7 @@ Host and path routing carries to the URL map. Rules that also match headers, que
 
 ### Fixed-response and authenticate actions have no URL-map equivalent (`LB-UNSUPPORTED-ACTIONS`)
 
-A URL map forwards or redirects; it cannot answer with a fixed body or run OIDC/Cognito authentication. Rules using those actions are dropped. A default fixed-response is replaced by the lowest-priority forwarding rule's target, so unmatched requests reach a backend instead of getting the canned response.
+A URL map forwards or redirects; it cannot answer with a fixed body or run OIDC/Cognito authentication. Rules using those actions are dropped, so paths that required a login become reachable without one. A default fixed-response is replaced by the lowest-priority forwarding rule's target, so unmatched requests reach a backend instead of getting the canned response.
 
 | Strategy | Title | Effect | Risk | Manual | Default |
 |---|---|---|---|---|---|

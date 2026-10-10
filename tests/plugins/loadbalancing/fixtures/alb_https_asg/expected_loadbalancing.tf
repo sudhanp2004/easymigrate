@@ -95,8 +95,13 @@ resource "google_compute_url_map" "web_443" {
     name            = "m0"
     default_service = google_compute_backend_service.web_web_tg.id
 
-    path_rule {
-      paths   = ["/api/*"]
+    route_rules {
+      priority = 10
+
+      match_rules {
+        prefix_match = "/api/"
+      }
+
       service = google_compute_backend_service.web_api_tg.id
     }
   }

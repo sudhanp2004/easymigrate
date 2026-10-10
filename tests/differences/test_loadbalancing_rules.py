@@ -314,3 +314,21 @@ def test_load_balancing_rules_run_after_compute_and_kubernetes_owned_first():
     lb = [i for i in ids if i.startswith("LB-")]
     assert lb[0] == "LB-KUBERNETES-OWNED"
     assert ids.index("VM-ASG-SHAPE") < ids.index("LB-BACKENDS")
+
+
+def test_dropped_authenticate_rule_is_high_risk():
+    rule = LbUnsupportedActions()
+    listener = Listener(
+        port=80,
+        protocol="HTTP",
+        default_action=_forward(),
+        rules=[ListenerRule(priority=1, paths=["/admin*"], action=Action(type="authenticate"))],
+    )
+    diff = _only(rule, _doc(_tg(), _lb(listeners=[listener])))
+    assert rule.risk_for(diff, "drop_rule") == "high"
+
+
+def test_load_balancer_with_no_scanned_subnet_is_excluded():
+    rule = LbShape()
+    doc = _doc(_tg(), _lb(subnets=[]))
+    assert "subnets" in rule.apply(doc, _only(rule, doc), "map").get("load_balancer:web").excluded

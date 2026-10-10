@@ -109,6 +109,28 @@ def collect(connection: AwsConnection, ctx: CollectContext) -> dict[str, Any]:
                 ).get("Rules", [])
             except _Denied:
                 rules = []
+            # Listener.Certificates holds only the default certificate; SNI certificates need
+            # their own call (review, 2026-10-08).
+            if listener.get("Protocol") in {"HTTPS", "TLS"}:
+                try:
+                    extra = _paginate(
+                        elb,
+                        "describe_listener_certificates",
+                        "Certificates",
+                        "elasticloadbalancing:DescribeListenerCertificates",
+                        ctx,
+                        ListenerArn=listener["ListenerArn"],
+                    )
+                except _Denied:
+                    extra = []
+                known = {c["CertificateArn"] for c in listener.get("Certificates") or []}
+                listener = {
+                    **listener,
+                    "Certificates": [
+                        *(listener.get("Certificates") or []),
+                        *(c for c in extra if c["CertificateArn"] not in known),
+                    ],
+                }
             certificate_arns.update(c["CertificateArn"] for c in listener.get("Certificates") or [])
             entry["Listeners"].append({"Listener": listener, "Rules": rules})
         files["loadbalancing.load_balancers"].append(entry)
@@ -184,17 +206,30 @@ def _certificates(connection: AwsConnection, ctx: CollectContext, arns: list[str
 def _instances(connection: AwsConnection, ctx: CollectContext, ids: list[str]) -> list[dict]:
     if not ids:
         return []
+    ec2 = connection.client("ec2")
     try:
         reservations = _paginate(
-            connection.client("ec2"),
-            "describe_instances",
-            "Reservations",
-            "ec2:DescribeInstances",
-            ctx,
-            InstanceIds=ids,
+            ec2, "describe_instances", "Reservations", "ec2:DescribeInstances", ctx, InstanceIds=ids
         )
     except _Denied:
         return []
+    except Exception as exc:
+        # A terminated instance can stay registered in a target group; one unknown id fails the
+        # whole call (review, 2026-10-08). Retry one at a time and skip the missing.
+        if "InvalidInstanceID" not in str(
+            getattr(exc, "response", {}).get("Error", {}).get("Code", "")
+        ):
+            raise
+        reservations = []
+        for instance_id in ids:
+            try:
+                reservations += ec2.describe_instances(InstanceIds=[instance_id]).get(
+                    "Reservations", []
+                )
+            except Exception as inner:
+                code = str(getattr(inner, "response", {}).get("Error", {}).get("Code", ""))
+                if "InvalidInstanceID" not in code:
+                    raise
     return sorted(
         (
             {"InstanceId": i["InstanceId"], "Tags": i.get("Tags") or []}

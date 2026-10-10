@@ -65,3 +65,12 @@ def test_load_balancers_listeners_rules_and_targets_are_collected(aws):
     group = files["loadbalancing.target_groups"][0]
     assert [t["Target"]["Id"] for t in group["Targets"]] == [instance]
     assert [i["InstanceId"] for i in files["loadbalancing.target_instances"]] == [instance]
+
+
+def test_a_terminated_target_does_not_fail_collection(aws):
+    """Review 2026-10-08: one unknown instance id failed the whole DescribeInstances call."""
+    from easymigrate.plugins.loadbalancing.collect_aws import _instances
+
+    instance = _stack(aws)
+    found = _instances(aws, CollectContext(plugin="lb"), [instance, "i-0123456789abcdef0"])
+    assert [i["InstanceId"] for i in found] == [instance]
