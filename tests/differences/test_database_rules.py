@@ -191,21 +191,21 @@ def test_engine_version_mysql_8_0_maps_directly():
 def test_engine_version_too_new_major_routes_to_newest_supported_not_oldest():
     """I4: a major newer than anything Cloud SQL supports must be treated as a
     downgrade to the newest supported major, not silently routed through the
-    `upgrade_to_oldest_supported` path (which would turn a postgres 18 source into a
+    `upgrade_to_oldest_supported` path (which would turn a postgres 19 source into a
     five-major downgrade to 12, labelled an upgrade)."""
-    instance = _instance(engine="postgres", engine_version="18.1")
+    instance = _instance(engine="postgres", engine_version="19.1")
     doc = _doc(instance)
     rule = DbEngineVersion()
     diff = rule.detect(doc)[0]
-    assert diff.context["major"] == "18"
-    assert diff.context["target"] == "17"
+    assert diff.context["major"] == "19"
+    assert diff.context["target"] == "18"
     assert diff.context["upgrade_required"] is False
     assert rule.default_strategy(diff) == "nearest_major"
     assert {s.id for s in rule.allowed_strategies(diff)} == {"nearest_major", "manual"}
 
     result = rule.apply(doc, diff, "nearest_major")
 
-    assert result.get(instance.id).target_hints == {"database_version": "POSTGRES_17"}
+    assert result.get(instance.id).target_hints == {"database_version": "POSTGRES_18"}
     with pytest.raises(ValueError):
         rule.apply(doc, diff, "upgrade_to_oldest_supported")
 

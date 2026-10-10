@@ -258,7 +258,7 @@ Cloud SQL's IAM database authentication is a per-instance flag; enabling it does
 
 | Strategy | Title | Effect | Risk | Manual | Default |
 |---|---|---|---|---|---|
-| `enable_flag` | Enable Cloud SQL IAM authentication | cloudsql_iam_authentication = 'on', merged into database_flags | medium |  | yes |
+| `enable_flag` | Enable Cloud SQL IAM authentication | the engine's IAM-authentication flag (cloudsql.iam_authentication on PostgreSQL, cloudsql_iam_authentication on MySQL) set to on | medium |  | yes |
 | `manual` | Handle manually | no hints; IAM authentication is not enabled | low | yes |  |
 
 ### RDS's per-log-type export selection has no Cloud SQL equivalent (`DB-LOG-EXPORTS`)

@@ -1,6 +1,7 @@
 """Cloud SQL facts referenced by the AWS→GCP database difference rules (spec §5).
 
-All tables below were checked 2026-09-16 against Cloud SQL for PostgreSQL/MySQL
+All tables below were checked 2026-09-16 and re-verified against a live project on
+2026-10-10 with scripts/verify_gcp_facts.py against Cloud SQL for PostgreSQL/MySQL
 documentation. Refreshing them later is one edit to this module.
 """
 
@@ -12,7 +13,7 @@ import re
 # Round 1 review (I5): this previously omitted postgres 12 and mysql 8.4, forcing an
 # unnecessary high-risk major upgrade for either.
 SUPPORTED_VERSIONS: dict[str, list[str]] = {
-    "postgres": ["17", "16", "15", "14", "13", "12"],
+    "postgres": ["18", "17", "16", "15", "14", "13", "12"],
     "mysql": ["8.4", "8.0", "5.7"],
 }
 
@@ -24,6 +25,7 @@ OLDEST_SUPPORTED: dict[str, str] = {
 
 # (engine, major) -> Cloud SQL `database_version` enum value. Checked 2026-09-16.
 DATABASE_VERSION: dict[tuple[str, str], str] = {
+    ("postgres", "18"): "POSTGRES_18",
     ("postgres", "17"): "POSTGRES_17",
     ("postgres", "16"): "POSTGRES_16",
     ("postgres", "15"): "POSTGRES_15",
@@ -64,6 +66,12 @@ MAX_TRANSACTION_LOG_RETENTION_DAYS = 7
 # needs plus the common flags called out in plan 2. `shared_buffers` is deliberately
 # excluded: it is not settable on Cloud SQL. Extend an engine by adding the flag name to
 # its frozenset below.
+# The IAM-authentication flag's name differs by engine.
+IAM_AUTH_FLAG: dict[str, str] = {
+    "postgres": "cloudsql.iam_authentication",
+    "mysql": "cloudsql_iam_authentication",
+}
+
 SUPPORTED_FLAGS: dict[str, frozenset[str]] = {
     "postgres": frozenset(
         {
@@ -71,7 +79,8 @@ SUPPORTED_FLAGS: dict[str, frozenset[str]] = {
             "log_min_duration_statement",
             "work_mem",
             "autovacuum",
-            "cloudsql_iam_authentication",
+            # PostgreSQL spells it with a dot; MySQL with an underscore (verified 2026-10-10).
+            "cloudsql.iam_authentication",
         }
     ),
     "mysql": frozenset(

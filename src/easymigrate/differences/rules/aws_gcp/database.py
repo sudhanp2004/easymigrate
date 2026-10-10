@@ -22,6 +22,7 @@ from easymigrate.differences.rules.aws_gcp.cloudsql_facts import (
     DAY_NUMBER,
     DEFAULT_PORT,
     FORMULA,
+    IAM_AUTH_FLAG,
     MAX_RETAINED_BACKUPS,
     MAX_TRANSACTION_LOG_RETENTION_DAYS,
     MEMORY_PER_VCPU_MIB,
@@ -1394,7 +1395,10 @@ class DbIamAuth(DifferenceRule):
         Strategy(
             id="enable_flag",
             title="Enable Cloud SQL IAM authentication",
-            effect="cloudsql_iam_authentication = 'on', merged into database_flags",
+            effect=(
+                "the engine's IAM-authentication flag (cloudsql.iam_authentication on "
+                "PostgreSQL, cloudsql_iam_authentication on MySQL) set to on"
+            ),
             risk="medium",
         ),
         Strategy(
@@ -1432,9 +1436,11 @@ class DbIamAuth(DifferenceRule):
             raise ValueError(f"unknown strategy {strategy_id!r}")
         # Merge into whatever DB-PARAM-FLAGS (rule 10) already wrote, regardless of
         # which of the two rules ran first (spec §5 "rule interactions").
+        # The flag is spelled differently per engine; the MySQL spelling on a PostgreSQL
+        # instance failed at apply (found verifying facts against GCP, 2026-10-10).
         merged_flags = {
             **instance.target_hints.get("database_flags", {}),
-            "cloudsql_iam_authentication": "on",
+            IAM_AUTH_FLAG[instance.engine]: "on",
         }
         return _replace_object(doc, _set_hint(instance, "database_flags", merged_flags))
 
