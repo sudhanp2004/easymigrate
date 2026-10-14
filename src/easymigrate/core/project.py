@@ -13,6 +13,7 @@ from pydantic import BaseModel, ValidationError
 
 from easymigrate import __version__
 from easymigrate.ir.base import IRDocument, StrictModel
+from easymigrate.ir.versioning import SCHEMA_VERSION, StaleSchema, upgrade
 
 DIR_NAME = ".easymigrate"
 _PRIVATE = 0o600
@@ -26,17 +27,12 @@ class StageInputMissing(Exception):
         super().__init__(f"{artifact.name} not found. Run `easymigrate {command}` first.")
 
 
-class StaleProjectState(Exception):
+class StaleProjectState(StaleSchema):
     """A saved artifact was written by an EasyMigrate whose IR had different fields."""
 
     def __init__(self, artifact: Path, command: str) -> None:
+        super().__init__(artifact.name, command)
         self.artifact = artifact
-        self.command = command
-        super().__init__(
-            f"{artifact.name} was written by a different version of EasyMigrate and can no "
-            f"longer be read. Nothing is lost: run `easymigrate {command}` again to rebuild it "
-            "from the scan already on disk."
-        )
 
 
 class SourceConfig(StrictModel):
@@ -210,14 +206,19 @@ class Project:
         validated = IRDocument.model_validate_json(doc.model_dump_json())
         self.write_json(path, validated)
 
+    def read_versioned(self, path: Path, *, produced_by: str) -> Any:
+        """`read_json`, brought to the current schema version (see `ir.versioning`)."""
+        return upgrade(self.read_json(path, produced_by=produced_by), path.name, produced_by)
+
     def read_ir(self, path: Path, *, produced_by: str) -> IRDocument:
-        if not path.exists():
-            raise StageInputMissing(path, produced_by)
-        text = path.read_text(encoding="utf-8")
+        raw = self.read_json(path, produced_by=produced_by)
+        written = str(raw.get("schema_version", "1")) if isinstance(raw, dict) else "1"
+        data = upgrade(raw, path.name, produced_by)
         try:
-            return IRDocument.model_validate_json(text)
+            return IRDocument.model_validate(data)
         except ValidationError as exc:
-            if not _looks_like_an_older_schema(exc):
+            # A migrated file that still fails, or an unbumped field removal, is stale state.
+            if written == SCHEMA_VERSION and not _looks_like_an_older_schema(exc):
                 raise
             raise StaleProjectState(path, produced_by) from None
 

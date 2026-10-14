@@ -45,6 +45,7 @@ from easymigrate.ir.base import Finding, IntentObject, IRDocument
 from easymigrate.ir.database import DatabaseInstance
 from easymigrate.ir.kubernetes import KubernetesCluster
 from easymigrate.ir.loadbalancing import LoadBalancer
+from easymigrate.ir.versioning import SCHEMA_VERSION
 
 _SAMPLE_ARNS = 3
 _STATE_BUCKET_SUFFIX = "-easymigrate-tfstate"
@@ -262,6 +263,7 @@ def _write_differences(project: Project, doc: IRDocument) -> None:
     project.write_json(
         project.differences_path,
         {
+            "schema_version": SCHEMA_VERSION,
             "differences": [diff.model_dump(mode="json") for diff in differences],
             "rules": {
                 rule_id: {
@@ -279,7 +281,7 @@ def _write_differences(project: Project, doc: IRDocument) -> None:
 
 
 def load_differences(project: Project) -> list[Difference]:
-    data = project.read_json(project.differences_path, produced_by="analyze")
+    data = project.read_versioned(project.differences_path, produced_by="analyze")
     return [Difference.model_validate(item) for item in data["differences"]]
 
 

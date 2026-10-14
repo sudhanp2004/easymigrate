@@ -9,6 +9,7 @@ from typing import Any, ClassVar, Literal
 from pydantic import Field
 
 from easymigrate.ir.base import IRDocument, StrictModel
+from easymigrate.ir.versioning import SCHEMA_VERSION
 
 Risk = Literal["none", "low", "medium", "high"]
 
@@ -123,7 +124,7 @@ class Decision(StrictModel):
 
 
 class DecisionSet(StrictModel):
-    schema_version: Literal["1"] = "1"
+    schema_version: str = SCHEMA_VERSION
     differences_fingerprint: str
     decisions: list[Decision]
     acknowledged_in_bulk: bool = False

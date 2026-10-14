@@ -1,5 +1,7 @@
 """Expected, user-facing failures. The CLI prints the message and exits with code 1."""
 
+from easymigrate.ir.versioning import SchemaError as SchemaError  # re-exported for cli/ui
+
 
 class EasyMigrateError(Exception):
     pass

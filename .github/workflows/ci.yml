@@ -24,6 +24,21 @@ jobs:
       - name: Test (tofu validate)
         run: uv run pytest -m tofu
 
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: astral-sh/setup-uv@v6
+      - name: Build
+        run: uv build
+      - name: Install the wheel in a clean environment and run it
+        run: |
+          uv venv /tmp/wheel-env
+          uv pip install --python /tmp/wheel-env/bin/python "$(ls dist/*.whl)[ui]"
+          /tmp/wheel-env/bin/easymigrate --version
+          /tmp/wheel-env/bin/easymigrate destroy --help
+          unzip -l dist/*.whl | grep -q "easymigrate/ui/static/index.html"
+
   frontend:
     runs-on: ubuntu-latest
     steps:

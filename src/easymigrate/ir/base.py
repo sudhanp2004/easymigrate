@@ -14,6 +14,8 @@ from pydantic import (
     model_validator,
 )
 
+from easymigrate.ir.versioning import SCHEMA_VERSION
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -96,7 +98,7 @@ T = TypeVar("T", bound=IntentObject)
 
 
 class IRDocument(StrictModel):
-    schema_version: Literal["1"] = "1"
+    schema_version: str = SCHEMA_VERSION
     source: dict[str, Any]
     objects: list[SerializeAsAny[IntentObject]] = Field(default_factory=list)
     findings: list[Finding] = Field(default_factory=list)

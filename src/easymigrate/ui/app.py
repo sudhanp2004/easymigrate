@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from easymigrate.core.errors import EasyMigrateError
+from easymigrate.core.errors import EasyMigrateError, SchemaError
 from easymigrate.core.project import Project, StageInputMissing
 from easymigrate.ui.jobs import JobStore
 from easymigrate.ui.routes import jobs as job_routes
@@ -76,6 +76,10 @@ def create_app(project: Project, security: Security) -> FastAPI:
 
     @app.exception_handler(EasyMigrateError)
     async def _easymigrate_error_handler(_request: Request, exc: EasyMigrateError):
+        return JSONResponse(status_code=400, content={"detail": str(exc)})
+
+    @app.exception_handler(SchemaError)
+    async def _schema_error_handler(_request: Request, exc: SchemaError):
         return JSONResponse(status_code=400, content={"detail": str(exc)})
 
     @app.exception_handler(StageInputMissing)

@@ -2,6 +2,16 @@
 
 Migrates cloud infrastructure from AWS to GCP. It scans the live source cloud, builds an intent-level intermediate representation, shows every difference between the clouds with safe default handling, generates Terraform, and applies it only after you approve.
 
+## Install
+
+Python 3.12 or newer. From a checkout or a release wheel:
+
+    uv tool install ".[ui]"          # from the repository root
+    uv tool install "easymigrate-0.1.0-py3-none-any.whl[ui]"
+
+`[ui]` adds the local review UI; leave it out for the CLI alone. `easymigrate --version`
+prints the version; changes are listed in [CHANGELOG.md](CHANGELOG.md).
+
 ## Usage
 
     # 1. Read a live AWS region (read-only access is enough)
@@ -48,11 +58,37 @@ Migrates cloud infrastructure from AWS to GCP. It scans the live source cloud, b
 
 These commands work in the current directory and keep their output in `.easymigrate/`. That folder holds account metadata such as account IDs and ARNs; keep it private. It is added to `.gitignore` automatically inside a git repository. After every stage that has enough information, a report is written to `.easymigrate/report.md` and `.easymigrate/report.json`.
 
-Scanned families: networking (VPCs, subnets, route tables, internet/NAT gateways, security groups, network ACLs), databases (RDS instances and Multi-AZ DB clusters) and compute (EC2 instances, EBS volumes, Elastic IPs, launch templates and Auto Scaling groups). Compute is scanned and recorded in the IR; generating GCP resources for it is still in progress.
+## What it migrates
 
-Permissions `scan` needs: `ec2:DescribeVpcs`, `ec2:DescribeVpcAttribute`, `ec2:DescribeSubnets`, `ec2:DescribeRouteTables`, `ec2:DescribeInternetGateways`, `ec2:DescribeNatGateways`, `ec2:DescribeSecurityGroups`, `ec2:DescribeNetworkAcls`, `rds:DescribeDBInstances`, `rds:DescribeDBSubnetGroups`, `rds:DescribeDBParameterGroups`, `rds:DescribeDBParameters`, `rds:DescribeDBClusters`, `ec2:DescribeInstanceTypes`, `tag:GetResources`, `sts:GetCallerIdentity`. Missing permissions are reported as scan gaps rather than failing the scan.
+| AWS | Google Cloud |
+|---|---|
+| VPCs, subnets, route tables, internet/NAT gateways, security groups, network ACLs | VPC network, subnets, routes, Cloud NAT, firewall rules |
+| RDS instances and Multi-AZ clusters (MySQL, PostgreSQL) | Cloud SQL with private IP, flags, HA and backups |
+| EC2 instances, EBS volumes, Elastic IPs, launch templates, Auto Scaling groups | Compute Engine VMs, disks, static addresses, instance templates, managed instance groups and autoscalers |
+| EKS clusters and node groups | GKE Standard clusters and node pools |
+| S3 bucket configuration (not objects) | Cloud Storage buckets |
+| Application and Network Load Balancers | Cloud Load Balancing |
+| IAM roles and instance profiles | A report with suggested predefined roles (nothing is created) |
 
-`plan` and `apply` need GCP Application Default Credentials (`gcloud auth application-default login`) for a principal with, on the destination project: `roles/compute.networkAdmin` (create the generated networking resources) and `roles/storage.admin` (create and use the `<project>-easymigrate-tfstate` state bucket), plus `roles/cloudsql.admin` and `roles/servicenetworking.networksAdmin` when the scan found RDS instances. EasyMigrate runs OpenTofu inside the application; you never install or invoke `tofu` yourself.
+Infrastructure configuration only: EasyMigrate never copies data (database rows, disk
+contents, bucket objects) and never changes anything in AWS. Every AWS→GCP difference it
+finds is listed with a safe default and the alternatives, in `.easymigrate/report.md`.
+
+## Permissions
+
+**AWS (scan):** read-only. The least-privilege policy is in
+[`docs/aws-scan-policy.json`](docs/aws-scan-policy.json); the AWS managed `ReadOnlyAccess`
+policy also works. A missing permission becomes a scan gap in the report rather than a failed
+scan.
+
+**Google Cloud (plan, apply, destroy):** Application Default Credentials
+(`gcloud auth application-default login`) for a principal with, on the destination project,
+`roles/storage.admin` (the `<project>-easymigrate-tfstate` state bucket and migrated buckets),
+`roles/compute.admin` (networks, VMs, load balancers) and, when the scan found them,
+`roles/cloudsql.admin` + `roles/servicenetworking.networksAdmin` (RDS) and
+`roles/container.admin` + `roles/iam.serviceAccountUser` (EKS). `plan` checks that the needed
+APIs are enabled and names the `gcloud services enable` command if not. EasyMigrate runs
+OpenTofu itself; you never install or invoke `tofu`.
 
 ## Local UI (preview)
 
@@ -93,5 +129,17 @@ CI fails if the committed `static/` output has drifted from a fresh `npm run bui
 (the `frontend` job in `.github/workflows/ci.yml`), so always rebuild and commit after
 changing anything under `frontend/src/`.
 
-Design: `docs/superpowers/specs/2026-09-15-core-pipeline-networking-design.md`,
-`docs/superpowers/specs/2026-09-17-local-ui-design.md` for the local UI.
+Saved project files carry a schema version (`easymigrate/ir/versioning.py`). Changing a model
+they are read into fails `tests/ir/test_schema_version.py` until the version is bumped, with a
+migration step when old files can be carried forward.
+
+Before a customer engagement, check the built-in Google Cloud facts against a live project:
+
+    uv run python scripts/verify_gcp_facts.py --project my-gcp-project
+
+Design documents are in `docs/superpowers/specs/`, one per family, starting with
+`2026-09-15-core-pipeline-networking-design.md`.
+
+## Licence
+
+Proprietary; see [LICENSE](LICENSE).

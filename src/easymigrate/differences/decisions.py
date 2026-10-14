@@ -7,6 +7,7 @@ import hashlib
 import yaml
 
 from easymigrate.differences.model import Decision, DecisionSet, Difference, DifferenceRule
+from easymigrate.ir.versioning import upgrade
 
 
 def fingerprint(differences: list[Difference]) -> str:
@@ -123,4 +124,4 @@ def from_yaml(text: str) -> DecisionSet:
         data = yaml.safe_load(text)
     except yaml.YAMLError as exc:
         raise ValueError(f"invalid YAML: {exc}") from exc
-    return DecisionSet.model_validate(data)
+    return DecisionSet.model_validate(upgrade(data, "decisions.yaml", "resolve"))

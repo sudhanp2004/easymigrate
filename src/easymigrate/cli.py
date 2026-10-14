@@ -16,7 +16,7 @@ from rich.console import Console
 from rich.table import Table
 
 from easymigrate import __version__
-from easymigrate.core.errors import EasyMigrateError, ExitTwoError
+from easymigrate.core.errors import EasyMigrateError, ExitTwoError, SchemaError
 from easymigrate.core.pipeline import DestroySummary, PlanSummary, set_scope
 from easymigrate.core.pipeline import analyze as run_analyze
 from easymigrate.core.pipeline import apply as run_apply
@@ -66,7 +66,7 @@ def _user_errors() -> Iterator[None]:
         for line in str(exc).splitlines() or [str(exc)]:
             error_console.print(f"[red]{line}[/red]")
         raise typer.Exit(code=2) from None
-    except (EasyMigrateError, StageInputMissing) as exc:
+    except (EasyMigrateError, StageInputMissing, SchemaError) as exc:
         _fail(str(exc))
     except ValidationError as exc:
         first = exc.errors()[0]

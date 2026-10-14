@@ -1,0 +1,36 @@
+name: gcp-facts
+
+# Weekly check of the built-in Google Cloud facts (machine types, images, GKE and Cloud SQL
+# versions, flags, IAM roles) against a live project; scripts/verify_gcp_facts.py only reads.
+# Needs two repository secrets, and is skipped until they exist:
+#   GCP_FACTS_PROJECT      a project with the Compute, GKE and Cloud SQL Admin APIs enabled
+#   GCP_FACTS_CREDENTIALS  a service-account key JSON with roles/viewer on that project
+on:
+  schedule:
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    env:
+      HAS_CREDENTIALS: ${{ secrets.GCP_FACTS_CREDENTIALS != '' }}
+    steps:
+      - name: Skip without credentials
+        if: env.HAS_CREDENTIALS != 'true'
+        run: echo "GCP_FACTS_CREDENTIALS is not set; skipping the facts check."
+      - uses: actions/checkout@v5
+        if: env.HAS_CREDENTIALS == 'true'
+      - uses: astral-sh/setup-uv@v6
+        if: env.HAS_CREDENTIALS == 'true'
+      - uses: google-github-actions/auth@v2
+        if: env.HAS_CREDENTIALS == 'true'
+        with:
+          credentials_json: ${{ secrets.GCP_FACTS_CREDENTIALS }}
+      - uses: google-github-actions/setup-gcloud@v2
+        if: env.HAS_CREDENTIALS == 'true'
+      - name: Verify facts
+        if: env.HAS_CREDENTIALS == 'true'
+        run: |
+          uv sync --locked
+          uv run python scripts/verify_gcp_facts.py --project "${{ secrets.GCP_FACTS_PROJECT }}"

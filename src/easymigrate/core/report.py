@@ -1048,7 +1048,7 @@ def _load_differences_by_key(project: Project) -> dict[str, Any]:
         return {}
     from easymigrate.differences.model import Difference
 
-    data = json.loads(project.differences_path.read_text(encoding="utf-8"))
+    data = project.read_versioned(project.differences_path, produced_by="analyze")
     return {item["key"]: Difference.model_validate(item) for item in data["differences"]}
 
 
