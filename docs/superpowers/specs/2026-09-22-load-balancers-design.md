@@ -155,4 +155,27 @@ Found and fixed:
    amended accordingly; a managed instance group behind both kinds is a `GenerationError`.
 
 Not proven live: HTTPS (needs a domain for the managed certificate), internal ALB/NLB, ASG backends
-— covered by goldens and provider-schema tests.
+— covered by goldens and provider-schema tests. (Internal ALB and ASG backends were proven in the
+2026-10-08 full-stack test; HTTPS on 2026-10-27, below.)
+
+### HTTPS live test (2026-10-27)
+
+No owned domain needed: sslip.io resolves `<a-b-c-d>.sslip.io` to `a.b.c.d`. The testbed ALB got an
+HTTPS listener (`ELBSecurityPolicy-TLS13-1-2-2021-06`) with a self-signed certificate imported into
+ACM (`TF_VAR_https_domain`). Round 1 migrated it with a placeholder domain to learn the new global
+address (136.81.238.39); round 2 re-issued the ACM certificate for `136-81-238-39.sslip.io`, and
+scan → analyze → resolve → plan replaced only the managed certificate. LB-SOURCE-RESTRICTION was
+set to `open`: Google's certificate validation must reach the load balancer, and the project has
+no Cloud Armor quota.
+
+- **Found and fixed:** the replacement failed, because GCP refuses to delete a certificate a
+  proxy still uses (`resourceInUseByAnotherResource`). Certificates are now named after a hash
+  of their domains with `create_before_destroy`; the re-plan created the new one, moved the
+  proxy and deleted the old one in a single apply.
+- The certificate went `ACTIVE` about 35 minutes after the apply. `curl https://136-81-238-39.sslip.io/`
+  then verified a Google Trust Services certificate over TLS 1.3 and returned the migrated VM's
+  page; TLS 1.0/1.1 were refused and TLS 1.2 accepted (`MODERN`, minimum 1.2, from the AWS
+  policy). A second `plan` showed no changes; `easymigrate destroy` removed all 22 resources.
+
+Still synthetic: the AWS side of an NLB. The account refuses to create NLBs in every region
+(OperationNotPermitted, re-checked 2026-10-27) while ALBs work; AWS Support must lift it.
