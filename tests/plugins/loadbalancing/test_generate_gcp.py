@@ -47,6 +47,25 @@ def test_skipped_listener_is_not_created():
     assert 'port_range            = "80"' in out
 
 
+def test_certificate_name_follows_its_domains_so_a_domain_change_can_replace_it():
+    """Live HTTPS test (2026-10-27): changing the domain replaced the certificate in place of a
+    proxy still using it, and GCP refused the delete (resourceInUseByAnotherResource)."""
+    import re
+
+    document, ctx = resolved_case("alb_https_asg")
+
+    def cert_name(domains):
+        out = generate(_with_lb_hints(document, certificates={"443": domains}), ctx).render()
+        block = out.split('resource "google_compute_managed_ssl_certificate"')[1]
+        assert "create_before_destroy = true" in block.split("\n}")[0]
+        return re.search(r'name = "([^"]+)"', block).group(1)
+
+    first = cert_name(["a.example.com"])
+    assert first == cert_name(["a.example.com"])
+    assert first != cert_name(["b.example.com"])
+    assert len(cert_name(["x" * 80 + ".example.com"])) <= 63
+
+
 # ---- review fixes 2026-10-08 -------------------------------------------------------
 
 from easymigrate.ir.loadbalancing import (  # noqa: E402

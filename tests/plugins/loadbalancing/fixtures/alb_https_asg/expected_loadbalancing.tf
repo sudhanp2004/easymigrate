@@ -116,10 +116,13 @@ resource "google_compute_target_https_proxy" "web_443" {
 
 # issued only once these domains resolve to the new address (LB-CERTIFICATES)
 resource "google_compute_managed_ssl_certificate" "web_443" {
-  name = "web-443-cert"
+  name = "web-443-cert-65825d50"
 
   managed {
     domains = ["example.com", "www.example.com"]
+  }
+  lifecycle {
+    create_before_destroy = true
   }
 }
 

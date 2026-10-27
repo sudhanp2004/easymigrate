@@ -699,6 +699,17 @@ resource "aws_security_group" "alb" {
     cidr_blocks = [var.admin_cidr]
   }
 
+  # Inline like the rule above: a separate aws_security_group_rule would fight the inline set.
+  dynamic "ingress" {
+    for_each = var.https_domain == "" ? [] : [443]
+    content {
+      from_port   = ingress.value
+      to_port     = ingress.value
+      protocol    = "tcp"
+      cidr_blocks = [var.admin_cidr]
+    }
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -757,6 +768,55 @@ resource "aws_lb_listener_rule" "api" {
     }
   }
   action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.web.arn
+  }
+}
+
+# Optional HTTPS listener (LB-CERTIFICATES live test). Set TF_VAR_https_domain to a name that
+# will resolve to the migrated load balancer, e.g. <gcp-ip-with-dashes>.sslip.io, so the
+# Google-managed certificate EasyMigrate generates for it can really provision. The ACM
+# certificate is self-signed and imported: only its domain names matter to the migration.
+variable "https_domain" {
+  description = "Domain for the optional HTTPS listener; empty (default) leaves HTTPS out"
+  type        = string
+  default     = ""
+}
+
+resource "tls_private_key" "https" {
+  count     = var.https_domain == "" ? 0 : 1
+  algorithm = "RSA"
+  rsa_bits  = 2048
+}
+
+resource "tls_self_signed_cert" "https" {
+  count                 = var.https_domain == "" ? 0 : 1
+  private_key_pem       = tls_private_key.https[0].private_key_pem
+  dns_names             = [var.https_domain]
+  validity_period_hours = 720
+  allowed_uses          = ["key_encipherment", "digital_signature", "server_auth"]
+  subject {
+    common_name = var.https_domain
+  }
+}
+
+resource "aws_acm_certificate" "https" {
+  count            = var.https_domain == "" ? 0 : 1
+  private_key      = tls_private_key.https[0].private_key_pem
+  certificate_body = tls_self_signed_cert.https[0].cert_pem
+  lifecycle {
+    create_before_destroy = true
+  }
+}
+
+resource "aws_lb_listener" "https" {
+  count             = var.https_domain == "" ? 0 : 1
+  load_balancer_arn = aws_lb.web.arn
+  port              = 443
+  protocol          = "HTTPS"
+  ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
+  certificate_arn   = aws_acm_certificate.https[0].arn
+  default_action {
     type             = "forward"
     target_group_arn = aws_lb_target_group.web.arn
   }

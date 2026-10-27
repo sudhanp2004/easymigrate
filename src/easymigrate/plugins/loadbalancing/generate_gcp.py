@@ -6,6 +6,7 @@ run, and `GenerationError` guards that contract.
 
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass, field
 
@@ -705,8 +706,14 @@ def _alb(file: HclFile, state: _Context, lb: LoadBalancer, regional: bool) -> No
             cert.comment(
                 "issued only once these domains resolve to the new address (LB-CERTIFICATES)"
             )
-            cert.attr("name", _name(lb_label, str(listener.port), "cert"))
+            # Domains cannot change in place and GCP refuses to delete a certificate a proxy
+            # still uses, so a new one is created first under a name that follows the domains
+            # (live HTTPS test, 2026-10-27: a domain change failed with resourceInUse).
+            digest = hashlib.sha256(",".join(sorted(domains)).encode()).hexdigest()[:8]
+            base = _name(lb_label, str(listener.port), "cert")[:54].rstrip("-")
+            cert.attr("name", f"{base}-{digest}")
             cert.block("managed").attr("domains", domains)
+            cert.block("lifecycle").attr("create_before_destroy", True)
             proxy.attr(
                 "ssl_certificates", [Ref(f"google_compute_managed_ssl_certificate.{cert_label}.id")]
             )
