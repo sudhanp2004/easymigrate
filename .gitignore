@@ -27,6 +27,8 @@ build/
 # Secrets & env
 .env
 .env.*
+# Public build settings for the hosted site (no secrets)
+!frontend/.env.hosted
 
 # Editors / OS
 .vscode/
