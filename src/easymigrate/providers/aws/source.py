@@ -28,7 +28,12 @@ class AwsConnection:
 
 
 def connect(
-    *, region: str, profile: str | None = None, role_arn: str | None = None
+    *,
+    region: str,
+    profile: str | None = None,
+    role_arn: str | None = None,
+    external_id: str | None = None,
+    session_name: str = "easymigrate-scan",
 ) -> AwsConnection:
     try:
         session = boto3.Session(profile_name=profile, region_name=region)
@@ -42,9 +47,10 @@ def connect(
     try:
         if role_arn:
             sts = session.client("sts", region_name=region, config=CLIENT_CONFIG)
-            credentials = sts.assume_role(RoleArn=role_arn, RoleSessionName="easymigrate-scan")[
-                "Credentials"
-            ]
+            params = {"RoleArn": role_arn, "RoleSessionName": session_name}
+            if external_id:
+                params["ExternalId"] = external_id
+            credentials = sts.assume_role(**params)["Credentials"]
             session = boto3.Session(
                 aws_access_key_id=credentials["AccessKeyId"],
                 aws_secret_access_key=credentials["SecretAccessKey"],

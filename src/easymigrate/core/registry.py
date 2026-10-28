@@ -38,10 +38,22 @@ class AwsSource:
     """Adapts the AWS provider to the plain types the pipeline uses."""
 
     def connect(
-        self, *, region: str, profile: str | None = None, role_arn: str | None = None
+        self,
+        *,
+        region: str,
+        profile: str | None = None,
+        role_arn: str | None = None,
+        external_id: str | None = None,
+        session_name: str = "easymigrate-scan",
     ) -> Any:
         try:
-            return aws_source.connect(region=region, profile=profile, role_arn=role_arn)
+            return aws_source.connect(
+                region=region,
+                profile=profile,
+                role_arn=role_arn,
+                external_id=external_id,
+                session_name=session_name,
+            )
         except aws_source.AwsConnectionError as exc:
             raise SourceConnectionError(str(exc)) from None
 

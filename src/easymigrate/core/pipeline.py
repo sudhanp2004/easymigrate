@@ -70,11 +70,18 @@ def scan(
     role_arn: str | None = None,
     plugins: Sequence[Plugin] | None = None,
     source: Any = None,
+    external_id: str | None = None,
+    session_name: str | None = None,
 ) -> ScanSummary:
     first_run = project.init()
     plugins = registry.PLUGINS if plugins is None else plugins
     source = source if source is not None else registry.source_for("aws")
-    connection = source.connect(region=region, profile=profile, role_arn=role_arn)
+    # Only the hosted app assumes roles with an external ID; passing the keywords only when
+    # set keeps every other source (and test fake) on the original signature.
+    extra = {"external_id": external_id} if external_id is not None else {}
+    if session_name is not None:
+        extra["session_name"] = session_name
+    connection = source.connect(region=region, profile=profile, role_arn=role_arn, **extra)
     account_id = source.account_id(connection)
 
     files: dict[str, Any] = {}
@@ -556,23 +563,19 @@ def _check_security_policy_quota(document: IRDocument, gcp: Any, gcp_project: st
         )
 
 
-def plan(
-    project: Project,
-    *,
-    gcp_project: str,
-    gcp_region: str | None = None,
-    confirm_bucket: Callable[[str], bool],
-    db_passwords: dict[str, str] | None = None,
-    ask_password: Callable[[str], str] | None = None,
-    tofu: Any = None,
-    gcp: Any = None,
-    stream: Callable[[str], None] | None = None,
-) -> PlanSummary:
-    """Generate GCP Terraform from the resolved IR and run `tofu plan` (spec §5.4).
+@dataclass
+class GenerateSummary:
+    gcp_project: str
+    gcp_region: str
+    files: list[str]
+    password_variables: list[str]
+    findings: list[Finding]
 
-    `stream`, when given, receives progress and every `tofu plan` output line as it happens.
-    """
-    say = stream or (lambda _line: None)
+
+def _resolve_for_generation(project: Project, gcp_region: str | None) -> tuple[Any, str, Any, Any]:
+    """Readiness check, then the resolved IR written to disk: the part of plan() and
+    generate() that comes before anything GCP. Returns (config, gcp region, resolved,
+    decisions)."""
     config = project.load_config()
     if config.source is None:
         raise EasyMigrateError("no scan found; run `easymigrate scan` first")
@@ -597,6 +600,80 @@ def plan(
     project.write_json(
         project.superseded_path, [entry.model_dump(mode="json") for entry in resolved.superseded]
     )
+    return config, region, resolved, decisions
+
+
+def _write_terraform(
+    project: Project,
+    document: IRDocument,
+    decisions: Any,
+    gcp_project: str,
+    region: str,
+    findings: list[Finding],
+) -> list[str]:
+    """Every terraform/*.tf file plus terraform.tfvars, old *.tf removed first. Returns the
+    file names written."""
+    terraform_dir = project.terraform_dir
+    if terraform_dir.is_dir():
+        for old in terraform_dir.glob("*.tf"):
+            old.unlink()
+    terraform_dir.mkdir(parents=True, exist_ok=True)
+
+    decided_by = {decision.key: decision.decided_by for decision in decisions.decisions}
+    ctx = GenerateContext(
+        project=gcp_project,
+        region=region,
+        version=__version__,
+        decided_by=decided_by,
+        findings=findings,
+    )
+    written: list[str] = []
+    for gen_plugin in registry.PLUGINS:
+        hcl_file = gen_plugin.generate_gcp(document, ctx)
+        project.write_text(terraform_dir / f"{gen_plugin.name}.tf", hcl_file.render())
+        written.append(f"{gen_plugin.name}.tf")
+    for name, content in registry.generate_boilerplate_tf(gcp_project, region, __version__).items():
+        project.write_text(terraform_dir / name, content)
+        written.append(name)
+    return written
+
+
+def generate(
+    project: Project, *, gcp_project: str, gcp_region: str | None = None
+) -> GenerateSummary:
+    """The Terraform plan() would write, with no GCP credentials, API checks, state bucket
+    or OpenTofu (the hosted report's download). Database passwords stay unset variables."""
+    _config, region, resolved, decisions = _resolve_for_generation(project, gcp_region)
+    findings: list[Finding] = []
+    files = _write_terraform(project, resolved.document, decisions, gcp_project, region, findings)
+    write_report(project, build_report(project))
+    return GenerateSummary(
+        gcp_project=gcp_project,
+        gcp_region=region,
+        files=files,
+        password_variables=sorted(registry.database_password_variables(resolved.document).values()),
+        findings=[*resolved.document.findings, *findings],
+    )
+
+
+def plan(
+    project: Project,
+    *,
+    gcp_project: str,
+    gcp_region: str | None = None,
+    confirm_bucket: Callable[[str], bool],
+    db_passwords: dict[str, str] | None = None,
+    ask_password: Callable[[str], str] | None = None,
+    tofu: Any = None,
+    gcp: Any = None,
+    stream: Callable[[str], None] | None = None,
+) -> PlanSummary:
+    """Generate GCP Terraform from the resolved IR and run `tofu plan` (spec §5.4).
+
+    `stream`, when given, receives progress and every `tofu plan` output line as it happens.
+    """
+    say = stream or (lambda _line: None)
+    config, region, resolved, decisions = _resolve_for_generation(project, gcp_region)
 
     gcp = gcp if gcp is not None else registry.gcp_target()
     if not gcp.credentials_ok():
@@ -660,30 +737,13 @@ def plan(
             "--create-state-bucket (or answer y at the prompt)."
         )
 
-    if terraform_dir.is_dir():
-        for old in terraform_dir.glob("*.tf"):
-            old.unlink()
-    terraform_dir.mkdir(parents=True, exist_ok=True)
+    _write_terraform(project, resolved.document, decisions, gcp_project, region, gen_findings)
 
     password_variables = registry.database_password_variables(resolved.document)
     if password_variables:
         project.write_secrets(
             {password_variables[ir_id]: value for ir_id, value in resolved_passwords.items()}
         )
-
-    decided_by = {decision.key: decision.decided_by for decision in decisions.decisions}
-    ctx = GenerateContext(
-        project=gcp_project,
-        region=region,
-        version=__version__,
-        decided_by=decided_by,
-        findings=gen_findings,
-    )
-    for gen_plugin in registry.PLUGINS:
-        hcl_file = gen_plugin.generate_gcp(resolved.document, ctx)
-        project.write_text(terraform_dir / f"{gen_plugin.name}.tf", hcl_file.render())
-    for name, content in registry.generate_boilerplate_tf(gcp_project, region, __version__).items():
-        project.write_text(terraform_dir / name, content)
 
     say("Running tofu init")
     tofu_obj.init(backend_config={"bucket": bucket, "prefix": "easymigrate"})
