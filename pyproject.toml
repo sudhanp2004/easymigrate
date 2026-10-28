@@ -29,6 +29,14 @@ ui = [
     "uvicorn>=0.30",
     "sse-starlette>=2.1",
 ]
+# The hosted report (easymigrate.sudhan.tech); see deploy/README.md.
+web = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "sse-starlette>=2.1",
+    "psycopg[binary]>=3.2",
+    "cryptography>=43",
+]
 
 [project.scripts]
 easymigrate = "easymigrate.cli:app"

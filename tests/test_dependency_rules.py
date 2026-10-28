@@ -69,7 +69,7 @@ def violations(module: str, imports: set[str]) -> list[str]:
         for name in internal:
             if not any(_within(name, prefix) for prefix in (*allowed, "easymigrate.plugins")):
                 bad(name, "plugins may import only ir, providers and core.plugin")
-    if _within(module, "easymigrate.ui"):
+    if _within(module, "easymigrate.ui") or _within(module, "easymigrate.web"):
         for name in imports:
             if any(_within(name, sdk) for sdk in CLOUD_SDKS):
                 bad(name, "ui must not import cloud SDKs")
@@ -170,6 +170,10 @@ def test_source_tree_follows_dependency_rules():
         ("easymigrate.ui.app", "from easymigrate.providers.aws import source", False),
         ("easymigrate.ui.app", "from easymigrate.engine.tofu import ensure_tofu", False),
         ("easymigrate.ui.app", "from easymigrate.core.project import Project", True),
+        ("easymigrate.web.app", "import boto3", False),
+        ("easymigrate.web.app", "from easymigrate.providers.aws import source", False),
+        ("easymigrate.web.app", "from easymigrate.engine.tofu import ensure_tofu", False),
+        ("easymigrate.web.app", "from easymigrate.core import registry", True),
     ],
 )
 def test_rule_checker(module, source, allowed):
