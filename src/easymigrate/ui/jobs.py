@@ -151,6 +151,15 @@ class JobStore:
         threading.Thread(target=run, daemon=True).start()
         return record
 
+    def mark_failed(self, job_id: str, error: str) -> JobRecord:
+        """Turn a finished record into a failed one (the hosted app, when a scan's result
+        could not be kept)."""
+        record = self.get(job_id).model_copy(
+            update={"status": "failed", "finished_at": datetime.now(UTC), "error": error}
+        )
+        self._write(record)
+        return record
+
     def reap_stale(self) -> list[JobRecord]:
         """Called once at server startup (spec §4): any record left `running` whose
         process is genuinely gone is dead, not live. Showing it as live would be a lie

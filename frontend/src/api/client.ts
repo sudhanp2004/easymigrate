@@ -9,6 +9,9 @@ export const TOKEN_HEADER = 'X-EasyMigrate-Token'
 // The hosted API authenticates with its cookie; every mutating request carries this header
 // so a cross-site form can never act (it forces a CORS preflight).
 export const HOSTED_HEADER = 'X-EasyMigrate'
+/** Fired on window when the hosted API answers 401: the session ended, whichever page or
+ * action noticed it. The wizard shows its start-again screen. */
+export const SESSION_ENDED_EVENT = 'easymigrate:session-ended'
 const TOKEN_STORAGE_KEY = 'easymigrate.token'
 
 const STALE_TOKEN_MESSAGE =
@@ -84,6 +87,9 @@ async function send(path: string, init: RequestInit): Promise<Response> {
       body = await response.json()
     } catch {
       // no JSON body; fall through with a generic detail below
+    }
+    if (response.status === 401 && hosted && path !== '/api/workspaces') {
+      window.dispatchEvent(new Event(SESSION_ENDED_EVENT))
     }
     if (response.status === 403 && !hosted) {
       throw new ApiError(403, STALE_TOKEN_MESSAGE)

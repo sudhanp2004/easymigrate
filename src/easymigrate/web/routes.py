@@ -4,6 +4,7 @@ job routes of the local UI, scoped to the visitor's workspace.
 No `from __future__ import annotations` here: FastAPI must evaluate the dependency aliases
 defined inside `register` (they close over the workspace manager)."""
 
+import logging
 import re
 import threading
 from collections.abc import Callable
@@ -27,7 +28,7 @@ from easymigrate.ui.state import ProjectState, project_state
 from easymigrate.web.download import build_zip
 from easymigrate.web.settings import WebSettings
 from easymigrate.web.store import WorkspaceRecord
-from easymigrate.web.workspaces import RETENTION, WorkspaceManager
+from easymigrate.web.workspaces import RETENTION, WorkspaceManager, WorkspaceUnreadable
 
 COOKIE = "em_ws"
 COOKIE_MAX_AGE = 7 * 24 * 3600
@@ -39,6 +40,22 @@ GCP_PROJECT = re.compile(r"^[a-z][a-z0-9-]{4,28}[a-z0-9]$")
 GCP_REGION = re.compile(r"^[a-z]+-[a-z]+\d{1,2}$")
 DEFAULT_GCP_PROJECT = "my-gcp-project"
 SLOT_TTL = timedelta(minutes=20)
+SITE_SESSIONS_PER_HOUR = 300
+UNREADABLE = "Your saved session can no longer be read. Start again."
+log = logging.getLogger("easymigrate.web")
+
+
+def client_ip(request: Request) -> str:
+    """The visitor's address for rate limits. Render's edge (Cloudflare) sets
+    CF-Connecting-IP itself; X-Forwarded-For is never used, because Render passes through
+    whatever the client sends in it."""
+    for header in ("cf-connecting-ip", "true-client-ip"):
+        value = request.headers.get(header, "").strip()
+        if value:
+            return value
+    return request.client.host if request.client else "unknown"
+
+
 _WEB_STAGES = ("scan", "analyze", "resolve")
 
 
@@ -133,7 +150,11 @@ def register(
     Ws = Annotated[WorkspaceRecord, Depends(workspace)]
 
     def project(request: Request, rec: Ws):
-        current = manager.project_for(rec)
+        try:
+            current = manager.project_for(rec)
+        except WorkspaceUnreadable as exc:
+            log.warning("workspace %s unreadable: %s", rec.ws8, exc)
+            raise HTTPException(status_code=401, detail=UNREADABLE) from None
         yield current
         if request.method not in ("GET", "HEAD"):
             manager.commit(rec)
@@ -157,11 +178,15 @@ def register(
 
     @app.post("/api/workspaces", status_code=201)
     def create_workspace(request: Request, response: Response) -> dict:
-        ip = request.client.host if request.client else "unknown"
-        if not manager.store.hit(f"ws-create:{ip}", 3600, 10):
+        if not manager.store.hit(f"ws-create:{client_ip(request)}", 3600, 10):
             raise HTTPException(
                 status_code=429,
                 detail="Too many new sessions from your network. Try again in an hour.",
+            )
+        if not manager.store.hit("ws-create:site", 3600, SITE_SESSIONS_PER_HOUR):
+            raise HTTPException(
+                status_code=429,
+                detail="EasyMigrate is very busy right now. Please try again in a little while.",
             )
         rec, secret = manager.create()
         _set_cookie(response, secret, settings)
@@ -285,9 +310,13 @@ def register(
                 source=source,
             )
 
-        def finished(_record: JobRecord) -> None:
+        def finished(record: JobRecord) -> None:
             slots.release(rec.id)
-            manager.commit(rec)
+            try:
+                manager.commit(rec)
+            except Exception as exc:  # noqa: BLE001 - shown to the visitor instead
+                log.warning("could not keep scan for workspace %s: %s", rec.ws8, exc)
+                store.mark_failed(record.id, str(exc))
 
         try:
             return store.start("scan", work, on_finish=finished)

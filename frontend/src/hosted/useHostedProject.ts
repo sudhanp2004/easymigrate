@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { ApiError, api } from '../api/client'
+import { ApiError, SESSION_ENDED_EVENT, api } from '../api/client'
 import type { HostedState } from './types'
 
 export const STARTED_KEY = 'easymigrate.started'
@@ -47,6 +47,16 @@ export function useHostedProject(wakeAfterMs = 3000): HostedProject {
     return () => {
       mounted.current = false
     }
+  }, [])
+
+  useEffect(() => {
+    // Any 401 after this tab has had a session means it ended; the first-visit 401 from
+    // load() is handled there (it creates the workspace) and is ignored here.
+    const onEnded = () => {
+      if (started() && mounted.current) setSessionEnded(true)
+    }
+    window.addEventListener(SESSION_ENDED_EVENT, onEnded)
+    return () => window.removeEventListener(SESSION_ENDED_EVENT, onEnded)
   }, [])
 
   const accept = useCallback((next: HostedState) => {

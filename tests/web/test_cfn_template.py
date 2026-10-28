@@ -43,7 +43,9 @@ def test_render_yaml_starts_web_factory():
     blueprint = yaml.safe_load((ROOT / "render.yaml").read_text())
     (service,) = blueprint["services"]
     assert "easymigrate.web.app:create_web_app --factory" in service["startCommand"]
-    assert "--proxy-headers" in service["startCommand"]
+    # Rate limits read CF-Connecting-IP; uvicorn must not rewrite the client address from the
+    # spoofable X-Forwarded-For.
+    assert "--proxy-headers" not in service["startCommand"]
     assert service["healthCheckPath"] == "/api/health"
     keys = {env["key"] for env in service["envVars"]}
     assert {

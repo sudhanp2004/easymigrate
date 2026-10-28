@@ -16,7 +16,7 @@ import tarfile
 import threading
 from datetime import UTC, datetime, timedelta
 
-from cryptography.fernet import Fernet
+from cryptography.fernet import Fernet, InvalidToken
 
 from easymigrate.core.errors import EasyMigrateError
 from easymigrate.core.project import Project
@@ -28,6 +28,11 @@ RETENTION = timedelta(days=7)
 TOUCH_EVERY = timedelta(minutes=5)
 MAX_ARCHIVE_BYTES = 50 * 1024 * 1024
 _RESTARTED = "the server restarted while this {stage} was running; run it again"
+
+
+class WorkspaceUnreadable(Exception):
+    """The stored archive cannot be decrypted or unpacked (data key changed, corrupt blob).
+    The archive is left untouched; the visitor starts a new workspace."""
 
 
 def secret_hash(secret: str) -> str:
@@ -84,15 +89,29 @@ class WorkspaceManager:
         with self._lock(rec.id):
             if not root.is_dir():
                 data = self.store.load_archive(rec.id)
-                root.mkdir(parents=True, exist_ok=True)
-                if data is not None:
-                    raw = self._fernet.decrypt(data)
-                    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tar:
-                        tar.extractall(root, filter="data")
-                    _fail_running_jobs(Project(root))
+                if data is None:
+                    root.mkdir(parents=True, exist_ok=True)
+                else:
+                    self._restore(root, data)
         project = Project(root)
         project.init()
         return project
+
+    def _restore(self, root, data: bytes) -> None:
+        """Unpack into a scratch directory and move it into place only once complete: a
+        half-restored directory would look like an empty workspace, and the next commit
+        would overwrite the good archive with it."""
+        scratch = root.with_name(f"{root.name}.restore-{secrets.token_hex(4)}")
+        try:
+            raw = self._fernet.decrypt(data)
+            scratch.mkdir(parents=True)
+            with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tar:
+                tar.extractall(scratch, filter="data")
+            _fail_running_jobs(Project(scratch))
+            scratch.rename(root)
+        except (InvalidToken, tarfile.TarError, OSError, EOFError) as exc:
+            shutil.rmtree(scratch, ignore_errors=True)
+            raise WorkspaceUnreadable(str(exc) or type(exc).__name__) from None
 
     def commit(self, rec: WorkspaceRecord) -> None:
         root = self._root(rec)

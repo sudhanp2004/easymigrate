@@ -1,6 +1,7 @@
 import { act, cleanup, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { api } from '../api/client'
 import { Wizard } from './Wizard'
 import { STARTED_KEY } from './useHostedProject'
 
@@ -97,5 +98,43 @@ describe('Wizard', () => {
       vi.advanceTimersByTime(3100)
     })
     expect(screen.getByText(/waking the server up/i)).toBeInTheDocument()
+  })
+
+  it('shows the start-again notice when any action gets a 401', async () => {
+    let expired = false
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (expired) return new Response('{"detail":"Your session has ended."}', { status: 401 })
+        if (url === '/api/project')
+          return new Response(
+            JSON.stringify({
+              root: 'workspace',
+              stages: [],
+              source: null,
+              target: null,
+              blocked: [],
+              active_job: null,
+              aws: null,
+              suggested_gcp_region: null,
+              expires_at: '2026-11-04T00:00:00Z',
+            }),
+          )
+        return new Response('{}')
+      }),
+    )
+    render(
+      <MemoryRouter initialEntries={['/app/connect']}>
+        <Routes>
+          <Route path="/app/*" element={<Wizard />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await screen.findByText(/connect your aws account/i, { selector: 'h1' })
+    expired = true
+    await act(async () => {
+      await api('/api/scan', { method: 'POST' }).catch(() => undefined)
+    })
+    expect(await screen.findByRole('button', { name: /start again/i })).toBeInTheDocument()
   })
 })

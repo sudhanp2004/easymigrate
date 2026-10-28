@@ -123,3 +123,24 @@ def test_delete_removes_record_archive_and_files(manager):
     assert manager.store.by_secret_hash(rec.secret_hash) is None
     assert manager.store.load_archive(rec.id) is None
     assert not (manager.settings.data_dir / rec.id).exists()
+
+
+def test_failed_restore_never_wipes_the_archive(settings, tmp_path):
+    from easymigrate.web.workspaces import WorkspaceUnreadable
+
+    store = MemoryStore()
+    manager = WorkspaceManager(store, settings)
+    rec, _ = manager.create(now=T0)
+    project = manager.project_for(rec)
+    project.write_text(project.dir / "note.txt", "keep me")
+    manager.commit(rec)
+    good = store.load_archive(rec.id)
+    shutil.rmtree(project.root)
+
+    other_key = type(settings)(**{**settings.__dict__, "data_key": Fernet.generate_key().decode()})
+    wrong = WorkspaceManager(store, other_key)
+    with pytest.raises(WorkspaceUnreadable):
+        wrong.project_for(rec)
+    assert not (settings.data_dir / rec.id).exists()
+    wrong.commit(rec)  # nothing local: must not store an empty archive
+    assert store.load_archive(rec.id) == good

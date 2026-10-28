@@ -185,3 +185,42 @@ def test_project_state_shape(settings):
     assert state["aws"] is None
     assert state["active_job"] is None
     assert "expires_at" in state and "suggested_gcp_region" in state
+
+
+def test_unreadable_workspace_is_401_start_again(settings):
+    client, app = make_client(settings)
+    start(client)
+    rec = next(iter(app.state.manager.store._records.values()))
+    app.state.manager.store.save_archive(rec.id, b"not-a-fernet-token")
+    response = client.get("/api/project")
+    assert response.status_code == 401
+    assert "Start again" in response.json()["detail"]
+
+
+def test_scan_shows_failed_when_the_result_cannot_be_kept(settings, monkeypatch):
+    from easymigrate.core.errors import EasyMigrateError
+
+    monkeypatch.setattr(pipeline, "scan", _fake_scan([]))
+    client, app = make_client(settings)
+    start(client)
+    _connect(client)
+    manager = app.state.manager
+    real_commit = manager.commit
+    calls = {"n": 0}
+
+    def flaky_commit(rec):
+        calls["n"] += 1
+        if calls["n"] == 2:  # 1 = after POST /api/scan, 2 = when the scan finishes
+            raise EasyMigrateError("this workspace is too large to keep")
+        real_commit(rec)
+
+    monkeypatch.setattr(manager, "commit", flaky_commit)
+    job = client.post("/api/scan", headers=H).json()
+    for _ in range(300):
+        record = client.get(f"/api/jobs/{job['id']}").json()
+        if record["status"] == "failed":
+            break
+        time.sleep(0.01)
+    assert record["status"] == "failed"
+    assert record["error"] == "this workspace is too large to keep"
+    assert app.state.slots.active() == 0

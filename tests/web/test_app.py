@@ -107,3 +107,33 @@ def test_delete_workspace_clears_cookie(settings):
 
 def test_base_url_is_https(settings):
     assert BASE.startswith("https://")
+
+
+def test_rate_limit_uses_cloudflare_ip_not_forwarded_for(settings):
+    client, _ = make_client(settings)
+    for i in range(10):
+        r = client.post(
+            "/api/workspaces",
+            headers={**H, "CF-Connecting-IP": "203.0.113.7", "X-Forwarded-For": f"10.0.0.{i}"},
+        )
+        assert r.status_code == 201
+    spoofed = client.post(
+        "/api/workspaces",
+        headers={**H, "CF-Connecting-IP": "203.0.113.7", "X-Forwarded-For": "10.9.9.9"},
+    )
+    assert spoofed.status_code == 429
+    other = client.post("/api/workspaces", headers={**H, "CF-Connecting-IP": "198.51.100.1"})
+    assert other.status_code == 201
+
+
+def test_site_wide_cap_on_new_sessions(settings, monkeypatch):
+    from easymigrate.web import routes
+
+    monkeypatch.setattr(routes, "SITE_SESSIONS_PER_HOUR", 3)
+    client, _ = make_client(settings)
+    for i in range(3):
+        assert (
+            client.post("/api/workspaces", headers={**H, "CF-Connecting-IP": f"198.51.100.{i}"})
+        ).status_code == 201
+    busy = client.post("/api/workspaces", headers={**H, "CF-Connecting-IP": "198.51.100.99"})
+    assert busy.status_code == 429
