@@ -16,25 +16,24 @@ from collections.abc import AsyncIterator
 from fastapi import Depends, FastAPI, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
-from easymigrate.core.project import Project
 from easymigrate.ui.jobs import JobStore
-from easymigrate.ui.security import Security
+from easymigrate.ui.routes.deps import RouteDeps
 
 _POLL_INTERVAL = 0.02
 
 
-def register(app: FastAPI, project: Project, jobs: JobStore, security: Security) -> None:
-    del project  # the store already holds the project; kept for signature symmetry
+def register(app: FastAPI, deps: RouteDeps) -> None:
+    store = Depends(deps.jobs)
 
-    @app.get("/api/jobs/{job_id}", dependencies=[Depends(security.require_origin)])
-    def get_job(job_id: str):
+    @app.get("/api/jobs/{job_id}", dependencies=deps.reads)
+    def get_job(job_id: str, jobs: JobStore = store):
         try:
             return jobs.get(job_id)
         except KeyError:
             raise HTTPException(status_code=404, detail="job not found") from None
 
-    @app.get("/api/jobs/{job_id}/stream", dependencies=[Depends(security.require_origin)])
-    async def stream_job(job_id: str) -> EventSourceResponse:
+    @app.get("/api/jobs/{job_id}/stream", dependencies=deps.reads)
+    async def stream_job(job_id: str, jobs: JobStore = store) -> EventSourceResponse:
         try:
             jobs.get(job_id)
         except KeyError:

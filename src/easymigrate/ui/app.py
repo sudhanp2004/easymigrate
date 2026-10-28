@@ -19,6 +19,7 @@ from easymigrate.ui.jobs import JobStore
 from easymigrate.ui.routes import jobs as job_routes
 from easymigrate.ui.routes import review as review_routes
 from easymigrate.ui.routes import stages as stage_routes
+from easymigrate.ui.routes.deps import RouteDeps
 from easymigrate.ui.security import Security
 from easymigrate.ui.state import project_state
 
@@ -128,8 +129,14 @@ def create_app(project: Project, security: Security) -> FastAPI:
         return project_state(project)
 
     stage_routes.register(app, project, jobs, security)
-    job_routes.register(app, project, jobs, security)
-    review_routes.register(app, project, security)
+    deps = RouteDeps(
+        project=lambda: project,
+        jobs=lambda: jobs,
+        reads=[Depends(security.require_origin)],
+        mutating=[Depends(security.require_origin), Depends(security.require_token)],
+    )
+    job_routes.register(app, deps)
+    review_routes.register(app, deps)
 
     # Scoped to "/assets" (Vite's hashed JS/CSS output directory), never "/": a mount at
     # "/" would fully match every /api path too (Starlette's Mount.matches ignores

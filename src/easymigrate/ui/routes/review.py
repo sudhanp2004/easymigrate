@@ -27,7 +27,7 @@ from easymigrate.differences.decisions import (
 from easymigrate.differences.engine import catalogue
 from easymigrate.differences.model import Decision, DifferenceRule
 from easymigrate.ir.base import Finding, StrictModel
-from easymigrate.ui.security import Security
+from easymigrate.ui.routes.deps import RouteDeps
 from easymigrate.ui.views import DecisionView, DifferenceView, decision_view, difference_view
 
 
@@ -76,29 +76,32 @@ def _decisions_response(project: Project) -> DecisionsResponse:
     return DecisionsResponse(decisions=views, blocked=blocked)
 
 
-def register(app: FastAPI, project: Project, security: Security) -> None:
-    reads = [Depends(security.require_origin)]
-    mutating = [Depends(security.require_origin), Depends(security.require_token)]
+def register(app: FastAPI, deps: RouteDeps) -> None:
+    reads = deps.reads
+    mutating = deps.mutating
+    current = Depends(deps.project)
 
     @app.post("/api/analyze", dependencies=mutating)
-    def analyze() -> AnalyzeResponse:
+    def analyze(project: Project = current) -> AnalyzeResponse:
         doc = pipeline.analyze(project)
         counts = Counter(obj.kind for obj in doc.objects)
         return AnalyzeResponse(counts=dict(counts), findings=list(doc.findings))
 
     @app.get("/api/differences", dependencies=reads)
-    def get_differences() -> list[DifferenceView]:
+    def get_differences(project: Project = current) -> list[DifferenceView]:
         differences = pipeline.load_differences(project)
         rules_by_id = _rules_by_id()
         views = [difference_view(diff, rules_by_id[diff.rule_id]) for diff in differences]
         return sorted(views, key=lambda view: view.key)
 
     @app.get("/api/decisions", dependencies=reads)
-    def get_decisions() -> DecisionsResponse:
+    def get_decisions(project: Project = current) -> DecisionsResponse:
         return _decisions_response(project)
 
     @app.put("/api/decisions/{key}", dependencies=mutating)
-    def put_decision(key: str, body: DecisionWriteRequest) -> DecisionView:
+    def put_decision(
+        key: str, body: DecisionWriteRequest, project: Project = current
+    ) -> DecisionView:
         differences = pipeline.load_differences(project)
         diffs_by_key = {diff.key: diff for diff in differences}
         if key not in diffs_by_key:
@@ -155,10 +158,10 @@ def register(app: FastAPI, project: Project, security: Security) -> None:
         return decision_view(new_decision, rule)
 
     @app.post("/api/resolve", dependencies=mutating)
-    def resolve() -> DecisionsResponse:
+    def resolve(project: Project = current) -> DecisionsResponse:
         pipeline.resolve(project, accept_defaults=True)
         return _decisions_response(project)
 
     @app.get("/api/report", dependencies=reads)
-    def get_report() -> dict[str, Any]:
+    def get_report(project: Project = current) -> dict[str, Any]:
         return build_report(project).to_dict()

@@ -99,7 +99,14 @@ class JobStore:
             raise KeyError(job_id)
         return JobRecord.model_validate_json(path.read_text(encoding="utf-8"))
 
-    def start(self, stage: str, work: Callable[[Callable[[str], None]], None]) -> JobRecord:
+    def start(
+        self,
+        stage: str,
+        work: Callable[[Callable[[str], None]], None],
+        on_finish: Callable[[JobRecord], None] | None = None,
+    ) -> JobRecord:
+        """`on_finish`, when given, receives the terminal record after it is written (the
+        hosted app archives the workspace there). Its own errors never change the record."""
         with self._lock:
             if self.active() is not None:
                 raise JobAlreadyRunning(f"a job is already running for {self.project.root}")
@@ -123,21 +130,23 @@ class JobStore:
             try:
                 work(stream)
             except Exception as exc:  # noqa: BLE001 - the engine's own error, verbatim
-                self._write(
-                    record.model_copy(
-                        update={
-                            "status": "failed",
-                            "finished_at": datetime.now(UTC),
-                            "error": str(exc),
-                        }
-                    )
+                final = record.model_copy(
+                    update={
+                        "status": "failed",
+                        "finished_at": datetime.now(UTC),
+                        "error": str(exc),
+                    }
                 )
             else:
-                self._write(
-                    record.model_copy(
-                        update={"status": "succeeded", "finished_at": datetime.now(UTC)}
-                    )
+                final = record.model_copy(
+                    update={"status": "succeeded", "finished_at": datetime.now(UTC)}
                 )
+            self._write(final)
+            if on_finish is not None:
+                try:
+                    on_finish(final)
+                except Exception:  # noqa: BLE001 - must not turn a finished job into a crash
+                    pass
 
         threading.Thread(target=run, daemon=True).start()
         return record
