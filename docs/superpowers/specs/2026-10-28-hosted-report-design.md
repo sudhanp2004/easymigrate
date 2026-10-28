@@ -142,7 +142,9 @@ gone).
 Each long stage is a background job with the same live log stream the local UI uses (SSE,
 `EventSource` with `withCredentials`).
 
-- **Scan**: `pipeline.scan(project, region, role_arn, external_id)`. Hard timeout 15 min. On the
+- **Scan**: `pipeline.scan(project, region, role_arn, external_id)`. A scan holds one of the concurrency
+  slots; a slot older than 20 min counts as free, so a hung AWS call cannot block the service
+  (a running thread cannot be killed safely; botocore's own timeouts and retries bound each call). On the
   free tier the instance can sleep if the visitor closes the tab mid-scan; the job is then marked
   failed on restore and the page offers "Scan again".
 - **Analyze**: `pipeline.analyze(project)`; optional scope (VPC/tag/exclude) as in the local UI.
