@@ -6,7 +6,7 @@ services:
     plan: free
     region: singapore
     branch: main
-    buildCommand: pip install uv && uv sync --frozen --extra web --no-dev
+    buildCommand: pip install uv && uv sync --frozen --extra web --no-dev --python "$(which python)"
     startCommand: .venv/bin/uvicorn easymigrate.web.app:create_web_app --factory --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
     autoDeploy: true

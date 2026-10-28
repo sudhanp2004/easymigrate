@@ -47,6 +47,8 @@ def test_render_yaml_starts_web_factory():
     # spoofable X-Forwarded-For.
     assert "--proxy-headers" not in service["startCommand"]
     assert service["healthCheckPath"] == "/api/health"
+    # The repo's .python-version (3.13, for local dev) must not decide Render's interpreter.
+    assert '--python "$(which python)"' in service["buildCommand"]
     keys = {env["key"] for env in service["envVars"]}
     assert {
         "DATABASE_URL",
