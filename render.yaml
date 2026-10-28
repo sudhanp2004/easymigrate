@@ -1,0 +1,27 @@
+# Render Blueprint for the hosted API (api.easymigrate.sudhan.tech). See deploy/README.md.
+services:
+  - type: web
+    name: easymigrate-api
+    runtime: python
+    plan: free
+    region: singapore
+    branch: main
+    buildCommand: pip install uv && uv sync --frozen --extra web --no-dev
+    startCommand: .venv/bin/uvicorn easymigrate.web.app:create_web_app --factory --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips='*'
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: EASYMIGRATE_WEB_ORIGIN
+        value: https://easymigrate.sudhan.tech
+      - key: DATABASE_URL
+        sync: false
+      - key: EASYMIGRATE_DATA_KEY
+        sync: false
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: EASYMIGRATE_CFN_TEMPLATE_URL
+        sync: false
