@@ -268,3 +268,14 @@ The local build (`easymigrate ui`) is unchanged.
 - Exact page layout and visual design within the existing brand (`frontend/public/brand`).
 - Job runner internals (threads vs asyncio) within the stated concurrency limits.
 - Table schema and migration tooling for the few web tables.
+
+## Live test (2026-10-28, before deploy)
+
+The real API (local process) with the operator user's keys, Neon and the published template.
+The visitor stack was created from the template URL in account 538342414628 (ap-south-1):
+CREATE_COMPLETE; a second session using the same role was refused with the "another session"
+message (external ID enforced); the right session connected, scanned in 8 s (1 VPC, 3 subnets,
+3 security groups, 1 VM + disk, 1 IAM role), analyzed, resolved with nothing blocked and
+downloaded the zip; `tofu init -backend=false && tofu validate` on it: valid. A second app
+instance with an empty data directory restored the workspace from Postgres with all three
+stages complete. Both workspaces deleted, stack deleted.

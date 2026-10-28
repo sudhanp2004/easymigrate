@@ -2,6 +2,10 @@
 
 Migrates cloud infrastructure from AWS to GCP. It scans the live source cloud, builds an intent-level intermediate representation, shows every difference between the clouds with safe default handling, generates Terraform, and applies it only after you approve.
 
+**Try it without installing:** https://easymigrate.sudhan.tech gives a free, read-only
+migration report in the browser (connect AWS, review the differences, download the GCP
+Terraform). The command-line version below also plans, applies and undoes for you.
+
 ## Install
 
 Python 3.12 or newer. From a checkout or a release wheel:
@@ -89,6 +93,12 @@ scan.
 `roles/container.admin` + `roles/iam.serviceAccountUser` (EKS). `plan` checks that the needed
 APIs are enabled and names the `gcloud services enable` command if not. EasyMigrate runs
 OpenTofu itself; you never install or invoke `tofu`.
+
+## Hosted version
+
+`easymigrate.web` is the hosted free report (FastAPI on Render, the `frontend/` hosted build on
+Vercel, Postgres on Neon). It reuses the pipeline and review routes, never holds GCP
+credentials and has no plan/apply/destroy. Setup and operation: [`deploy/README.md`](deploy/README.md).
 
 ## Local UI (preview)
 

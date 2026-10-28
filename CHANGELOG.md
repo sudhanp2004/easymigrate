@@ -4,6 +4,15 @@ All notable changes to EasyMigrate. Versions follow [Semantic Versioning](https:
 the saved-state schema (`schema_version` in `.easymigrate/` files) is versioned separately
 and listed per release.
 
+## Unreleased
+
+- **Hosted free report** at https://easymigrate.sudhan.tech: connect AWS through a read-only
+  CloudFormation role (external ID per session, no keys), scan, review differences, choose
+  decisions and download the GCP Terraform + report. No GCP access, no apply. Anonymous
+  workspaces, encrypted, deleted after 7 days. Deployment: `deploy/README.md`.
+- `pipeline.generate()`: the Terraform of `plan` without GCP credentials or OpenTofu.
+- Role assumption accepts an external ID.
+
 ## 0.1.0 — 2026-10-14
 
 First release. AWS → Google Cloud, infrastructure configuration only (no data copy).
