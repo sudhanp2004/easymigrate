@@ -108,3 +108,21 @@ def test_download_not_ready_is_400(settings):
     client, _ = make_client(settings)
     start(client)
     assert _download(client).status_code == 400
+
+
+def test_report_markdown(settings):
+    client, app = make_client(settings)
+    _, project = _ready(client, app)
+    response = client.get("/api/report-markdown")
+    assert response.status_code == 200
+    from easymigrate.core.report import build_report
+
+    assert response.json()["markdown"] == build_report(project).to_markdown()
+
+
+def test_report_markdown_before_any_report(settings):
+    client, _ = make_client(settings)
+    start(client)
+    response = client.get("/api/report-markdown")
+    assert response.status_code == 400
+    assert "No report yet" in response.json()["detail"]

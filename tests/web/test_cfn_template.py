@@ -60,6 +60,7 @@ def test_vercel_points_at_api():
     assert vercel["buildCommand"] == "npm run build:hosted"
     assert vercel["outputDirectory"] == "dist"
     headers = {h["key"]: h["value"] for h in vercel["headers"][0]["headers"]}
-    assert "connect-src 'self' https://api.easymigrate.sudhan.tech" in headers[
-        "Content-Security-Policy"
-    ]
+    assert (
+        "connect-src 'self' https://api.easymigrate.sudhan.tech"
+        in headers["Content-Security-Policy"]
+    )

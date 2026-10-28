@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { apiBase, isHosted } from '../hosted/config'
 import type { Status } from './types'
 
 export interface JobStreamState {
@@ -32,7 +33,9 @@ export function useJobStream(jobId: string | null): JobStreamState {
 
     const connect = () => {
       setLines([])
-      source = new EventSource(`/api/jobs/${jobId}/stream`)
+      source = isHosted()
+        ? new EventSource(`${apiBase()}/api/jobs/${jobId}/stream`, { withCredentials: true })
+        : new EventSource(`/api/jobs/${jobId}/stream`)
 
       source.addEventListener('log', (event) => {
         const data = (event as MessageEvent<string>).data

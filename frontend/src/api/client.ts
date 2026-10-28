@@ -3,7 +3,12 @@
 // design (a page load must work with a token still parked in sessionStorage from a
 // previous run, whether or not the server accepts it for reads).
 
+import { apiBase, isHosted } from '../hosted/config'
+
 export const TOKEN_HEADER = 'X-EasyMigrate-Token'
+// The hosted API authenticates with its cookie; every mutating request carries this header
+// so a cross-site form can never act (it forces a CORS preflight).
+export const HOSTED_HEADER = 'X-EasyMigrate'
 const TOKEN_STORAGE_KEY = 'easymigrate.token'
 
 const STALE_TOKEN_MESSAGE =
@@ -52,17 +57,26 @@ function isMutating(method: string | undefined): boolean {
   return upper !== 'GET' && upper !== 'HEAD'
 }
 
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+async function send(path: string, init: RequestInit): Promise<Response> {
+  const hosted = isHosted()
   const headers = new Headers(init.headers)
   if (isMutating(init.method)) {
-    const token = getToken()
-    if (token) headers.set(TOKEN_HEADER, token)
+    if (hosted) {
+      headers.set(HOSTED_HEADER, '1')
+    } else {
+      const token = getToken()
+      if (token) headers.set(TOKEN_HEADER, token)
+    }
   }
   if (init.body !== undefined && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }
 
-  const response = await fetch(path, { ...init, headers })
+  const response = await fetch(hosted ? apiBase() + path : path, {
+    ...init,
+    headers,
+    ...(hosted ? { credentials: 'include' as const } : {}),
+  })
 
   if (!response.ok) {
     let body: unknown = null
@@ -71,14 +85,29 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       // no JSON body; fall through with a generic detail below
     }
-    if (response.status === 403) {
+    if (response.status === 403 && !hosted) {
       throw new ApiError(403, STALE_TOKEN_MESSAGE)
     }
     throw new ApiError(response.status, detailFromBody(body))
   }
+  return response
+}
 
+export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await send(path, init)
   if (response.status === 204) {
     return undefined as T
   }
   return (await response.json()) as T
+}
+
+/** A file response (the download zip), with the name the server suggested. */
+export async function apiBlob(
+  path: string,
+  init: RequestInit = {},
+): Promise<{ blob: Blob; filename: string }> {
+  const response = await send(path, init)
+  const disposition = response.headers.get('Content-Disposition') ?? ''
+  const match = /filename="([^"]+)"/.exec(disposition)
+  return { blob: await response.blob(), filename: match ? match[1] : 'easymigrate.zip' }
 }

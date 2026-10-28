@@ -17,6 +17,7 @@ from easymigrate.core import pipeline
 from easymigrate.core.errors import EasyMigrateError, SourceConnectionError
 from easymigrate.core.project import Project
 from easymigrate.core.regions import REGION_MAP
+from easymigrate.core.report import build_report
 from easymigrate.ir.base import StrictModel
 from easymigrate.ui.jobs import JobAlreadyRunning, JobRecord, JobStore
 from easymigrate.ui.routes import jobs as job_routes
@@ -293,6 +294,12 @@ def register(
         except JobAlreadyRunning:
             slots.release(rec.id)
             raise HTTPException(status_code=409, detail="A scan is already running.") from None
+
+    @app.get("/api/report-markdown")
+    def report_markdown(current: Proj) -> dict:
+        if current.load_config().source is None:
+            raise HTTPException(status_code=400, detail="No report yet. Run the scan first.")
+        return {"markdown": build_report(current).to_markdown()}
 
     @app.post("/api/download")
     def download(
